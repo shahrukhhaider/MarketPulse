@@ -1,0 +1,27 @@
+{
+  "name": "stock-price-tracker",
+  "version": "1.0.0",
+  "description": "A CLI tool for stock price tracking with watchlist management, strategy evaluation, and signal generation",
+  "main": "dist/cli.js",
+  "bin": {
+    "stock-tracker": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:property": "vitest run tests/property",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration"
+  },
+  "devDependencies": {
+    "fast-check": "^3.22.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
