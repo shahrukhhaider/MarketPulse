@@ -1,0 +1,23 @@
+{
+  "watchlist": [
+    {
+      "ticker": "AAPL",
+      "addedAt": "2026-04-25T17:19:22.128Z",
+      "strategies": [
+        {
+          "type": "price_breakout",
+          "params": {
+            "upperLevel": 200,
+            "lowerLevel": 150
+          },
+          "enabled": true
+        }
+      ]
+    }
+  ],
+  "settings": {
+    "pollingInterval": 60,
+    "retentionDays": 30,
+    "dataDir": ".stock-tracker"
+  }
+}

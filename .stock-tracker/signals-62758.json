@@ -1,0 +1,14 @@
+{
+  "sessionPid": 62758,
+  "signals": [
+    {
+      "id": "sig_moelw7fu_q6nwah",
+      "ticker": "AAPL",
+      "direction": "BUY",
+      "strategyType": "price_breakout",
+      "price": 330.65,
+      "timestamp": "2026-04-25T17:21:27.210Z"
+    }
+  ],
+  "lastUpdated": "2026-04-25T17:21:27.210Z"
+}
