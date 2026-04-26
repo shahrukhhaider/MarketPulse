@@ -2,6 +2,7 @@ import { CommandRouter } from './command-router.js';
 import { getDefault } from './config-store.js';
 import { PriceDataStore } from './price-data-store.js';
 import { PriceFeedClient } from './price-feed-client.js';
+import type { YahooFinanceClient } from './price-feed-client.js';
 import { WatchlistManager } from './watchlist-manager.js';
 import { StrategyManager } from './strategy-manager.js';
 import { ProcessManager } from './process-manager.js';
@@ -9,6 +10,7 @@ export interface WiringOptions {
     dataDir?: string;
     configPath?: string;
     priceDataPath?: string;
+    yahooFinanceClient?: YahooFinanceClient;
 }
 export interface WiredRouter {
     router: CommandRouter;

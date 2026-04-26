@@ -1,32 +1,43 @@
-import type { PricePoint } from './types.js';
+import type { PricePoint, HistoricalPeriod, HistoricalInterval, HistoricalData } from './types.js';
 import type { Result } from './config-store.js';
+/**
+ * Abstraction over the yahoo-finance2 client for dependency injection.
+ * Only the `quote` method is needed.
+ */
+export interface YahooFinanceClient {
+    quote(symbol: string | string[], options?: Record<string, unknown>): Promise<any>;
+    chart(symbol: string, options?: Record<string, unknown>): Promise<any>;
+}
+/**
+ * Determine whether an error from yahoo-finance2 indicates an invalid/unknown ticker symbol.
+ * Checks error message patterns and known error types from the library.
+ */
+export declare function isInvalidTickerError(err: unknown): boolean;
 export declare class PriceFeedClient {
     private available;
-    private knownTickers;
-    constructor(knownTickers?: Set<string>);
+    private yahooFinance;
+    constructor(yahooFinanceClient?: YahooFinanceClient);
     /**
      * Set feed availability (useful for testing).
      */
     setAvailable(available: boolean): void;
     /**
-     * Validate whether a ticker symbol is known to the price feed.
+     * Validate whether a ticker symbol exists on Yahoo Finance.
      */
-    validateTicker(ticker: string): Result<boolean>;
+    validateTicker(ticker: string): Promise<Result<boolean>>;
     /**
-     * Fetch the current price for a single ticker.
-     * Returns a simulated price point (mock implementation).
+     * Fetch the current price for a single ticker from Yahoo Finance.
      */
-    fetchCurrentPrice(ticker: string): Result<PricePoint>;
+    fetchCurrentPrice(ticker: string): Promise<Result<PricePoint>>;
     /**
-     * Fetch current prices for multiple tickers in a single batch.
-     * Returns a map of ticker -> PricePoint for all valid tickers.
-     * Individual ticker failures are included in the partial results.
+     * Fetch current prices for multiple tickers in a single batch call.
+     * Returns a map of ticker -> PricePoint for all tickers with valid quotes.
+     * Silently skips tickers without valid price data.
      */
-    fetchBatchPrices(tickers: string[]): Result<Map<string, PricePoint>>;
+    fetchBatchPrices(tickers: string[]): Promise<Result<Map<string, PricePoint>>>;
     /**
-     * Generate a deterministic-ish mock price based on ticker hash.
-     * This provides a stable base price per ticker with small random variation.
+     * Fetch historical OHLCV price data for a ticker over a given period and interval.
      */
-    private generateMockPrice;
+    fetchHistoricalData(ticker: string, period?: HistoricalPeriod, interval?: HistoricalInterval): Promise<Result<HistoricalData>>;
 }
 //# sourceMappingURL=price-feed-client.d.ts.map

@@ -16,6 +16,7 @@ const VALID_COMMANDS = [
     'get-status',
     'configure-strategy',
     'show-signals',
+    'history',
 ];
 const VALID_STRATEGY_TYPES = [
     'moving_average_crossover',
@@ -43,6 +44,7 @@ class CommandRouter {
         this.register('get-status', [], stubHandler('get-status'));
         this.register('configure-strategy', ['ticker', 'strategy'], stubHandler('configure-strategy'));
         this.register('show-signals', [], stubHandler('show-signals'));
+        this.register('history', ['ticker'], stubHandler('history'));
     }
     /**
      * Register (or replace) a command handler.
@@ -72,7 +74,7 @@ class CommandRouter {
      * Dispatch a parsed command: validate the command name, check required params,
      * run additional validation (e.g. strategy type), then call the handler.
      */
-    dispatch(parsed) {
+    async dispatch(parsed) {
         const { command, options } = parsed;
         // No command provided
         if (!command) {
@@ -132,9 +134,18 @@ class CommandRouter {
                 return errorResult(command, types_js_1.ErrorCodes.INVALID_TICKER, `Invalid ticker format '${ticker}'. Ticker must be 1-10 alphabetic characters.`);
             }
         }
+        // Validate --period and --interval for history command
+        if (command === 'history') {
+            if (options['period'] && !types_js_1.VALID_PERIODS.includes(options['period'])) {
+                return errorResult(command, types_js_1.ErrorCodes.INVALID_PARAM_RANGE, `Invalid period '${options['period']}'. Valid values: ${types_js_1.VALID_PERIODS.join(', ')}`);
+            }
+            if (options['interval'] && !types_js_1.VALID_INTERVALS.includes(options['interval'])) {
+                return errorResult(command, types_js_1.ErrorCodes.INVALID_PARAM_RANGE, `Invalid interval '${options['interval']}'. Valid values: ${types_js_1.VALID_INTERVALS.join(', ')}`);
+            }
+        }
         // Dispatch to handler
         try {
-            return definition.handler(options);
+            return await definition.handler(options);
         }
         catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -150,9 +161,9 @@ class CommandRouter {
     /**
      * Convenience: parse + dispatch + formatOutput in one call.
      */
-    execute(args) {
+    async execute(args) {
         const parsed = this.parse(args);
-        const result = this.dispatch(parsed);
+        const result = await this.dispatch(parsed);
         return this.formatOutput(result);
     }
     /**

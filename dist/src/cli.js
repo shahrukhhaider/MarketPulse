@@ -41,8 +41,9 @@ const command_wiring_js_1 = require("./command-wiring.js");
  * CLI entry point for the stock-price-tracker tool.
  * Parses process.argv, sets up the data directory, and delegates to the CommandRouter.
  */
-function main() {
-    const dataDir = path.join(process.cwd(), '.stock-tracker');
+async function main() {
+    const baseDir = process.env.STOCK_TRACKER_HOME ?? process.cwd();
+    const dataDir = path.join(baseDir, '.stock-tracker');
     // Ensure the data directory exists
     if (!fs.existsSync(dataDir)) {
         fs.mkdirSync(dataDir, { recursive: true });
@@ -51,14 +52,11 @@ function main() {
     const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir });
     // Parse CLI args (skip node and script path)
     const args = process.argv.slice(2);
-    const output = router.execute(args);
+    const output = await router.execute(args);
     process.stdout.write(output + '\n');
     process.exit(0);
 }
-try {
-    main();
-}
-catch (err) {
+main().catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     const errorEnvelope = {
         success: false,
@@ -71,5 +69,5 @@ catch (err) {
     };
     process.stdout.write(JSON.stringify(errorEnvelope, null, 2) + '\n');
     process.exit(1);
-}
+});
 //# sourceMappingURL=cli.js.map

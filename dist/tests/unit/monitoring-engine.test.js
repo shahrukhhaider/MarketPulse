@@ -49,6 +49,39 @@ function makeWatchlistEntry(overrides = {}) {
         ...overrides,
     };
 }
+/**
+ * A simple mock YahooFinanceClient that returns deterministic prices.
+ * Uses a hash of the ticker symbol to generate a stable price.
+ */
+function createMockYahooClient() {
+    return {
+        async chart() { return { quotes: [] }; },
+        async quote(symbol) {
+            if (Array.isArray(symbol)) {
+                return symbol.map((s) => ({
+                    symbol: s.toUpperCase(),
+                    regularMarketPrice: getMockPrice(s),
+                }));
+            }
+            return {
+                symbol: symbol.toUpperCase(),
+                regularMarketPrice: getMockPrice(symbol),
+            };
+        },
+    };
+}
+function getMockPrice(ticker) {
+    // Simple deterministic price based on ticker characters
+    let hash = 0;
+    for (const ch of ticker.toUpperCase()) {
+        hash = (hash * 31 + ch.charCodeAt(0)) % 10000;
+    }
+    return 100 + (hash % 200); // Price between 100 and 299
+}
+/** Helper: flush microtask queue so async start() completes its first poll */
+function flushMicrotasks() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+}
 (0, vitest_1.describe)('MonitoringEngine', () => {
     let tmpDir;
     let signalFilePath;
@@ -58,7 +91,7 @@ function makeWatchlistEntry(overrides = {}) {
     (0, vitest_1.beforeEach)(() => {
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'monitoring-engine-test-'));
         signalFilePath = path.join(tmpDir, 'signals-12345.json');
-        priceFeedClient = new price_feed_client_js_1.PriceFeedClient();
+        priceFeedClient = new price_feed_client_js_1.PriceFeedClient(createMockYahooClient());
         priceDataStore = new price_data_store_js_1.PriceDataStore();
         engine = new monitoring_engine_js_1.MonitoringEngine(priceFeedClient, priceDataStore);
     });
@@ -67,46 +100,53 @@ function makeWatchlistEntry(overrides = {}) {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
     (0, vitest_1.describe)('start and stop', () => {
-        (0, vitest_1.it)('starts and sets running state', () => {
+        (0, vitest_1.it)('starts and sets running state', async () => {
             engine.start(60, [makeWatchlistEntry()], signalFilePath);
             (0, vitest_1.expect)(engine.isRunning()).toBe(true);
+            await flushMicrotasks();
         });
-        (0, vitest_1.it)('stops and clears running state', () => {
+        (0, vitest_1.it)('stops and clears running state', async () => {
             engine.start(60, [makeWatchlistEntry()], signalFilePath);
+            await flushMicrotasks();
             engine.stop();
             (0, vitest_1.expect)(engine.isRunning()).toBe(false);
         });
-        (0, vitest_1.it)('does nothing when start called while already running', () => {
+        (0, vitest_1.it)('does nothing when start called while already running', async () => {
             engine.start(60, [makeWatchlistEntry()], signalFilePath);
+            await flushMicrotasks();
             const cyclesBefore = engine.getPollCyclesCompleted();
             engine.start(60, [makeWatchlistEntry()], signalFilePath);
+            await flushMicrotasks();
             // Should not reset cycles
             (0, vitest_1.expect)(engine.getPollCyclesCompleted()).toBe(cyclesBefore);
         });
         (0, vitest_1.it)('does nothing when stop called while not running', () => {
             (0, vitest_1.expect)(() => engine.stop()).not.toThrow();
         });
-        (0, vitest_1.it)('runs first poll immediately on start', () => {
+        (0, vitest_1.it)('runs first poll immediately on start', async () => {
             engine.start(3600, [makeWatchlistEntry()], signalFilePath);
+            await flushMicrotasks();
             (0, vitest_1.expect)(engine.getPollCyclesCompleted()).toBeGreaterThanOrEqual(1);
         });
     });
     (0, vitest_1.describe)('pollCycle', () => {
-        (0, vitest_1.it)('returns success with empty watchlist', () => {
+        (0, vitest_1.it)('returns success with empty watchlist', async () => {
             engine.start(3600, [], signalFilePath);
+            await flushMicrotasks();
             // First poll already ran in start, check state
             (0, vitest_1.expect)(engine.getPollCyclesCompleted()).toBe(1);
             (0, vitest_1.expect)(engine.getLastPollTimestamp()).toBeTruthy();
         });
-        (0, vitest_1.it)('fetches prices and stores them', () => {
+        (0, vitest_1.it)('fetches prices and stores them', async () => {
             const entry = makeWatchlistEntry({ ticker: 'AAPL' });
             engine.start(3600, [entry], signalFilePath);
+            await flushMicrotasks();
             const history = priceDataStore.getPriceHistory('AAPL');
             (0, vitest_1.expect)(history.length).toBeGreaterThanOrEqual(1);
             (0, vitest_1.expect)(history[0].ticker).toBe('AAPL');
             (0, vitest_1.expect)(typeof history[0].price).toBe('number');
         });
-        (0, vitest_1.it)('calculates price change from previous price', () => {
+        (0, vitest_1.it)('calculates price change from previous price', async () => {
             // Seed a previous price
             priceDataStore.addPricePoint('AAPL', {
                 ticker: 'AAPL',
@@ -115,6 +155,7 @@ function makeWatchlistEntry(overrides = {}) {
             });
             const entry = makeWatchlistEntry({ ticker: 'AAPL' });
             engine.start(3600, [entry], signalFilePath);
+            await flushMicrotasks();
             const history = priceDataStore.getPriceHistory('AAPL');
             const latest = history[history.length - 1];
             // Should have change and changePercent calculated
@@ -123,36 +164,39 @@ function makeWatchlistEntry(overrides = {}) {
             (0, vitest_1.expect)(typeof latest.change).toBe('number');
             (0, vitest_1.expect)(typeof latest.changePercent).toBe('number');
         });
-        (0, vitest_1.it)('handles price feed unavailability gracefully', () => {
+        (0, vitest_1.it)('handles price feed unavailability gracefully', async () => {
             priceFeedClient.setAvailable(false);
             const entry = makeWatchlistEntry({ ticker: 'AAPL' });
             engine.start(3600, [entry], signalFilePath);
+            await flushMicrotasks();
             // Should still complete the cycle
             (0, vitest_1.expect)(engine.getPollCyclesCompleted()).toBe(1);
             // No prices should be stored
             const history = priceDataStore.getPriceHistory('AAPL');
             (0, vitest_1.expect)(history.length).toBe(0);
         });
-        (0, vitest_1.it)('retains last prices when feed fails', () => {
+        (0, vitest_1.it)('retains last prices when feed fails', async () => {
             // First poll with feed available
             const entry = makeWatchlistEntry({ ticker: 'AAPL' });
             engine.start(3600, [entry], signalFilePath);
+            await flushMicrotasks();
             const historyBefore = priceDataStore.getPriceHistory('AAPL');
             (0, vitest_1.expect)(historyBefore.length).toBe(1);
             // Make feed unavailable and poll again
             priceFeedClient.setAvailable(false);
-            engine.pollCycle();
+            await engine.pollCycle();
             // Previous prices should still be there
             const historyAfter = priceDataStore.getPriceHistory('AAPL');
             (0, vitest_1.expect)(historyAfter.length).toBe(1);
             (0, vitest_1.expect)(historyAfter[0]).toEqual(historyBefore[0]);
         });
-        (0, vitest_1.it)('increments poll cycle count', () => {
+        (0, vitest_1.it)('increments poll cycle count', async () => {
             engine.start(3600, [makeWatchlistEntry()], signalFilePath);
+            await flushMicrotasks();
             (0, vitest_1.expect)(engine.getPollCyclesCompleted()).toBe(1);
-            engine.pollCycle();
+            await engine.pollCycle();
             (0, vitest_1.expect)(engine.getPollCyclesCompleted()).toBe(2);
-            engine.pollCycle();
+            await engine.pollCycle();
             (0, vitest_1.expect)(engine.getPollCyclesCompleted()).toBe(3);
         });
     });
@@ -340,8 +384,9 @@ function makeWatchlistEntry(overrides = {}) {
         });
     });
     (0, vitest_1.describe)('writeSignals', () => {
-        (0, vitest_1.it)('writes signals to signal store', () => {
+        (0, vitest_1.it)('writes signals to signal store', async () => {
             engine.start(3600, [], signalFilePath);
+            await flushMicrotasks();
             const signals = [
                 {
                     id: 'sig_001',
@@ -364,7 +409,7 @@ function makeWatchlistEntry(overrides = {}) {
         });
     });
     (0, vitest_1.describe)('full poll cycle with strategies', () => {
-        (0, vitest_1.it)('generates signals during poll cycle for breakout strategy', () => {
+        (0, vitest_1.it)('generates signals during poll cycle for breakout strategy', async () => {
             // Seed price history so breakout can trigger
             const entry = makeWatchlistEntry({
                 ticker: 'AAPL',
@@ -377,10 +422,10 @@ function makeWatchlistEntry(overrides = {}) {
                 ],
             });
             engine.start(3600, [entry], signalFilePath);
-            // AAPL mock price is deterministic and > 10, so should trigger BUY
+            await flushMicrotasks();
+            // Mock price for AAPL is > 10, so should trigger BUY
             const store = new signal_store_js_1.SignalStore(signalFilePath);
             const signals = store.readSignals();
-            // The mock price for AAPL is well above 10, so we expect a BUY signal
             (0, vitest_1.expect)(signals.length).toBeGreaterThanOrEqual(1);
             if (signals.length > 0) {
                 (0, vitest_1.expect)(signals[0].direction).toBe('BUY');

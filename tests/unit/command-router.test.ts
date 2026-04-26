@@ -15,7 +15,7 @@ describe('CommandRouter', () => {
   // ============================================================
 
   describe('command registration', () => {
-    it('registers all 8 commands by default', () => {
+    it('registers all 9 commands by default', () => {
       const commands = router.getRegisteredCommands();
       expect(commands).toContain('add-stock');
       expect(commands).toContain('remove-stock');
@@ -25,13 +25,14 @@ describe('CommandRouter', () => {
       expect(commands).toContain('get-status');
       expect(commands).toContain('configure-strategy');
       expect(commands).toContain('show-signals');
-      expect(commands).toHaveLength(8);
+      expect(commands).toContain('history');
+      expect(commands).toHaveLength(9);
     });
 
-    it('allows replacing a command handler', () => {
+    it('allows replacing a command handler', async () => {
       const custom: CommandHandler = () => successResult('list-watchlist', { stocks: [] });
       router.register('list-watchlist', [], custom);
-      const result = router.dispatch({ command: 'list-watchlist', options: {} });
+      const result = await router.dispatch({ command: 'list-watchlist', options: {} });
       expect(result.success).toBe(true);
       expect(result.data).toEqual({ stocks: [] });
     });
@@ -81,45 +82,45 @@ describe('CommandRouter', () => {
   // ============================================================
 
   describe('dispatch — success', () => {
-    it('dispatches list-watchlist with no params', () => {
-      const result = router.dispatch({ command: 'list-watchlist', options: {} });
+    it('dispatches list-watchlist with no params', async () => {
+      const result = await router.dispatch({ command: 'list-watchlist', options: {} });
       expect(result.success).toBe(true);
       expect(result.command).toBe('list-watchlist');
       expect(result.timestamp).toBeTruthy();
     });
 
-    it('dispatches add-stock with required ticker', () => {
-      const result = router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
+    it('dispatches add-stock with required ticker', async () => {
+      const result = await router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
       expect(result.success).toBe(true);
       expect(result.command).toBe('add-stock');
     });
 
-    it('dispatches stop-monitor with no params', () => {
-      const result = router.dispatch({ command: 'stop-monitor', options: {} });
+    it('dispatches stop-monitor with no params', async () => {
+      const result = await router.dispatch({ command: 'stop-monitor', options: {} });
       expect(result.success).toBe(true);
       expect(result.command).toBe('stop-monitor');
     });
 
-    it('dispatches get-status with no params', () => {
-      const result = router.dispatch({ command: 'get-status', options: {} });
+    it('dispatches get-status with no params', async () => {
+      const result = await router.dispatch({ command: 'get-status', options: {} });
       expect(result.success).toBe(true);
       expect(result.command).toBe('get-status');
     });
 
-    it('dispatches show-signals with optional limit', () => {
-      const result = router.dispatch({ command: 'show-signals', options: { limit: '10' } });
+    it('dispatches show-signals with optional limit', async () => {
+      const result = await router.dispatch({ command: 'show-signals', options: { limit: '10' } });
       expect(result.success).toBe(true);
       expect(result.command).toBe('show-signals');
     });
 
-    it('dispatches start-monitor with optional interval', () => {
-      const result = router.dispatch({ command: 'start-monitor', options: { interval: '30' } });
+    it('dispatches start-monitor with optional interval', async () => {
+      const result = await router.dispatch({ command: 'start-monitor', options: { interval: '30' } });
       expect(result.success).toBe(true);
       expect(result.command).toBe('start-monitor');
     });
 
-    it('dispatches configure-strategy with all required params', () => {
-      const result = router.dispatch({
+    it('dispatches configure-strategy with all required params', async () => {
+      const result = await router.dispatch({
         command: 'configure-strategy',
         options: { ticker: 'AAPL', strategy: 'rsi_threshold' },
       });
@@ -133,36 +134,36 @@ describe('CommandRouter', () => {
   // ============================================================
 
   describe('dispatch — validation errors', () => {
-    it('returns error for empty command', () => {
-      const result = router.dispatch({ command: '', options: {} });
+    it('returns error for empty command', async () => {
+      const result = await router.dispatch({ command: '', options: {} });
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe(ErrorCodes.MISSING_PARAM);
       expect(result.error?.message).toContain('No command specified');
     });
 
-    it('returns error for unknown command', () => {
-      const result = router.dispatch({ command: 'do-magic', options: {} });
+    it('returns error for unknown command', async () => {
+      const result = await router.dispatch({ command: 'do-magic', options: {} });
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe(ErrorCodes.MISSING_PARAM);
       expect(result.error?.message).toContain('Unknown command');
     });
 
-    it('returns error when add-stock missing --ticker', () => {
-      const result = router.dispatch({ command: 'add-stock', options: {} });
+    it('returns error when add-stock missing --ticker', async () => {
+      const result = await router.dispatch({ command: 'add-stock', options: {} });
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe(ErrorCodes.MISSING_PARAM);
       expect(result.error?.message).toContain('--ticker');
     });
 
-    it('returns error when remove-stock missing --ticker', () => {
-      const result = router.dispatch({ command: 'remove-stock', options: {} });
+    it('returns error when remove-stock missing --ticker', async () => {
+      const result = await router.dispatch({ command: 'remove-stock', options: {} });
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe(ErrorCodes.MISSING_PARAM);
       expect(result.error?.message).toContain('--ticker');
     });
 
-    it('returns error when configure-strategy missing --ticker', () => {
-      const result = router.dispatch({
+    it('returns error when configure-strategy missing --ticker', async () => {
+      const result = await router.dispatch({
         command: 'configure-strategy',
         options: { strategy: 'rsi_threshold' },
       });
@@ -171,8 +172,8 @@ describe('CommandRouter', () => {
       expect(result.error?.message).toContain('--ticker');
     });
 
-    it('returns error when configure-strategy missing --strategy', () => {
-      const result = router.dispatch({
+    it('returns error when configure-strategy missing --strategy', async () => {
+      const result = await router.dispatch({
         command: 'configure-strategy',
         options: { ticker: 'AAPL' },
       });
@@ -181,8 +182,8 @@ describe('CommandRouter', () => {
       expect(result.error?.message).toContain('--strategy');
     });
 
-    it('returns error for invalid strategy type', () => {
-      const result = router.dispatch({
+    it('returns error for invalid strategy type', async () => {
+      const result = await router.dispatch({
         command: 'configure-strategy',
         options: { ticker: 'AAPL', strategy: 'magic_strategy' },
       });
@@ -191,8 +192,8 @@ describe('CommandRouter', () => {
       expect(result.error?.message).toContain('Invalid strategy type');
     });
 
-    it('returns error for invalid --params JSON', () => {
-      const result = router.dispatch({
+    it('returns error for invalid --params JSON', async () => {
+      const result = await router.dispatch({
         command: 'configure-strategy',
         options: { ticker: 'AAPL', strategy: 'rsi_threshold', params: '{bad json' },
       });
@@ -201,8 +202,8 @@ describe('CommandRouter', () => {
       expect(result.error?.message).toContain('Invalid JSON');
     });
 
-    it('returns error for invalid --enabled value', () => {
-      const result = router.dispatch({
+    it('returns error for invalid --enabled value', async () => {
+      const result = await router.dispatch({
         command: 'configure-strategy',
         options: { ticker: 'AAPL', strategy: 'rsi_threshold', enabled: 'maybe' },
       });
@@ -211,8 +212,8 @@ describe('CommandRouter', () => {
       expect(result.error?.message).toContain('--enabled');
     });
 
-    it('returns error for invalid --interval (non-integer)', () => {
-      const result = router.dispatch({
+    it('returns error for invalid --interval (non-integer)', async () => {
+      const result = await router.dispatch({
         command: 'start-monitor',
         options: { interval: 'abc' },
       });
@@ -221,8 +222,8 @@ describe('CommandRouter', () => {
       expect(result.error?.message).toContain('--interval');
     });
 
-    it('returns error for invalid --interval (zero)', () => {
-      const result = router.dispatch({
+    it('returns error for invalid --interval (zero)', async () => {
+      const result = await router.dispatch({
         command: 'start-monitor',
         options: { interval: '0' },
       });
@@ -230,8 +231,8 @@ describe('CommandRouter', () => {
       expect(result.error?.code).toBe(ErrorCodes.INVALID_PARAM_RANGE);
     });
 
-    it('returns error for invalid --interval (negative)', () => {
-      const result = router.dispatch({
+    it('returns error for invalid --interval (negative)', async () => {
+      const result = await router.dispatch({
         command: 'start-monitor',
         options: { interval: '-5' },
       });
@@ -239,8 +240,8 @@ describe('CommandRouter', () => {
       expect(result.error?.code).toBe(ErrorCodes.INVALID_PARAM_RANGE);
     });
 
-    it('returns error for invalid --limit (negative)', () => {
-      const result = router.dispatch({
+    it('returns error for invalid --limit (negative)', async () => {
+      const result = await router.dispatch({
         command: 'show-signals',
         options: { limit: '-1' },
       });
@@ -248,8 +249,8 @@ describe('CommandRouter', () => {
       expect(result.error?.code).toBe(ErrorCodes.INVALID_PARAM_RANGE);
     });
 
-    it('returns error for invalid --limit (non-integer)', () => {
-      const result = router.dispatch({
+    it('returns error for invalid --limit (non-integer)', async () => {
+      const result = await router.dispatch({
         command: 'show-signals',
         options: { limit: '3.5' },
       });
@@ -257,8 +258,8 @@ describe('CommandRouter', () => {
       expect(result.error?.code).toBe(ErrorCodes.INVALID_PARAM_RANGE);
     });
 
-    it('returns error for invalid ticker format', () => {
-      const result = router.dispatch({
+    it('returns error for invalid ticker format', async () => {
+      const result = await router.dispatch({
         command: 'add-stock',
         options: { ticker: '123INVALID!' },
       });
@@ -273,8 +274,8 @@ describe('CommandRouter', () => {
   // ============================================================
 
   describe('CommandResult envelope', () => {
-    it('success result has success, command, data, and timestamp', () => {
-      const result = router.dispatch({ command: 'list-watchlist', options: {} });
+    it('success result has success, command, data, and timestamp', async () => {
+      const result = await router.dispatch({ command: 'list-watchlist', options: {} });
       expect(result).toHaveProperty('success', true);
       expect(result).toHaveProperty('command', 'list-watchlist');
       expect(result).toHaveProperty('data');
@@ -282,8 +283,8 @@ describe('CommandRouter', () => {
       expect(result.error).toBeUndefined();
     });
 
-    it('error result has success, command, error, and timestamp', () => {
-      const result = router.dispatch({ command: 'add-stock', options: {} });
+    it('error result has success, command, error, and timestamp', async () => {
+      const result = await router.dispatch({ command: 'add-stock', options: {} });
       expect(result).toHaveProperty('success', false);
       expect(result).toHaveProperty('command', 'add-stock');
       expect(result).toHaveProperty('error');
@@ -292,8 +293,8 @@ describe('CommandRouter', () => {
       expect(result).toHaveProperty('timestamp');
     });
 
-    it('timestamp is a valid ISO 8601 string', () => {
-      const result = router.dispatch({ command: 'get-status', options: {} });
+    it('timestamp is a valid ISO 8601 string', async () => {
+      const result = await router.dispatch({ command: 'get-status', options: {} });
       const date = new Date(result.timestamp);
       expect(date.toISOString()).toBe(result.timestamp);
     });
@@ -304,16 +305,16 @@ describe('CommandRouter', () => {
   // ============================================================
 
   describe('formatOutput', () => {
-    it('returns valid JSON string', () => {
-      const result = router.dispatch({ command: 'get-status', options: {} });
+    it('returns valid JSON string', async () => {
+      const result = await router.dispatch({ command: 'get-status', options: {} });
       const output = router.formatOutput(result);
       const parsed = JSON.parse(output);
       expect(parsed.success).toBe(true);
       expect(parsed.command).toBe('get-status');
     });
 
-    it('formats error results as valid JSON', () => {
-      const result = router.dispatch({ command: 'add-stock', options: {} });
+    it('formats error results as valid JSON', async () => {
+      const result = await router.dispatch({ command: 'add-stock', options: {} });
       const output = router.formatOutput(result);
       const parsed = JSON.parse(output);
       expect(parsed.success).toBe(false);
@@ -326,15 +327,15 @@ describe('CommandRouter', () => {
   // ============================================================
 
   describe('execute', () => {
-    it('parses, dispatches, and formats in one call', () => {
-      const output = router.execute(['list-watchlist']);
+    it('parses, dispatches, and formats in one call', async () => {
+      const output = await router.execute(['list-watchlist']);
       const parsed = JSON.parse(output);
       expect(parsed.success).toBe(true);
       expect(parsed.command).toBe('list-watchlist');
     });
 
-    it('returns formatted error for missing params', () => {
-      const output = router.execute(['add-stock']);
+    it('returns formatted error for missing params', async () => {
+      const output = await router.execute(['add-stock']);
       const parsed = JSON.parse(output);
       expect(parsed.success).toBe(false);
       expect(parsed.error.code).toBe(ErrorCodes.MISSING_PARAM);
@@ -346,11 +347,11 @@ describe('CommandRouter', () => {
   // ============================================================
 
   describe('handler error catching', () => {
-    it('catches handler exceptions and returns error result', () => {
+    it('catches handler exceptions and returns error result', async () => {
       router.register('list-watchlist', [], () => {
         throw new Error('boom');
       });
-      const result = router.dispatch({ command: 'list-watchlist', options: {} });
+      const result = await router.dispatch({ command: 'list-watchlist', options: {} });
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('INTERNAL_ERROR');
       expect(result.error?.message).toContain('boom');
@@ -360,6 +361,63 @@ describe('CommandRouter', () => {
   // ============================================================
   // Helper functions
   // ============================================================
+
+  // ============================================================
+  // History command validation
+  // ============================================================
+
+  describe('history command validation', () => {
+    it('returns MISSING_PARAM when history command is missing --ticker', async () => {
+      const result = await router.dispatch({ command: 'history', options: {} });
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe(ErrorCodes.MISSING_PARAM);
+      expect(result.error?.message).toContain('--ticker');
+    });
+
+    it('returns INVALID_TICKER for numeric ticker', async () => {
+      const result = await router.dispatch({ command: 'history', options: { ticker: '123' } });
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe(ErrorCodes.INVALID_TICKER);
+      expect(result.error?.message).toContain('Invalid ticker format');
+    });
+
+    it('returns INVALID_TICKER for ticker exceeding 10 characters', async () => {
+      const result = await router.dispatch({ command: 'history', options: { ticker: 'TOOLONGTICKERX' } });
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe(ErrorCodes.INVALID_TICKER);
+      expect(result.error?.message).toContain('Invalid ticker format');
+    });
+
+    it('returns INVALID_PARAM_RANGE for invalid --period with valid values listed', async () => {
+      const result = await router.dispatch({ command: 'history', options: { ticker: 'AAPL', period: '10y' } });
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe(ErrorCodes.INVALID_PARAM_RANGE);
+      expect(result.error?.message).toContain('Invalid period');
+      expect(result.error?.message).toContain('1mo');
+      expect(result.error?.message).toContain('5y');
+    });
+
+    it('returns INVALID_PARAM_RANGE for invalid --interval with valid values listed', async () => {
+      const result = await router.dispatch({ command: 'history', options: { ticker: 'AAPL', interval: '5m' } });
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe(ErrorCodes.INVALID_PARAM_RANGE);
+      expect(result.error?.message).toContain('Invalid interval');
+      expect(result.error?.message).toContain('1d');
+      expect(result.error?.message).toContain('1wk');
+      expect(result.error?.message).toContain('1mo');
+    });
+
+    it('dispatches successfully with valid ticker, period, and interval', async () => {
+      const result = await router.dispatch({ command: 'history', options: { ticker: 'AAPL', period: '3mo', interval: '1wk' } });
+      expect(result.success).toBe(true);
+      expect(result.command).toBe('history');
+    });
+
+    it('history command is registered in getRegisteredCommands()', () => {
+      const commands = router.getRegisteredCommands();
+      expect(commands).toContain('history');
+    });
+  });
 
   describe('helper functions', () => {
     it('successResult creates proper envelope', () => {

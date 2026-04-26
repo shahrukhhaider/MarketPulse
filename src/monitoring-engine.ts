@@ -65,10 +65,13 @@ export class MonitoringEngine {
     this.initializeLastSignals();
 
     // Run first poll immediately, then at interval
-    this.pollCycle();
-    this.intervalId = setInterval(() => {
-      this.pollCycle();
-    }, interval * 1000);
+    const startAsync = async () => {
+      await this.pollCycle();
+      this.intervalId = setInterval(async () => {
+        await this.pollCycle();
+      }, interval * 1000);
+    };
+    startAsync();
   }
 
   stop(): void {
@@ -94,7 +97,7 @@ export class MonitoringEngine {
     return this.lastPollTimestamp;
   }
 
-  pollCycle(): PollResult {
+  async pollCycle(): Promise<PollResult> {
     const errors: string[] = [];
     let pricesFetched = 0;
     let signalsGenerated = 0;
@@ -109,7 +112,7 @@ export class MonitoringEngine {
     }
 
     // Fetch prices for all watchlist stocks
-    const batchResult = this.priceFeedClient.fetchBatchPrices(tickers);
+    const batchResult = await this.priceFeedClient.fetchBatchPrices(tickers);
 
     if (!batchResult.success) {
       // Price feed unavailable: log, retain last prices, retry next cycle

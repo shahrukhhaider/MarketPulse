@@ -15,6 +15,9 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration"
   },
+  "dependencies": {
+    "yahoo-finance2": "^3.14.0"
+  },
   "devDependencies": {
     "fast-check": "^3.22.0",
     "typescript": "^5.6.0",

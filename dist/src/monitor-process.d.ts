@@ -12,6 +12,7 @@
  *  5. Starts the MonitoringEngine with the watchlist, interval, and signal file path
  *  6. Handles SIGTERM/SIGINT for graceful shutdown
  */
+import type { YahooFinanceClient } from './price-feed-client.js';
 import { PriceDataStore } from './price-data-store.js';
 import { MonitoringEngine } from './monitoring-engine.js';
 export interface ParsedArgs {
@@ -21,7 +22,7 @@ export interface ParsedArgs {
 }
 export declare function parseArgs(argv: string[]): ParsedArgs;
 export declare function buildSignalFilePath(dataDir: string, pid: number): string;
-export declare function startMonitorProcess(args: ParsedArgs, pid: number): {
+export declare function startMonitorProcess(args: ParsedArgs, pid: number, yahooFinanceClient?: YahooFinanceClient): {
     engine: MonitoringEngine;
     priceDataStore: PriceDataStore;
     priceDataFilePath: string;

@@ -15,6 +15,7 @@
 
 import * as path from 'node:path';
 import { PriceFeedClient } from './price-feed-client.js';
+import type { YahooFinanceClient } from './price-feed-client.js';
 import { PriceDataStore } from './price-data-store.js';
 import { MonitoringEngine } from './monitoring-engine.js';
 import * as ConfigStore from './config-store.js';
@@ -61,7 +62,7 @@ export function buildSignalFilePath(dataDir: string, pid: number): string {
   return path.join(dataDir, `signals-${pid}.json`);
 }
 
-export function startMonitorProcess(args: ParsedArgs, pid: number): {
+export function startMonitorProcess(args: ParsedArgs, pid: number, yahooFinanceClient?: YahooFinanceClient): {
   engine: MonitoringEngine;
   priceDataStore: PriceDataStore;
   priceDataFilePath: string;
@@ -74,7 +75,7 @@ export function startMonitorProcess(args: ParsedArgs, pid: number): {
   const config = configResult.data;
 
   // Create dependencies
-  const priceFeedClient = new PriceFeedClient();
+  const priceFeedClient = new PriceFeedClient(yahooFinanceClient);
   const priceDataStore = new PriceDataStore();
   const priceDataFilePath = path.join(args.dataDir, 'price-data.json');
 

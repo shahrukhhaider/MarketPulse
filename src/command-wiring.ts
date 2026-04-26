@@ -3,17 +3,19 @@ import { CommandRouter, successResult, errorResult } from './command-router.js';
 import { load as loadConfig, save as saveConfig, getDefault } from './config-store.js';
 import { PriceDataStore } from './price-data-store.js';
 import { PriceFeedClient } from './price-feed-client.js';
+import type { YahooFinanceClient } from './price-feed-client.js';
 import { WatchlistManager } from './watchlist-manager.js';
 import { StrategyManager } from './strategy-manager.js';
 import { ProcessManager } from './process-manager.js';
 import { SignalStore } from './signal-store.js';
 import { ErrorCodes } from './types.js';
-import type { StrategyType, StrategyParams } from './types.js';
+import type { StrategyType, StrategyParams, HistoricalPeriod, HistoricalInterval } from './types.js';
 
 export interface WiringOptions {
   dataDir?: string;
   configPath?: string;
   priceDataPath?: string;
+  yahooFinanceClient?: YahooFinanceClient;
 }
 
 export interface WiredRouter {
@@ -44,7 +46,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   priceDataStore.load(priceDataPath);
 
   // Create domain components
-  const priceFeedClient = new PriceFeedClient();
+  const priceFeedClient = new PriceFeedClient(options.yahooFinanceClient);
   const watchlistManager = new WatchlistManager(config, configPath);
   const strategyManager = new StrategyManager(config, configPath);
   const processManager = new ProcessManager(dataDir);
@@ -53,11 +55,11 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   const router = new CommandRouter();
 
   // --- add-stock ---
-  router.register('add-stock', ['ticker'], (opts) => {
+  router.register('add-stock', ['ticker'], async (opts) => {
     const ticker = opts['ticker'].toUpperCase();
 
     // Validate ticker via PriceFeedClient
-    const validation = priceFeedClient.validateTicker(ticker);
+    const validation = await priceFeedClient.validateTicker(ticker);
     if (!validation.success) {
       return errorResult('add-stock', ErrorCodes.INVALID_TICKER,
         `Ticker symbol '${ticker}' not found in price feed`);
@@ -237,6 +239,32 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     return successResult('show-signals', {
       signals,
       count: signals.length,
+    });
+  });
+
+  // --- history ---
+  router.register('history', ['ticker'], async (opts) => {
+    const ticker = opts['ticker'];
+    const period = (opts['period'] as HistoricalPeriod) || undefined;
+    const interval = (opts['interval'] as HistoricalInterval) || undefined;
+
+    const result = await priceFeedClient.fetchHistoricalData(ticker, period, interval);
+
+    if (!result.success) {
+      const code = result.error.includes(ErrorCodes.INVALID_TICKER)
+        ? ErrorCodes.INVALID_TICKER
+        : result.error.includes(ErrorCodes.INVALID_PARAM_RANGE)
+          ? ErrorCodes.INVALID_PARAM_RANGE
+          : ErrorCodes.PRICE_FEED_UNAVAILABLE;
+      return errorResult('history', code, result.error);
+    }
+
+    return successResult('history', {
+      ticker: result.data.ticker,
+      period: period || '1y',
+      interval: result.data.interval,
+      dataPoints: result.data.dataPoints,
+      count: result.data.dataPoints.length,
     });
   });
 

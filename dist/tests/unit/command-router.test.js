@@ -12,7 +12,7 @@ const types_js_1 = require("../../src/types.js");
     // Registration
     // ============================================================
     (0, vitest_1.describe)('command registration', () => {
-        (0, vitest_1.it)('registers all 8 commands by default', () => {
+        (0, vitest_1.it)('registers all 9 commands by default', () => {
             const commands = router.getRegisteredCommands();
             (0, vitest_1.expect)(commands).toContain('add-stock');
             (0, vitest_1.expect)(commands).toContain('remove-stock');
@@ -22,12 +22,13 @@ const types_js_1 = require("../../src/types.js");
             (0, vitest_1.expect)(commands).toContain('get-status');
             (0, vitest_1.expect)(commands).toContain('configure-strategy');
             (0, vitest_1.expect)(commands).toContain('show-signals');
-            (0, vitest_1.expect)(commands).toHaveLength(8);
+            (0, vitest_1.expect)(commands).toContain('history');
+            (0, vitest_1.expect)(commands).toHaveLength(9);
         });
-        (0, vitest_1.it)('allows replacing a command handler', () => {
+        (0, vitest_1.it)('allows replacing a command handler', async () => {
             const custom = () => (0, command_router_js_1.successResult)('list-watchlist', { stocks: [] });
             router.register('list-watchlist', [], custom);
-            const result = router.dispatch({ command: 'list-watchlist', options: {} });
+            const result = await router.dispatch({ command: 'list-watchlist', options: {} });
             (0, vitest_1.expect)(result.success).toBe(true);
             (0, vitest_1.expect)(result.data).toEqual({ stocks: [] });
         });
@@ -70,39 +71,39 @@ const types_js_1 = require("../../src/types.js");
     // Dispatch — success cases (stub handlers)
     // ============================================================
     (0, vitest_1.describe)('dispatch — success', () => {
-        (0, vitest_1.it)('dispatches list-watchlist with no params', () => {
-            const result = router.dispatch({ command: 'list-watchlist', options: {} });
+        (0, vitest_1.it)('dispatches list-watchlist with no params', async () => {
+            const result = await router.dispatch({ command: 'list-watchlist', options: {} });
             (0, vitest_1.expect)(result.success).toBe(true);
             (0, vitest_1.expect)(result.command).toBe('list-watchlist');
             (0, vitest_1.expect)(result.timestamp).toBeTruthy();
         });
-        (0, vitest_1.it)('dispatches add-stock with required ticker', () => {
-            const result = router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
+        (0, vitest_1.it)('dispatches add-stock with required ticker', async () => {
+            const result = await router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
             (0, vitest_1.expect)(result.success).toBe(true);
             (0, vitest_1.expect)(result.command).toBe('add-stock');
         });
-        (0, vitest_1.it)('dispatches stop-monitor with no params', () => {
-            const result = router.dispatch({ command: 'stop-monitor', options: {} });
+        (0, vitest_1.it)('dispatches stop-monitor with no params', async () => {
+            const result = await router.dispatch({ command: 'stop-monitor', options: {} });
             (0, vitest_1.expect)(result.success).toBe(true);
             (0, vitest_1.expect)(result.command).toBe('stop-monitor');
         });
-        (0, vitest_1.it)('dispatches get-status with no params', () => {
-            const result = router.dispatch({ command: 'get-status', options: {} });
+        (0, vitest_1.it)('dispatches get-status with no params', async () => {
+            const result = await router.dispatch({ command: 'get-status', options: {} });
             (0, vitest_1.expect)(result.success).toBe(true);
             (0, vitest_1.expect)(result.command).toBe('get-status');
         });
-        (0, vitest_1.it)('dispatches show-signals with optional limit', () => {
-            const result = router.dispatch({ command: 'show-signals', options: { limit: '10' } });
+        (0, vitest_1.it)('dispatches show-signals with optional limit', async () => {
+            const result = await router.dispatch({ command: 'show-signals', options: { limit: '10' } });
             (0, vitest_1.expect)(result.success).toBe(true);
             (0, vitest_1.expect)(result.command).toBe('show-signals');
         });
-        (0, vitest_1.it)('dispatches start-monitor with optional interval', () => {
-            const result = router.dispatch({ command: 'start-monitor', options: { interval: '30' } });
+        (0, vitest_1.it)('dispatches start-monitor with optional interval', async () => {
+            const result = await router.dispatch({ command: 'start-monitor', options: { interval: '30' } });
             (0, vitest_1.expect)(result.success).toBe(true);
             (0, vitest_1.expect)(result.command).toBe('start-monitor');
         });
-        (0, vitest_1.it)('dispatches configure-strategy with all required params', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('dispatches configure-strategy with all required params', async () => {
+            const result = await router.dispatch({
                 command: 'configure-strategy',
                 options: { ticker: 'AAPL', strategy: 'rsi_threshold' },
             });
@@ -114,32 +115,32 @@ const types_js_1 = require("../../src/types.js");
     // Dispatch — missing/invalid params
     // ============================================================
     (0, vitest_1.describe)('dispatch — validation errors', () => {
-        (0, vitest_1.it)('returns error for empty command', () => {
-            const result = router.dispatch({ command: '', options: {} });
+        (0, vitest_1.it)('returns error for empty command', async () => {
+            const result = await router.dispatch({ command: '', options: {} });
             (0, vitest_1.expect)(result.success).toBe(false);
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.MISSING_PARAM);
             (0, vitest_1.expect)(result.error?.message).toContain('No command specified');
         });
-        (0, vitest_1.it)('returns error for unknown command', () => {
-            const result = router.dispatch({ command: 'do-magic', options: {} });
+        (0, vitest_1.it)('returns error for unknown command', async () => {
+            const result = await router.dispatch({ command: 'do-magic', options: {} });
             (0, vitest_1.expect)(result.success).toBe(false);
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.MISSING_PARAM);
             (0, vitest_1.expect)(result.error?.message).toContain('Unknown command');
         });
-        (0, vitest_1.it)('returns error when add-stock missing --ticker', () => {
-            const result = router.dispatch({ command: 'add-stock', options: {} });
+        (0, vitest_1.it)('returns error when add-stock missing --ticker', async () => {
+            const result = await router.dispatch({ command: 'add-stock', options: {} });
             (0, vitest_1.expect)(result.success).toBe(false);
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.MISSING_PARAM);
             (0, vitest_1.expect)(result.error?.message).toContain('--ticker');
         });
-        (0, vitest_1.it)('returns error when remove-stock missing --ticker', () => {
-            const result = router.dispatch({ command: 'remove-stock', options: {} });
+        (0, vitest_1.it)('returns error when remove-stock missing --ticker', async () => {
+            const result = await router.dispatch({ command: 'remove-stock', options: {} });
             (0, vitest_1.expect)(result.success).toBe(false);
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.MISSING_PARAM);
             (0, vitest_1.expect)(result.error?.message).toContain('--ticker');
         });
-        (0, vitest_1.it)('returns error when configure-strategy missing --ticker', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('returns error when configure-strategy missing --ticker', async () => {
+            const result = await router.dispatch({
                 command: 'configure-strategy',
                 options: { strategy: 'rsi_threshold' },
             });
@@ -147,8 +148,8 @@ const types_js_1 = require("../../src/types.js");
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.MISSING_PARAM);
             (0, vitest_1.expect)(result.error?.message).toContain('--ticker');
         });
-        (0, vitest_1.it)('returns error when configure-strategy missing --strategy', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('returns error when configure-strategy missing --strategy', async () => {
+            const result = await router.dispatch({
                 command: 'configure-strategy',
                 options: { ticker: 'AAPL' },
             });
@@ -156,8 +157,8 @@ const types_js_1 = require("../../src/types.js");
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.MISSING_PARAM);
             (0, vitest_1.expect)(result.error?.message).toContain('--strategy');
         });
-        (0, vitest_1.it)('returns error for invalid strategy type', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('returns error for invalid strategy type', async () => {
+            const result = await router.dispatch({
                 command: 'configure-strategy',
                 options: { ticker: 'AAPL', strategy: 'magic_strategy' },
             });
@@ -165,8 +166,8 @@ const types_js_1 = require("../../src/types.js");
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_PARAM_RANGE);
             (0, vitest_1.expect)(result.error?.message).toContain('Invalid strategy type');
         });
-        (0, vitest_1.it)('returns error for invalid --params JSON', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('returns error for invalid --params JSON', async () => {
+            const result = await router.dispatch({
                 command: 'configure-strategy',
                 options: { ticker: 'AAPL', strategy: 'rsi_threshold', params: '{bad json' },
             });
@@ -174,8 +175,8 @@ const types_js_1 = require("../../src/types.js");
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_PARAM_RANGE);
             (0, vitest_1.expect)(result.error?.message).toContain('Invalid JSON');
         });
-        (0, vitest_1.it)('returns error for invalid --enabled value', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('returns error for invalid --enabled value', async () => {
+            const result = await router.dispatch({
                 command: 'configure-strategy',
                 options: { ticker: 'AAPL', strategy: 'rsi_threshold', enabled: 'maybe' },
             });
@@ -183,8 +184,8 @@ const types_js_1 = require("../../src/types.js");
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_PARAM_RANGE);
             (0, vitest_1.expect)(result.error?.message).toContain('--enabled');
         });
-        (0, vitest_1.it)('returns error for invalid --interval (non-integer)', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('returns error for invalid --interval (non-integer)', async () => {
+            const result = await router.dispatch({
                 command: 'start-monitor',
                 options: { interval: 'abc' },
             });
@@ -192,40 +193,40 @@ const types_js_1 = require("../../src/types.js");
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_PARAM_RANGE);
             (0, vitest_1.expect)(result.error?.message).toContain('--interval');
         });
-        (0, vitest_1.it)('returns error for invalid --interval (zero)', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('returns error for invalid --interval (zero)', async () => {
+            const result = await router.dispatch({
                 command: 'start-monitor',
                 options: { interval: '0' },
             });
             (0, vitest_1.expect)(result.success).toBe(false);
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_PARAM_RANGE);
         });
-        (0, vitest_1.it)('returns error for invalid --interval (negative)', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('returns error for invalid --interval (negative)', async () => {
+            const result = await router.dispatch({
                 command: 'start-monitor',
                 options: { interval: '-5' },
             });
             (0, vitest_1.expect)(result.success).toBe(false);
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_PARAM_RANGE);
         });
-        (0, vitest_1.it)('returns error for invalid --limit (negative)', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('returns error for invalid --limit (negative)', async () => {
+            const result = await router.dispatch({
                 command: 'show-signals',
                 options: { limit: '-1' },
             });
             (0, vitest_1.expect)(result.success).toBe(false);
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_PARAM_RANGE);
         });
-        (0, vitest_1.it)('returns error for invalid --limit (non-integer)', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('returns error for invalid --limit (non-integer)', async () => {
+            const result = await router.dispatch({
                 command: 'show-signals',
                 options: { limit: '3.5' },
             });
             (0, vitest_1.expect)(result.success).toBe(false);
             (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_PARAM_RANGE);
         });
-        (0, vitest_1.it)('returns error for invalid ticker format', () => {
-            const result = router.dispatch({
+        (0, vitest_1.it)('returns error for invalid ticker format', async () => {
+            const result = await router.dispatch({
                 command: 'add-stock',
                 options: { ticker: '123INVALID!' },
             });
@@ -238,16 +239,16 @@ const types_js_1 = require("../../src/types.js");
     // CommandResult envelope structure
     // ============================================================
     (0, vitest_1.describe)('CommandResult envelope', () => {
-        (0, vitest_1.it)('success result has success, command, data, and timestamp', () => {
-            const result = router.dispatch({ command: 'list-watchlist', options: {} });
+        (0, vitest_1.it)('success result has success, command, data, and timestamp', async () => {
+            const result = await router.dispatch({ command: 'list-watchlist', options: {} });
             (0, vitest_1.expect)(result).toHaveProperty('success', true);
             (0, vitest_1.expect)(result).toHaveProperty('command', 'list-watchlist');
             (0, vitest_1.expect)(result).toHaveProperty('data');
             (0, vitest_1.expect)(result).toHaveProperty('timestamp');
             (0, vitest_1.expect)(result.error).toBeUndefined();
         });
-        (0, vitest_1.it)('error result has success, command, error, and timestamp', () => {
-            const result = router.dispatch({ command: 'add-stock', options: {} });
+        (0, vitest_1.it)('error result has success, command, error, and timestamp', async () => {
+            const result = await router.dispatch({ command: 'add-stock', options: {} });
             (0, vitest_1.expect)(result).toHaveProperty('success', false);
             (0, vitest_1.expect)(result).toHaveProperty('command', 'add-stock');
             (0, vitest_1.expect)(result).toHaveProperty('error');
@@ -255,8 +256,8 @@ const types_js_1 = require("../../src/types.js");
             (0, vitest_1.expect)(result.error).toHaveProperty('message');
             (0, vitest_1.expect)(result).toHaveProperty('timestamp');
         });
-        (0, vitest_1.it)('timestamp is a valid ISO 8601 string', () => {
-            const result = router.dispatch({ command: 'get-status', options: {} });
+        (0, vitest_1.it)('timestamp is a valid ISO 8601 string', async () => {
+            const result = await router.dispatch({ command: 'get-status', options: {} });
             const date = new Date(result.timestamp);
             (0, vitest_1.expect)(date.toISOString()).toBe(result.timestamp);
         });
@@ -265,15 +266,15 @@ const types_js_1 = require("../../src/types.js");
     // formatOutput
     // ============================================================
     (0, vitest_1.describe)('formatOutput', () => {
-        (0, vitest_1.it)('returns valid JSON string', () => {
-            const result = router.dispatch({ command: 'get-status', options: {} });
+        (0, vitest_1.it)('returns valid JSON string', async () => {
+            const result = await router.dispatch({ command: 'get-status', options: {} });
             const output = router.formatOutput(result);
             const parsed = JSON.parse(output);
             (0, vitest_1.expect)(parsed.success).toBe(true);
             (0, vitest_1.expect)(parsed.command).toBe('get-status');
         });
-        (0, vitest_1.it)('formats error results as valid JSON', () => {
-            const result = router.dispatch({ command: 'add-stock', options: {} });
+        (0, vitest_1.it)('formats error results as valid JSON', async () => {
+            const result = await router.dispatch({ command: 'add-stock', options: {} });
             const output = router.formatOutput(result);
             const parsed = JSON.parse(output);
             (0, vitest_1.expect)(parsed.success).toBe(false);
@@ -284,14 +285,14 @@ const types_js_1 = require("../../src/types.js");
     // execute (end-to-end convenience)
     // ============================================================
     (0, vitest_1.describe)('execute', () => {
-        (0, vitest_1.it)('parses, dispatches, and formats in one call', () => {
-            const output = router.execute(['list-watchlist']);
+        (0, vitest_1.it)('parses, dispatches, and formats in one call', async () => {
+            const output = await router.execute(['list-watchlist']);
             const parsed = JSON.parse(output);
             (0, vitest_1.expect)(parsed.success).toBe(true);
             (0, vitest_1.expect)(parsed.command).toBe('list-watchlist');
         });
-        (0, vitest_1.it)('returns formatted error for missing params', () => {
-            const output = router.execute(['add-stock']);
+        (0, vitest_1.it)('returns formatted error for missing params', async () => {
+            const output = await router.execute(['add-stock']);
             const parsed = JSON.parse(output);
             (0, vitest_1.expect)(parsed.success).toBe(false);
             (0, vitest_1.expect)(parsed.error.code).toBe(types_js_1.ErrorCodes.MISSING_PARAM);
@@ -301,11 +302,11 @@ const types_js_1 = require("../../src/types.js");
     // Handler error catching
     // ============================================================
     (0, vitest_1.describe)('handler error catching', () => {
-        (0, vitest_1.it)('catches handler exceptions and returns error result', () => {
+        (0, vitest_1.it)('catches handler exceptions and returns error result', async () => {
             router.register('list-watchlist', [], () => {
                 throw new Error('boom');
             });
-            const result = router.dispatch({ command: 'list-watchlist', options: {} });
+            const result = await router.dispatch({ command: 'list-watchlist', options: {} });
             (0, vitest_1.expect)(result.success).toBe(false);
             (0, vitest_1.expect)(result.error?.code).toBe('INTERNAL_ERROR');
             (0, vitest_1.expect)(result.error?.message).toContain('boom');
@@ -314,6 +315,55 @@ const types_js_1 = require("../../src/types.js");
     // ============================================================
     // Helper functions
     // ============================================================
+    // ============================================================
+    // History command validation
+    // ============================================================
+    (0, vitest_1.describe)('history command validation', () => {
+        (0, vitest_1.it)('returns MISSING_PARAM when history command is missing --ticker', async () => {
+            const result = await router.dispatch({ command: 'history', options: {} });
+            (0, vitest_1.expect)(result.success).toBe(false);
+            (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.MISSING_PARAM);
+            (0, vitest_1.expect)(result.error?.message).toContain('--ticker');
+        });
+        (0, vitest_1.it)('returns INVALID_TICKER for numeric ticker', async () => {
+            const result = await router.dispatch({ command: 'history', options: { ticker: '123' } });
+            (0, vitest_1.expect)(result.success).toBe(false);
+            (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_TICKER);
+            (0, vitest_1.expect)(result.error?.message).toContain('Invalid ticker format');
+        });
+        (0, vitest_1.it)('returns INVALID_TICKER for ticker exceeding 10 characters', async () => {
+            const result = await router.dispatch({ command: 'history', options: { ticker: 'TOOLONGTICKERX' } });
+            (0, vitest_1.expect)(result.success).toBe(false);
+            (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_TICKER);
+            (0, vitest_1.expect)(result.error?.message).toContain('Invalid ticker format');
+        });
+        (0, vitest_1.it)('returns INVALID_PARAM_RANGE for invalid --period with valid values listed', async () => {
+            const result = await router.dispatch({ command: 'history', options: { ticker: 'AAPL', period: '10y' } });
+            (0, vitest_1.expect)(result.success).toBe(false);
+            (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_PARAM_RANGE);
+            (0, vitest_1.expect)(result.error?.message).toContain('Invalid period');
+            (0, vitest_1.expect)(result.error?.message).toContain('1mo');
+            (0, vitest_1.expect)(result.error?.message).toContain('5y');
+        });
+        (0, vitest_1.it)('returns INVALID_PARAM_RANGE for invalid --interval with valid values listed', async () => {
+            const result = await router.dispatch({ command: 'history', options: { ticker: 'AAPL', interval: '5m' } });
+            (0, vitest_1.expect)(result.success).toBe(false);
+            (0, vitest_1.expect)(result.error?.code).toBe(types_js_1.ErrorCodes.INVALID_PARAM_RANGE);
+            (0, vitest_1.expect)(result.error?.message).toContain('Invalid interval');
+            (0, vitest_1.expect)(result.error?.message).toContain('1d');
+            (0, vitest_1.expect)(result.error?.message).toContain('1wk');
+            (0, vitest_1.expect)(result.error?.message).toContain('1mo');
+        });
+        (0, vitest_1.it)('dispatches successfully with valid ticker, period, and interval', async () => {
+            const result = await router.dispatch({ command: 'history', options: { ticker: 'AAPL', period: '3mo', interval: '1wk' } });
+            (0, vitest_1.expect)(result.success).toBe(true);
+            (0, vitest_1.expect)(result.command).toBe('history');
+        });
+        (0, vitest_1.it)('history command is registered in getRegisteredCommands()', () => {
+            const commands = router.getRegisteredCommands();
+            (0, vitest_1.expect)(commands).toContain('history');
+        });
+    });
     (0, vitest_1.describe)('helper functions', () => {
         (0, vitest_1.it)('successResult creates proper envelope', () => {
             const result = (0, command_router_js_1.successResult)('test-cmd', { foo: 'bar' });

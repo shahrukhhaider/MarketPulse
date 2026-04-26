@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { MonitoringEngine } from '../../src/monitoring-engine.js';
 import { PriceFeedClient } from '../../src/price-feed-client.js';
+import type { YahooFinanceClient } from '../../src/price-feed-client.js';
 import { PriceDataStore } from '../../src/price-data-store.js';
 import { SignalStore } from '../../src/signal-store.js';
 import type { WatchlistEntry, PricePoint } from '../../src/types.js';
@@ -17,6 +18,42 @@ function makeWatchlistEntry(overrides: Partial<WatchlistEntry> = {}): WatchlistE
   };
 }
 
+/**
+ * A simple mock YahooFinanceClient that returns deterministic prices.
+ * Uses a hash of the ticker symbol to generate a stable price.
+ */
+function createMockYahooClient(): YahooFinanceClient {
+  return {
+    async chart(): Promise<any> { return { quotes: [] }; },
+    async quote(symbol: string | string[]): Promise<any> {
+      if (Array.isArray(symbol)) {
+        return symbol.map((s) => ({
+          symbol: s.toUpperCase(),
+          regularMarketPrice: getMockPrice(s),
+        }));
+      }
+      return {
+        symbol: (symbol as string).toUpperCase(),
+        regularMarketPrice: getMockPrice(symbol as string),
+      };
+    },
+  };
+}
+
+function getMockPrice(ticker: string): number {
+  // Simple deterministic price based on ticker characters
+  let hash = 0;
+  for (const ch of ticker.toUpperCase()) {
+    hash = (hash * 31 + ch.charCodeAt(0)) % 10000;
+  }
+  return 100 + (hash % 200); // Price between 100 and 299
+}
+
+/** Helper: flush microtask queue so async start() completes its first poll */
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe('MonitoringEngine', () => {
   let tmpDir: string;
   let signalFilePath: string;
@@ -27,7 +64,7 @@ describe('MonitoringEngine', () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'monitoring-engine-test-'));
     signalFilePath = path.join(tmpDir, 'signals-12345.json');
-    priceFeedClient = new PriceFeedClient();
+    priceFeedClient = new PriceFeedClient(createMockYahooClient());
     priceDataStore = new PriceDataStore();
     engine = new MonitoringEngine(priceFeedClient, priceDataStore);
   });
@@ -38,21 +75,25 @@ describe('MonitoringEngine', () => {
   });
 
   describe('start and stop', () => {
-    it('starts and sets running state', () => {
+    it('starts and sets running state', async () => {
       engine.start(60, [makeWatchlistEntry()], signalFilePath);
       expect(engine.isRunning()).toBe(true);
+      await flushMicrotasks();
     });
 
-    it('stops and clears running state', () => {
+    it('stops and clears running state', async () => {
       engine.start(60, [makeWatchlistEntry()], signalFilePath);
+      await flushMicrotasks();
       engine.stop();
       expect(engine.isRunning()).toBe(false);
     });
 
-    it('does nothing when start called while already running', () => {
+    it('does nothing when start called while already running', async () => {
       engine.start(60, [makeWatchlistEntry()], signalFilePath);
+      await flushMicrotasks();
       const cyclesBefore = engine.getPollCyclesCompleted();
       engine.start(60, [makeWatchlistEntry()], signalFilePath);
+      await flushMicrotasks();
       // Should not reset cycles
       expect(engine.getPollCyclesCompleted()).toBe(cyclesBefore);
     });
@@ -61,23 +102,26 @@ describe('MonitoringEngine', () => {
       expect(() => engine.stop()).not.toThrow();
     });
 
-    it('runs first poll immediately on start', () => {
+    it('runs first poll immediately on start', async () => {
       engine.start(3600, [makeWatchlistEntry()], signalFilePath);
+      await flushMicrotasks();
       expect(engine.getPollCyclesCompleted()).toBeGreaterThanOrEqual(1);
     });
   });
 
   describe('pollCycle', () => {
-    it('returns success with empty watchlist', () => {
+    it('returns success with empty watchlist', async () => {
       engine.start(3600, [], signalFilePath);
+      await flushMicrotasks();
       // First poll already ran in start, check state
       expect(engine.getPollCyclesCompleted()).toBe(1);
       expect(engine.getLastPollTimestamp()).toBeTruthy();
     });
 
-    it('fetches prices and stores them', () => {
+    it('fetches prices and stores them', async () => {
       const entry = makeWatchlistEntry({ ticker: 'AAPL' });
       engine.start(3600, [entry], signalFilePath);
+      await flushMicrotasks();
 
       const history = priceDataStore.getPriceHistory('AAPL');
       expect(history.length).toBeGreaterThanOrEqual(1);
@@ -85,7 +129,7 @@ describe('MonitoringEngine', () => {
       expect(typeof history[0].price).toBe('number');
     });
 
-    it('calculates price change from previous price', () => {
+    it('calculates price change from previous price', async () => {
       // Seed a previous price
       priceDataStore.addPricePoint('AAPL', {
         ticker: 'AAPL',
@@ -95,6 +139,7 @@ describe('MonitoringEngine', () => {
 
       const entry = makeWatchlistEntry({ ticker: 'AAPL' });
       engine.start(3600, [entry], signalFilePath);
+      await flushMicrotasks();
 
       const history = priceDataStore.getPriceHistory('AAPL');
       const latest = history[history.length - 1];
@@ -105,10 +150,11 @@ describe('MonitoringEngine', () => {
       expect(typeof latest.changePercent).toBe('number');
     });
 
-    it('handles price feed unavailability gracefully', () => {
+    it('handles price feed unavailability gracefully', async () => {
       priceFeedClient.setAvailable(false);
       const entry = makeWatchlistEntry({ ticker: 'AAPL' });
       engine.start(3600, [entry], signalFilePath);
+      await flushMicrotasks();
 
       // Should still complete the cycle
       expect(engine.getPollCyclesCompleted()).toBe(1);
@@ -117,16 +163,17 @@ describe('MonitoringEngine', () => {
       expect(history.length).toBe(0);
     });
 
-    it('retains last prices when feed fails', () => {
+    it('retains last prices when feed fails', async () => {
       // First poll with feed available
       const entry = makeWatchlistEntry({ ticker: 'AAPL' });
       engine.start(3600, [entry], signalFilePath);
+      await flushMicrotasks();
       const historyBefore = priceDataStore.getPriceHistory('AAPL');
       expect(historyBefore.length).toBe(1);
 
       // Make feed unavailable and poll again
       priceFeedClient.setAvailable(false);
-      engine.pollCycle();
+      await engine.pollCycle();
 
       // Previous prices should still be there
       const historyAfter = priceDataStore.getPriceHistory('AAPL');
@@ -134,12 +181,13 @@ describe('MonitoringEngine', () => {
       expect(historyAfter[0]).toEqual(historyBefore[0]);
     });
 
-    it('increments poll cycle count', () => {
+    it('increments poll cycle count', async () => {
       engine.start(3600, [makeWatchlistEntry()], signalFilePath);
+      await flushMicrotasks();
       expect(engine.getPollCyclesCompleted()).toBe(1);
-      engine.pollCycle();
+      await engine.pollCycle();
       expect(engine.getPollCyclesCompleted()).toBe(2);
-      engine.pollCycle();
+      await engine.pollCycle();
       expect(engine.getPollCyclesCompleted()).toBe(3);
     });
   });
@@ -356,8 +404,9 @@ describe('MonitoringEngine', () => {
   });
 
   describe('writeSignals', () => {
-    it('writes signals to signal store', () => {
+    it('writes signals to signal store', async () => {
       engine.start(3600, [], signalFilePath);
+      await flushMicrotasks();
 
       const signals = [
         {
@@ -385,7 +434,7 @@ describe('MonitoringEngine', () => {
   });
 
   describe('full poll cycle with strategies', () => {
-    it('generates signals during poll cycle for breakout strategy', () => {
+    it('generates signals during poll cycle for breakout strategy', async () => {
       // Seed price history so breakout can trigger
       const entry = makeWatchlistEntry({
         ticker: 'AAPL',
@@ -399,11 +448,11 @@ describe('MonitoringEngine', () => {
       });
 
       engine.start(3600, [entry], signalFilePath);
+      await flushMicrotasks();
 
-      // AAPL mock price is deterministic and > 10, so should trigger BUY
+      // Mock price for AAPL is > 10, so should trigger BUY
       const store = new SignalStore(signalFilePath);
       const signals = store.readSignals();
-      // The mock price for AAPL is well above 10, so we expect a BUY signal
       expect(signals.length).toBeGreaterThanOrEqual(1);
       if (signals.length > 0) {
         expect(signals[0].direction).toBe('BUY');

@@ -39,6 +39,30 @@ const path = __importStar(require("node:path"));
 const os = __importStar(require("node:os"));
 const monitor_process_js_1 = require("../../src/monitor-process.js");
 const ConfigStore = __importStar(require("../../src/config-store.js"));
+/** Helper: flush microtask queue so async start() completes its first poll */
+function flushMicrotasks() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+}
+/**
+ * A mock YahooFinanceClient that returns deterministic prices for known tickers.
+ */
+function createMockYahooClient() {
+    return {
+        async chart() { return { quotes: [] }; },
+        async quote(symbol) {
+            if (Array.isArray(symbol)) {
+                return symbol.map((s) => ({
+                    symbol: s.toUpperCase(),
+                    regularMarketPrice: 200,
+                }));
+            }
+            return {
+                symbol: symbol.toUpperCase(),
+                regularMarketPrice: 200,
+            };
+        },
+    };
+}
 (0, vitest_1.describe)('monitor-process', () => {
     (0, vitest_1.describe)('parseArgs', () => {
         (0, vitest_1.it)('parses all three arguments correctly', () => {
@@ -139,10 +163,12 @@ const ConfigStore = __importStar(require("../../src/config-store.js"));
         (0, vitest_1.afterEach)(() => {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
-        (0, vitest_1.it)('loads config and starts the monitoring engine', () => {
-            const { engine, priceDataStore, priceDataFilePath } = (0, monitor_process_js_1.startMonitorProcess)({ configPath, dataDir, interval: 3600 }, 12345);
+        (0, vitest_1.it)('loads config and starts the monitoring engine', async () => {
+            const { engine, priceDataStore, priceDataFilePath } = (0, monitor_process_js_1.startMonitorProcess)({ configPath, dataDir, interval: 3600 }, 12345, createMockYahooClient());
             (0, vitest_1.expect)(engine.isRunning()).toBe(true);
             (0, vitest_1.expect)(priceDataFilePath).toBe(path.join(dataDir, 'price-data.json'));
+            // Wait for the async first poll to complete
+            await flushMicrotasks();
             // At least one poll cycle should have run (immediate poll on start)
             (0, vitest_1.expect)(engine.getPollCyclesCompleted()).toBeGreaterThanOrEqual(1);
             // Price data should have been fetched for AAPL
@@ -150,28 +176,32 @@ const ConfigStore = __importStar(require("../../src/config-store.js"));
             (0, vitest_1.expect)(history.length).toBeGreaterThanOrEqual(1);
             engine.stop();
         });
-        (0, vitest_1.it)('creates signal file in data dir based on PID', () => {
-            const { engine } = (0, monitor_process_js_1.startMonitorProcess)({ configPath, dataDir, interval: 3600 }, 54321);
+        (0, vitest_1.it)('creates signal file in data dir based on PID', async () => {
+            const { engine } = (0, monitor_process_js_1.startMonitorProcess)({ configPath, dataDir, interval: 3600 }, 54321, createMockYahooClient());
+            // Wait for the async first poll to complete
+            await flushMicrotasks();
             // The signal file should exist after the first poll cycle generates signals
             const signalFilePath = path.join(dataDir, 'signals-54321.json');
             // Signal file is created only if signals are generated
-            // With price_breakout and AAPL mock price > 150, a BUY signal should be written
+            // With price_breakout and AAPL mock price (200) > 150, a BUY signal should be written
             (0, vitest_1.expect)(fs.existsSync(signalFilePath)).toBe(true);
             engine.stop();
         });
         (0, vitest_1.it)('throws when config file is invalid', () => {
             fs.writeFileSync(configPath, 'not valid json');
-            (0, vitest_1.expect)(() => (0, monitor_process_js_1.startMonitorProcess)({ configPath, dataDir, interval: 3600 }, 12345)).toThrow('Failed to load config');
+            (0, vitest_1.expect)(() => (0, monitor_process_js_1.startMonitorProcess)({ configPath, dataDir, interval: 3600 }, 12345, createMockYahooClient())).toThrow('Failed to load config');
         });
-        (0, vitest_1.it)('works with empty watchlist', () => {
+        (0, vitest_1.it)('works with empty watchlist', async () => {
             const emptyConfig = ConfigStore.getDefault();
             ConfigStore.save(emptyConfig, configPath);
-            const { engine } = (0, monitor_process_js_1.startMonitorProcess)({ configPath, dataDir, interval: 3600 }, 12345);
+            const { engine } = (0, monitor_process_js_1.startMonitorProcess)({ configPath, dataDir, interval: 3600 }, 12345, createMockYahooClient());
             (0, vitest_1.expect)(engine.isRunning()).toBe(true);
+            // Wait for the async first poll to complete
+            await flushMicrotasks();
             (0, vitest_1.expect)(engine.getPollCyclesCompleted()).toBe(1);
             engine.stop();
         });
-        (0, vitest_1.it)('loads existing price data from data dir', () => {
+        (0, vitest_1.it)('loads existing price data from data dir', async () => {
             // Write some existing price data
             const priceDataPath = path.join(dataDir, 'price-data.json');
             const existingData = {
@@ -180,7 +210,9 @@ const ConfigStore = __importStar(require("../../src/config-store.js"));
                 ],
             };
             fs.writeFileSync(priceDataPath, JSON.stringify(existingData));
-            const { engine, priceDataStore } = (0, monitor_process_js_1.startMonitorProcess)({ configPath, dataDir, interval: 3600 }, 12345);
+            const { engine, priceDataStore } = (0, monitor_process_js_1.startMonitorProcess)({ configPath, dataDir, interval: 3600 }, 12345, createMockYahooClient());
+            // Wait for the async first poll to complete
+            await flushMicrotasks();
             // Should have the pre-existing data point plus the new one from the poll
             const history = priceDataStore.getPriceHistory('AAPL');
             (0, vitest_1.expect)(history.length).toBeGreaterThanOrEqual(2);

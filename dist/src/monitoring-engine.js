@@ -38,10 +38,13 @@ class MonitoringEngine {
         // Initialize lastSignals from existing signal store to support duplicate suppression across restarts
         this.initializeLastSignals();
         // Run first poll immediately, then at interval
-        this.pollCycle();
-        this.intervalId = setInterval(() => {
-            this.pollCycle();
-        }, interval * 1000);
+        const startAsync = async () => {
+            await this.pollCycle();
+            this.intervalId = setInterval(async () => {
+                await this.pollCycle();
+            }, interval * 1000);
+        };
+        startAsync();
     }
     stop() {
         if (!this.running) {
@@ -62,7 +65,7 @@ class MonitoringEngine {
     getLastPollTimestamp() {
         return this.lastPollTimestamp;
     }
-    pollCycle() {
+    async pollCycle() {
         const errors = [];
         let pricesFetched = 0;
         let signalsGenerated = 0;
@@ -74,7 +77,7 @@ class MonitoringEngine {
             return { success: true, timestamp, pricesFetched: 0, signalsGenerated: 0, errors: [] };
         }
         // Fetch prices for all watchlist stocks
-        const batchResult = this.priceFeedClient.fetchBatchPrices(tickers);
+        const batchResult = await this.priceFeedClient.fetchBatchPrices(tickers);
         if (!batchResult.success) {
             // Price feed unavailable: log, retain last prices, retry next cycle
             const errorMsg = `Price feed unavailable: ${batchResult.error}`;

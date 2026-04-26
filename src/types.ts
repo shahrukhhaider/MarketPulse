@@ -158,3 +158,28 @@ export const ErrorCodes = {
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
+
+// ============================================================
+// Historical Data Types
+// ============================================================
+
+export type HistoricalPeriod = '1mo' | '3mo' | '6mo' | '1y' | '2y' | '5y';
+export type HistoricalInterval = '1d' | '1wk' | '1mo';
+
+export interface HistoricalDataPoint {
+  date: string;       // ISO 8601 date string, e.g. "2024-01-15"
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface HistoricalData {
+  ticker: string;           // Uppercased ticker symbol
+  interval: HistoricalInterval;
+  dataPoints: HistoricalDataPoint[];
+}
+
+export const VALID_PERIODS: HistoricalPeriod[] = ['1mo', '3mo', '6mo', '1y', '2y', '5y'];
+export const VALID_INTERVALS: HistoricalInterval[] = ['1d', '1wk', '1mo'];

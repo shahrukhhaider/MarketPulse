@@ -97,4 +97,21 @@ export declare const ErrorCodes: {
     readonly TERMINATE_FAILED: "TERMINATE_FAILED";
 };
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
+export type HistoricalPeriod = '1mo' | '3mo' | '6mo' | '1y' | '2y' | '5y';
+export type HistoricalInterval = '1d' | '1wk' | '1mo';
+export interface HistoricalDataPoint {
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+}
+export interface HistoricalData {
+    ticker: string;
+    interval: HistoricalInterval;
+    dataPoints: HistoricalDataPoint[];
+}
+export declare const VALID_PERIODS: HistoricalPeriod[];
+export declare const VALID_INTERVALS: HistoricalInterval[];
 //# sourceMappingURL=types.d.ts.map

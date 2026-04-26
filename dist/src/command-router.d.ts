@@ -3,8 +3,8 @@ export interface ParsedCommand {
     command: string;
     options: Record<string, string>;
 }
-export type CommandHandler = (options: Record<string, string>) => CommandResult;
-declare const VALID_COMMANDS: readonly ["add-stock", "remove-stock", "list-watchlist", "start-monitor", "stop-monitor", "get-status", "configure-strategy", "show-signals"];
+export type CommandHandler = (options: Record<string, string>) => CommandResult | Promise<CommandResult>;
+declare const VALID_COMMANDS: readonly ["add-stock", "remove-stock", "list-watchlist", "start-monitor", "stop-monitor", "get-status", "configure-strategy", "show-signals", "history"];
 export type CommandName = (typeof VALID_COMMANDS)[number];
 export declare class CommandRouter {
     private commands;
@@ -27,7 +27,7 @@ export declare class CommandRouter {
      * Dispatch a parsed command: validate the command name, check required params,
      * run additional validation (e.g. strategy type), then call the handler.
      */
-    dispatch(parsed: ParsedCommand): CommandResult;
+    dispatch(parsed: ParsedCommand): Promise<CommandResult>;
     /**
      * Format a CommandResult as a JSON string for stdout output.
      */
@@ -35,7 +35,7 @@ export declare class CommandRouter {
     /**
      * Convenience: parse + dispatch + formatOutput in one call.
      */
-    execute(args: string[]): string;
+    execute(args: string[]): Promise<string>;
     /**
      * Get the list of registered command names.
      */

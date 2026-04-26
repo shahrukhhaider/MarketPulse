@@ -3,7 +3,45 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { createWiredRouter, type WiredRouter } from '../../src/command-wiring.js';
+import type { YahooFinanceClient } from '../../src/price-feed-client.js';
 import { ErrorCodes } from '../../src/types.js';
+
+/**
+ * A mock YahooFinanceClient that returns deterministic prices for known tickers.
+ */
+function createMockYahooClient(): YahooFinanceClient {
+  const knownTickers = new Set(['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'JPM', 'V', 'WMT']);
+  return {
+    async quote(symbol: string | string[]): Promise<any> {
+      if (Array.isArray(symbol)) {
+        return symbol.map((s) => {
+          const upper = s.toUpperCase();
+          if (!knownTickers.has(upper)) {
+            throw new Error(`Symbol not found: ${upper}`);
+          }
+          return { symbol: upper, regularMarketPrice: 150 };
+        });
+      }
+      const upper = (symbol as string).toUpperCase();
+      if (!knownTickers.has(upper)) {
+        throw new Error(`Symbol not found: ${upper}`);
+      }
+      return { symbol: upper, regularMarketPrice: 150 };
+    },
+    async chart(symbol: string, _options?: Record<string, unknown>): Promise<any> {
+      const upper = (symbol as string).toUpperCase();
+      if (!knownTickers.has(upper)) {
+        throw new Error(`Symbol not found: ${upper}`);
+      }
+      return {
+        quotes: [
+          { date: new Date('2024-01-15'), open: 100, high: 105, low: 99, close: 103, volume: 1000000 },
+          { date: new Date('2024-01-16'), open: 103, high: 108, low: 101, close: 107, volume: 1200000 },
+        ],
+      };
+    },
+  };
+}
 
 describe('Command Wiring', () => {
   let tmpDir: string;
@@ -15,6 +53,7 @@ describe('Command Wiring', () => {
       dataDir: tmpDir,
       configPath: path.join(tmpDir, 'config.json'),
       priceDataPath: path.join(tmpDir, 'price-data.json'),
+      yahooFinanceClient: createMockYahooClient(),
     });
   });
 
@@ -27,9 +66,9 @@ describe('Command Wiring', () => {
   // ============================================================
 
   describe('initialization', () => {
-    it('creates a router with all 8 commands registered', () => {
+    it('creates a router with all 9 commands registered', () => {
       const commands = wired.router.getRegisteredCommands();
-      expect(commands).toHaveLength(8);
+      expect(commands).toHaveLength(9);
       expect(commands).toContain('add-stock');
       expect(commands).toContain('remove-stock');
       expect(commands).toContain('list-watchlist');
@@ -40,7 +79,7 @@ describe('Command Wiring', () => {
       expect(commands).toContain('show-signals');
     });
 
-    it('loads existing config on initialization', () => {
+    it('loads existing config on initialization', async () => {
       const configPath = path.join(tmpDir, 'config.json');
       const existingConfig = {
         watchlist: [{ ticker: 'AAPL', addedAt: '2025-01-01T00:00:00Z', strategies: [] }],
@@ -52,16 +91,17 @@ describe('Command Wiring', () => {
         dataDir: tmpDir,
         configPath,
         priceDataPath: path.join(tmpDir, 'price-data.json'),
+        yahooFinanceClient: createMockYahooClient(),
       });
 
-      const result = w.router.dispatch({ command: 'list-watchlist', options: {} });
+      const result = await w.router.dispatch({ command: 'list-watchlist', options: {} });
       expect(result.success).toBe(true);
       expect(result.data.stocks).toHaveLength(1);
       expect(result.data.stocks[0].ticker).toBe('AAPL');
     });
 
-    it('uses default config when config file is missing', () => {
-      const result = wired.router.dispatch({ command: 'list-watchlist', options: {} });
+    it('uses default config when config file is missing', async () => {
+      const result = await wired.router.dispatch({ command: 'list-watchlist', options: {} });
       expect(result.success).toBe(true);
       expect(result.data.stocks).toHaveLength(0);
     });
@@ -72,31 +112,31 @@ describe('Command Wiring', () => {
   // ============================================================
 
   describe('add-stock handler', () => {
-    it('adds a valid stock to the watchlist', () => {
-      const result = wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
+    it('adds a valid stock to the watchlist', async () => {
+      const result = await wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
       expect(result.success).toBe(true);
       expect(result.command).toBe('add-stock');
       expect(result.data.ticker).toBe('AAPL');
       expect(result.data.addedAt).toBeTruthy();
     });
 
-    it('persists the added stock to config file', () => {
-      wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
+    it('persists the added stock to config file', async () => {
+      await wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
       const configPath = path.join(tmpDir, 'config.json');
       const saved = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
       expect(saved.watchlist).toHaveLength(1);
       expect(saved.watchlist[0].ticker).toBe('AAPL');
     });
 
-    it('returns error for invalid ticker', () => {
-      const result = wired.router.dispatch({ command: 'add-stock', options: { ticker: 'ZZZZZZ' } });
+    it('returns error for invalid ticker', async () => {
+      const result = await wired.router.dispatch({ command: 'add-stock', options: { ticker: 'ZZZZZZ' } });
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe(ErrorCodes.INVALID_TICKER);
     });
 
-    it('returns error for duplicate stock', () => {
-      wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
-      const result = wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
+    it('returns error for duplicate stock', async () => {
+      await wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
+      const result = await wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe(ErrorCodes.DUPLICATE_STOCK);
     });
@@ -107,22 +147,22 @@ describe('Command Wiring', () => {
   // ============================================================
 
   describe('remove-stock handler', () => {
-    it('removes an existing stock from the watchlist', () => {
-      wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
-      const result = wired.router.dispatch({ command: 'remove-stock', options: { ticker: 'AAPL' } });
+    it('removes an existing stock from the watchlist', async () => {
+      await wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
+      const result = await wired.router.dispatch({ command: 'remove-stock', options: { ticker: 'AAPL' } });
       expect(result.success).toBe(true);
       expect(result.data.ticker).toBe('AAPL');
     });
 
-    it('returns error when removing non-existent stock', () => {
-      const result = wired.router.dispatch({ command: 'remove-stock', options: { ticker: 'AAPL' } });
+    it('returns error when removing non-existent stock', async () => {
+      const result = await wired.router.dispatch({ command: 'remove-stock', options: { ticker: 'AAPL' } });
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe(ErrorCodes.STOCK_NOT_FOUND);
     });
 
-    it('persists removal to config file', () => {
-      wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
-      wired.router.dispatch({ command: 'remove-stock', options: { ticker: 'AAPL' } });
+    it('persists removal to config file', async () => {
+      await wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
+      await wired.router.dispatch({ command: 'remove-stock', options: { ticker: 'AAPL' } });
       const configPath = path.join(tmpDir, 'config.json');
       const saved = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
       expect(saved.watchlist).toHaveLength(0);
@@ -134,15 +174,15 @@ describe('Command Wiring', () => {
   // ============================================================
 
   describe('list-watchlist handler', () => {
-    it('returns empty list when no stocks added', () => {
-      const result = wired.router.dispatch({ command: 'list-watchlist', options: {} });
+    it('returns empty list when no stocks added', async () => {
+      const result = await wired.router.dispatch({ command: 'list-watchlist', options: {} });
       expect(result.success).toBe(true);
       expect(result.data.stocks).toHaveLength(0);
       expect(result.data.count).toBe(0);
     });
 
-    it('returns stocks with last known price from PriceDataStore', () => {
-      wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
+    it('returns stocks with last known price from PriceDataStore', async () => {
+      await wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
 
       // Add a price point to the store
       wired.priceDataStore.addPricePoint('AAPL', {
@@ -151,7 +191,7 @@ describe('Command Wiring', () => {
         timestamp: '2025-01-15T10:00:00Z',
       });
 
-      const result = wired.router.dispatch({ command: 'list-watchlist', options: {} });
+      const result = await wired.router.dispatch({ command: 'list-watchlist', options: {} });
       expect(result.success).toBe(true);
       expect(result.data.stocks).toHaveLength(1);
       expect(result.data.stocks[0].ticker).toBe('AAPL');
@@ -159,9 +199,9 @@ describe('Command Wiring', () => {
       expect(result.data.stocks[0].lastPriceTimestamp).toBe('2025-01-15T10:00:00Z');
     });
 
-    it('returns null price when no price data exists', () => {
-      wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
-      const result = wired.router.dispatch({ command: 'list-watchlist', options: {} });
+    it('returns null price when no price data exists', async () => {
+      await wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
+      const result = await wired.router.dispatch({ command: 'list-watchlist', options: {} });
       expect(result.data.stocks[0].lastPrice).toBeNull();
       expect(result.data.stocks[0].lastPriceTimestamp).toBeNull();
     });
@@ -172,8 +212,8 @@ describe('Command Wiring', () => {
   // ============================================================
 
   describe('get-status handler', () => {
-    it('returns stopped state when no monitor is running', () => {
-      const result = wired.router.dispatch({ command: 'get-status', options: {} });
+    it('returns stopped state when no monitor is running', async () => {
+      const result = await wired.router.dispatch({ command: 'get-status', options: {} });
       expect(result.success).toBe(true);
       expect(result.data.state).toBe('stopped');
     });
@@ -184,8 +224,8 @@ describe('Command Wiring', () => {
   // ============================================================
 
   describe('stop-monitor handler', () => {
-    it('returns error when no monitor is running', () => {
-      const result = wired.router.dispatch({ command: 'stop-monitor', options: {} });
+    it('returns error when no monitor is running', async () => {
+      const result = await wired.router.dispatch({ command: 'stop-monitor', options: {} });
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe(ErrorCodes.MONITOR_NOT_RUNNING);
     });
@@ -196,12 +236,12 @@ describe('Command Wiring', () => {
   // ============================================================
 
   describe('configure-strategy handler', () => {
-    beforeEach(() => {
-      wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
+    beforeEach(async () => {
+      await wired.router.dispatch({ command: 'add-stock', options: { ticker: 'AAPL' } });
     });
 
-    it('configures a strategy with params', () => {
-      const result = wired.router.dispatch({
+    it('configures a strategy with params', async () => {
+      const result = await wired.router.dispatch({
         command: 'configure-strategy',
         options: {
           ticker: 'AAPL',
@@ -214,8 +254,8 @@ describe('Command Wiring', () => {
       expect(result.data.strategy).toBe('rsi_threshold');
     });
 
-    it('configures a strategy with default params when none provided', () => {
-      const result = wired.router.dispatch({
+    it('configures a strategy with default params when none provided', async () => {
+      const result = await wired.router.dispatch({
         command: 'configure-strategy',
         options: { ticker: 'AAPL', strategy: 'moving_average_crossover' },
       });
@@ -223,8 +263,8 @@ describe('Command Wiring', () => {
       expect(result.data.params).toEqual({ shortWindow: 10, longWindow: 50 });
     });
 
-    it('returns error for stock not in watchlist', () => {
-      const result = wired.router.dispatch({
+    it('returns error for stock not in watchlist', async () => {
+      const result = await wired.router.dispatch({
         command: 'configure-strategy',
         options: { ticker: 'GOOGL', strategy: 'rsi_threshold' },
       });
@@ -232,8 +272,8 @@ describe('Command Wiring', () => {
       expect(result.error?.code).toBe(ErrorCodes.STOCK_NOT_FOUND);
     });
 
-    it('returns error for invalid strategy params', () => {
-      const result = wired.router.dispatch({
+    it('returns error for invalid strategy params', async () => {
+      const result = await wired.router.dispatch({
         command: 'configure-strategy',
         options: {
           ticker: 'AAPL',
@@ -245,16 +285,16 @@ describe('Command Wiring', () => {
       expect(result.error?.code).toBe(ErrorCodes.INVALID_PARAM_RANGE);
     });
 
-    it('toggles strategy enabled state', () => {
+    it('toggles strategy enabled state', async () => {
       // First configure the strategy
-      wired.router.dispatch({
+      await wired.router.dispatch({
         command: 'configure-strategy',
         options: { ticker: 'AAPL', strategy: 'rsi_threshold',
           params: '{"period":14,"overbought":70,"oversold":30}' },
       });
 
       // Disable it
-      const result = wired.router.dispatch({
+      const result = await wired.router.dispatch({
         command: 'configure-strategy',
         options: { ticker: 'AAPL', strategy: 'rsi_threshold', enabled: 'false' },
       });
@@ -262,8 +302,8 @@ describe('Command Wiring', () => {
       expect(result.data.enabled).toBe(false);
     });
 
-    it('persists strategy configuration to config file', () => {
-      wired.router.dispatch({
+    it('persists strategy configuration to config file', async () => {
+      await wired.router.dispatch({
         command: 'configure-strategy',
         options: {
           ticker: 'AAPL',
@@ -284,14 +324,14 @@ describe('Command Wiring', () => {
   // ============================================================
 
   describe('show-signals handler', () => {
-    it('returns empty signals when no active session', () => {
-      const result = wired.router.dispatch({ command: 'show-signals', options: {} });
+    it('returns empty signals when no active session', async () => {
+      const result = await wired.router.dispatch({ command: 'show-signals', options: {} });
       expect(result.success).toBe(true);
       expect(result.data.signals).toHaveLength(0);
       expect(result.data.message).toContain('No active monitoring session');
     });
 
-    it('reads signals from signal file when session exists', () => {
+    it('reads signals from signal file when session exists', async () => {
       // Simulate an active session by writing a signal file and setting up ProcessManager
       const signalFilePath = path.join(tmpDir, 'signals-99999.json');
       const signalData = {
@@ -319,7 +359,6 @@ describe('Command Wiring', () => {
       fs.writeFileSync(signalFilePath, JSON.stringify(signalData), 'utf-8');
 
       // We need to mock the processManager to return a signal file path
-      // Use a fresh wired router and manually set the signal file path
       const mockProcessManager = wired.processManager as any;
       mockProcessManager.processInfo = {
         pid: 99999,
@@ -328,7 +367,7 @@ describe('Command Wiring', () => {
         pollingInterval: 60,
       };
 
-      const result = wired.router.dispatch({ command: 'show-signals', options: {} });
+      const result = await wired.router.dispatch({ command: 'show-signals', options: {} });
       expect(result.success).toBe(true);
       expect(result.data.signals).toHaveLength(2);
       // Should be ordered by timestamp descending
@@ -336,7 +375,7 @@ describe('Command Wiring', () => {
       expect(result.data.signals[1].timestamp).toBe('2025-01-15T10:01:00Z');
     });
 
-    it('respects --limit option', () => {
+    it('respects --limit option', async () => {
       const signalFilePath = path.join(tmpDir, 'signals-99999.json');
       const signalData = {
         sessionPid: 99999,
@@ -357,10 +396,75 @@ describe('Command Wiring', () => {
         pollingInterval: 60,
       };
 
-      const result = wired.router.dispatch({ command: 'show-signals', options: { limit: '2' } });
+      const result = await wired.router.dispatch({ command: 'show-signals', options: { limit: '2' } });
       expect(result.success).toBe(true);
       expect(result.data.signals).toHaveLength(2);
       expect(result.data.count).toBe(2);
+    });
+  });
+
+  // ============================================================
+  // history handler
+  // ============================================================
+
+  describe('history handler', () => {
+    it('returns historical data for a valid ticker', async () => {
+      const result = await wired.router.dispatch({
+        command: 'history',
+        options: { ticker: 'AAPL' },
+      });
+      expect(result.success).toBe(true);
+      expect(result.command).toBe('history');
+      expect(result.data.ticker).toBe('AAPL');
+      expect(result.data.period).toBe('1y');
+      expect(result.data.interval).toBe('1d');
+      expect(result.data.dataPoints).toHaveLength(2);
+      expect(result.data.count).toBe(2);
+    });
+
+    it('passes period and interval to fetchHistoricalData', async () => {
+      const result = await wired.router.dispatch({
+        command: 'history',
+        options: { ticker: 'MSFT', period: '3mo', interval: '1wk' },
+      });
+      expect(result.success).toBe(true);
+      expect(result.data.ticker).toBe('MSFT');
+      expect(result.data.period).toBe('3mo');
+      expect(result.data.interval).toBe('1wk');
+    });
+
+    it('returns error for unknown ticker', async () => {
+      const result = await wired.router.dispatch({
+        command: 'history',
+        options: { ticker: 'ZZZZZZ' },
+      });
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe(ErrorCodes.INVALID_TICKER);
+    });
+
+    it('propagates PRICE_FEED_UNAVAILABLE when feed is disabled', async () => {
+      wired.priceFeedClient.setAvailable(false);
+      const result = await wired.router.dispatch({
+        command: 'history',
+        options: { ticker: 'AAPL' },
+      });
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe(ErrorCodes.PRICE_FEED_UNAVAILABLE);
+    });
+
+    it('returns data points with correct structure', async () => {
+      const result = await wired.router.dispatch({
+        command: 'history',
+        options: { ticker: 'AAPL', period: '1y', interval: '1d' },
+      });
+      expect(result.success).toBe(true);
+      const dp = result.data.dataPoints[0];
+      expect(dp).toHaveProperty('date');
+      expect(dp).toHaveProperty('open');
+      expect(dp).toHaveProperty('high');
+      expect(dp).toHaveProperty('low');
+      expect(dp).toHaveProperty('close');
+      expect(dp).toHaveProperty('volume');
     });
   });
 
@@ -369,29 +473,29 @@ describe('Command Wiring', () => {
   // ============================================================
 
   describe('end-to-end via execute', () => {
-    it('add-stock returns valid JSON output', () => {
-      const output = wired.router.execute(['add-stock', '--ticker', 'MSFT']);
+    it('add-stock returns valid JSON output', async () => {
+      const output = await wired.router.execute(['add-stock', '--ticker', 'MSFT']);
       const parsed = JSON.parse(output);
       expect(parsed.success).toBe(true);
       expect(parsed.command).toBe('add-stock');
       expect(parsed.data.ticker).toBe('MSFT');
     });
 
-    it('full add → list → remove → list workflow', () => {
+    it('full add → list → remove → list workflow', async () => {
       // Add
-      let result = wired.router.dispatch({ command: 'add-stock', options: { ticker: 'MSFT' } });
+      let result = await wired.router.dispatch({ command: 'add-stock', options: { ticker: 'MSFT' } });
       expect(result.success).toBe(true);
 
       // List
-      result = wired.router.dispatch({ command: 'list-watchlist', options: {} });
+      result = await wired.router.dispatch({ command: 'list-watchlist', options: {} });
       expect(result.data.count).toBe(1);
 
       // Remove
-      result = wired.router.dispatch({ command: 'remove-stock', options: { ticker: 'MSFT' } });
+      result = await wired.router.dispatch({ command: 'remove-stock', options: { ticker: 'MSFT' } });
       expect(result.success).toBe(true);
 
       // List again
-      result = wired.router.dispatch({ command: 'list-watchlist', options: {} });
+      result = await wired.router.dispatch({ command: 'list-watchlist', options: {} });
       expect(result.data.count).toBe(0);
     });
   });

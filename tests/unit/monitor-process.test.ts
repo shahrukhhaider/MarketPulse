@@ -3,7 +3,34 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { parseArgs, buildSignalFilePath, startMonitorProcess } from '../../src/monitor-process.js';
+import type { YahooFinanceClient } from '../../src/price-feed-client.js';
 import * as ConfigStore from '../../src/config-store.js';
+
+/** Helper: flush microtask queue so async start() completes its first poll */
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * A mock YahooFinanceClient that returns deterministic prices for known tickers.
+ */
+function createMockYahooClient(): YahooFinanceClient {
+  return {
+    async chart(): Promise<any> { return { quotes: [] }; },
+    async quote(symbol: string | string[]): Promise<any> {
+      if (Array.isArray(symbol)) {
+        return symbol.map((s) => ({
+          symbol: s.toUpperCase(),
+          regularMarketPrice: 200,
+        }));
+      }
+      return {
+        symbol: (symbol as string).toUpperCase(),
+        regularMarketPrice: 200,
+      };
+    },
+  };
+}
 
 describe('monitor-process', () => {
   describe('parseArgs', () => {
@@ -119,14 +146,18 @@ describe('monitor-process', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('loads config and starts the monitoring engine', () => {
+    it('loads config and starts the monitoring engine', async () => {
       const { engine, priceDataStore, priceDataFilePath } = startMonitorProcess(
         { configPath, dataDir, interval: 3600 },
         12345,
+        createMockYahooClient(),
       );
 
       expect(engine.isRunning()).toBe(true);
       expect(priceDataFilePath).toBe(path.join(dataDir, 'price-data.json'));
+
+      // Wait for the async first poll to complete
+      await flushMicrotasks();
 
       // At least one poll cycle should have run (immediate poll on start)
       expect(engine.getPollCyclesCompleted()).toBeGreaterThanOrEqual(1);
@@ -138,16 +169,20 @@ describe('monitor-process', () => {
       engine.stop();
     });
 
-    it('creates signal file in data dir based on PID', () => {
+    it('creates signal file in data dir based on PID', async () => {
       const { engine } = startMonitorProcess(
         { configPath, dataDir, interval: 3600 },
         54321,
+        createMockYahooClient(),
       );
+
+      // Wait for the async first poll to complete
+      await flushMicrotasks();
 
       // The signal file should exist after the first poll cycle generates signals
       const signalFilePath = path.join(dataDir, 'signals-54321.json');
       // Signal file is created only if signals are generated
-      // With price_breakout and AAPL mock price > 150, a BUY signal should be written
+      // With price_breakout and AAPL mock price (200) > 150, a BUY signal should be written
       expect(fs.existsSync(signalFilePath)).toBe(true);
 
       engine.stop();
@@ -156,26 +191,31 @@ describe('monitor-process', () => {
     it('throws when config file is invalid', () => {
       fs.writeFileSync(configPath, 'not valid json');
       expect(() =>
-        startMonitorProcess({ configPath, dataDir, interval: 3600 }, 12345),
+        startMonitorProcess({ configPath, dataDir, interval: 3600 }, 12345, createMockYahooClient()),
       ).toThrow('Failed to load config');
     });
 
-    it('works with empty watchlist', () => {
+    it('works with empty watchlist', async () => {
       const emptyConfig = ConfigStore.getDefault();
       ConfigStore.save(emptyConfig, configPath);
 
       const { engine } = startMonitorProcess(
         { configPath, dataDir, interval: 3600 },
         12345,
+        createMockYahooClient(),
       );
 
       expect(engine.isRunning()).toBe(true);
+
+      // Wait for the async first poll to complete
+      await flushMicrotasks();
+
       expect(engine.getPollCyclesCompleted()).toBe(1);
 
       engine.stop();
     });
 
-    it('loads existing price data from data dir', () => {
+    it('loads existing price data from data dir', async () => {
       // Write some existing price data
       const priceDataPath = path.join(dataDir, 'price-data.json');
       const existingData = {
@@ -188,7 +228,11 @@ describe('monitor-process', () => {
       const { engine, priceDataStore } = startMonitorProcess(
         { configPath, dataDir, interval: 3600 },
         12345,
+        createMockYahooClient(),
       );
+
+      // Wait for the async first poll to complete
+      await flushMicrotasks();
 
       // Should have the pre-existing data point plus the new one from the poll
       const history = priceDataStore.getPriceHistory('AAPL');

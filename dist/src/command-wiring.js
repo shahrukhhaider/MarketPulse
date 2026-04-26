@@ -59,17 +59,17 @@ function createWiredRouter(options = {}) {
     const priceDataStore = new price_data_store_js_1.PriceDataStore();
     priceDataStore.load(priceDataPath);
     // Create domain components
-    const priceFeedClient = new price_feed_client_js_1.PriceFeedClient();
+    const priceFeedClient = new price_feed_client_js_1.PriceFeedClient(options.yahooFinanceClient);
     const watchlistManager = new watchlist_manager_js_1.WatchlistManager(config, configPath);
     const strategyManager = new strategy_manager_js_1.StrategyManager(config, configPath);
     const processManager = new process_manager_js_1.ProcessManager(dataDir);
     // Create router and wire handlers
     const router = new command_router_js_1.CommandRouter();
     // --- add-stock ---
-    router.register('add-stock', ['ticker'], (opts) => {
+    router.register('add-stock', ['ticker'], async (opts) => {
         const ticker = opts['ticker'].toUpperCase();
         // Validate ticker via PriceFeedClient
-        const validation = priceFeedClient.validateTicker(ticker);
+        const validation = await priceFeedClient.validateTicker(ticker);
         if (!validation.success) {
             return (0, command_router_js_1.errorResult)('add-stock', types_js_1.ErrorCodes.INVALID_TICKER, `Ticker symbol '${ticker}' not found in price feed`);
         }
@@ -220,6 +220,28 @@ function createWiredRouter(options = {}) {
         return (0, command_router_js_1.successResult)('show-signals', {
             signals,
             count: signals.length,
+        });
+    });
+    // --- history ---
+    router.register('history', ['ticker'], async (opts) => {
+        const ticker = opts['ticker'];
+        const period = opts['period'] || undefined;
+        const interval = opts['interval'] || undefined;
+        const result = await priceFeedClient.fetchHistoricalData(ticker, period, interval);
+        if (!result.success) {
+            const code = result.error.includes(types_js_1.ErrorCodes.INVALID_TICKER)
+                ? types_js_1.ErrorCodes.INVALID_TICKER
+                : result.error.includes(types_js_1.ErrorCodes.INVALID_PARAM_RANGE)
+                    ? types_js_1.ErrorCodes.INVALID_PARAM_RANGE
+                    : types_js_1.ErrorCodes.PRICE_FEED_UNAVAILABLE;
+            return (0, command_router_js_1.errorResult)('history', code, result.error);
+        }
+        return (0, command_router_js_1.successResult)('history', {
+            ticker: result.data.ticker,
+            period: period || '1y',
+            interval: result.data.interval,
+            dataPoints: result.data.dataPoints,
+            count: result.data.dataPoints.length,
         });
     });
     return {

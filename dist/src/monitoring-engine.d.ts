@@ -26,7 +26,7 @@ export declare class MonitoringEngine {
     isRunning(): boolean;
     getPollCyclesCompleted(): number;
     getLastPollTimestamp(): string | null;
-    pollCycle(): PollResult;
+    pollCycle(): Promise<PollResult>;
     evaluateStrategies(ticker: string, priceHistory: PricePoint[], strategyConfigs: StrategyConfig[]): Signal[];
     writeSignals(signals: Signal[]): void;
     private getMinimumDataPoints;

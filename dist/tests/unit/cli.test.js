@@ -38,6 +38,31 @@ const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const os = __importStar(require("node:os"));
 const command_wiring_js_1 = require("../../src/command-wiring.js");
+/**
+ * A mock YahooFinanceClient for CLI tests.
+ */
+function createMockYahooClient() {
+    const knownTickers = new Set(['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'JPM', 'V', 'WMT']);
+    return {
+        async chart() { return { quotes: [] }; },
+        async quote(symbol) {
+            if (Array.isArray(symbol)) {
+                return symbol.map((s) => {
+                    const upper = s.toUpperCase();
+                    if (!knownTickers.has(upper)) {
+                        throw new Error(`Symbol not found: ${upper}`);
+                    }
+                    return { symbol: upper, regularMarketPrice: 150 };
+                });
+            }
+            const upper = symbol.toUpperCase();
+            if (!knownTickers.has(upper)) {
+                throw new Error(`Symbol not found: ${upper}`);
+            }
+            return { symbol: upper, regularMarketPrice: 150 };
+        },
+    };
+}
 (0, vitest_1.describe)('CLI entry point behavior', () => {
     let tmpDir;
     let dataDir;
@@ -53,10 +78,10 @@ const command_wiring_js_1 = require("../../src/command-wiring.js");
         fs.mkdirSync(dataDir, { recursive: true });
         (0, vitest_1.expect)(fs.existsSync(dataDir)).toBe(true);
     });
-    (0, vitest_1.it)('should execute a command and return valid JSON output', () => {
+    (0, vitest_1.it)('should execute a command and return valid JSON output', async () => {
         fs.mkdirSync(dataDir, { recursive: true });
-        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir });
-        const output = router.execute(['list-watchlist']);
+        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir, yahooFinanceClient: createMockYahooClient() });
+        const output = await router.execute(['list-watchlist']);
         const parsed = JSON.parse(output);
         (0, vitest_1.expect)(parsed).toHaveProperty('success', true);
         (0, vitest_1.expect)(parsed).toHaveProperty('command', 'list-watchlist');
@@ -64,29 +89,29 @@ const command_wiring_js_1 = require("../../src/command-wiring.js");
         (0, vitest_1.expect)(parsed.data).toHaveProperty('stocks');
         (0, vitest_1.expect)(parsed.data).toHaveProperty('count', 0);
     });
-    (0, vitest_1.it)('should return JSON error for unknown command', () => {
+    (0, vitest_1.it)('should return JSON error for unknown command', async () => {
         fs.mkdirSync(dataDir, { recursive: true });
-        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir });
-        const output = router.execute(['unknown-cmd']);
+        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir, yahooFinanceClient: createMockYahooClient() });
+        const output = await router.execute(['unknown-cmd']);
         const parsed = JSON.parse(output);
         (0, vitest_1.expect)(parsed.success).toBe(false);
         (0, vitest_1.expect)(parsed.error).toBeDefined();
         (0, vitest_1.expect)(parsed.error.code).toBe('MISSING_PARAM');
         (0, vitest_1.expect)(parsed.error.message).toContain('Unknown command');
     });
-    (0, vitest_1.it)('should return JSON error when no command is provided', () => {
+    (0, vitest_1.it)('should return JSON error when no command is provided', async () => {
         fs.mkdirSync(dataDir, { recursive: true });
-        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir });
-        const output = router.execute([]);
+        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir, yahooFinanceClient: createMockYahooClient() });
+        const output = await router.execute([]);
         const parsed = JSON.parse(output);
         (0, vitest_1.expect)(parsed.success).toBe(false);
         (0, vitest_1.expect)(parsed.error).toBeDefined();
         (0, vitest_1.expect)(parsed.error.message).toContain('No command specified');
     });
-    (0, vitest_1.it)('should return JSON error for missing required parameters', () => {
+    (0, vitest_1.it)('should return JSON error for missing required parameters', async () => {
         fs.mkdirSync(dataDir, { recursive: true });
-        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir });
-        const output = router.execute(['add-stock']);
+        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir, yahooFinanceClient: createMockYahooClient() });
+        const output = await router.execute(['add-stock']);
         const parsed = JSON.parse(output);
         (0, vitest_1.expect)(parsed.success).toBe(false);
         (0, vitest_1.expect)(parsed.error.code).toBe('MISSING_PARAM');
@@ -94,7 +119,7 @@ const command_wiring_js_1 = require("../../src/command-wiring.js");
     });
     (0, vitest_1.it)('should use default polling interval of 60 seconds for start-monitor', () => {
         fs.mkdirSync(dataDir, { recursive: true });
-        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir });
+        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir, yahooFinanceClient: createMockYahooClient() });
         // Parse the args to verify the default interval is applied in the handler
         const parsed = router.parse(['start-monitor']);
         (0, vitest_1.expect)(parsed.command).toBe('start-monitor');
@@ -118,9 +143,9 @@ const command_wiring_js_1 = require("../../src/command-wiring.js");
         (0, vitest_1.expect)(errorEnvelope.error.message).toContain('Something went wrong');
         (0, vitest_1.expect)(errorEnvelope.timestamp).toBeDefined();
     });
-    (0, vitest_1.it)('should produce output that is always valid JSON', () => {
+    (0, vitest_1.it)('should produce output that is always valid JSON', async () => {
         fs.mkdirSync(dataDir, { recursive: true });
-        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir });
+        const { router } = (0, command_wiring_js_1.createWiredRouter)({ dataDir, yahooFinanceClient: createMockYahooClient() });
         const commands = [
             ['list-watchlist'],
             ['get-status'],
@@ -129,7 +154,7 @@ const command_wiring_js_1 = require("../../src/command-wiring.js");
             [],
         ];
         for (const args of commands) {
-            const output = router.execute(args);
+            const output = await router.execute(args);
             (0, vitest_1.expect)(() => JSON.parse(output)).not.toThrow();
             const parsed = JSON.parse(output);
             (0, vitest_1.expect)(parsed).toHaveProperty('success');

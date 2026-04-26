@@ -86,7 +86,7 @@ function parseArgs(argv) {
 function buildSignalFilePath(dataDir, pid) {
     return path.join(dataDir, `signals-${pid}.json`);
 }
-function startMonitorProcess(args, pid) {
+function startMonitorProcess(args, pid, yahooFinanceClient) {
     // Load config
     const configResult = ConfigStore.load(args.configPath);
     if (!configResult.success) {
@@ -94,7 +94,7 @@ function startMonitorProcess(args, pid) {
     }
     const config = configResult.data;
     // Create dependencies
-    const priceFeedClient = new price_feed_client_js_1.PriceFeedClient();
+    const priceFeedClient = new price_feed_client_js_1.PriceFeedClient(yahooFinanceClient);
     const priceDataStore = new price_data_store_js_1.PriceDataStore();
     const priceDataFilePath = path.join(args.dataDir, 'price-data.json');
     // Load existing price data

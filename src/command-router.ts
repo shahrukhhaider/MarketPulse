@@ -1,5 +1,5 @@
 import type { CommandResult, StrategyType } from './types.js';
-import { ErrorCodes } from './types.js';
+import { ErrorCodes, VALID_PERIODS, VALID_INTERVALS } from './types.js';
 
 // ============================================================
 // Types
@@ -10,7 +10,7 @@ export interface ParsedCommand {
   options: Record<string, string>;
 }
 
-export type CommandHandler = (options: Record<string, string>) => CommandResult;
+export type CommandHandler = (options: Record<string, string>) => CommandResult | Promise<CommandResult>;
 
 interface CommandDefinition {
   name: string;
@@ -31,6 +31,7 @@ const VALID_COMMANDS = [
   'get-status',
   'configure-strategy',
   'show-signals',
+  'history',
 ] as const;
 
 export type CommandName = (typeof VALID_COMMANDS)[number];
@@ -65,6 +66,7 @@ export class CommandRouter {
     this.register('get-status', [], stubHandler('get-status'));
     this.register('configure-strategy', ['ticker', 'strategy'], stubHandler('configure-strategy'));
     this.register('show-signals', [], stubHandler('show-signals'));
+    this.register('history', ['ticker'], stubHandler('history'));
   }
 
   /**
@@ -99,7 +101,7 @@ export class CommandRouter {
    * Dispatch a parsed command: validate the command name, check required params,
    * run additional validation (e.g. strategy type), then call the handler.
    */
-  dispatch(parsed: ParsedCommand): CommandResult {
+  async dispatch(parsed: ParsedCommand): Promise<CommandResult> {
     const { command, options } = parsed;
 
     // No command provided
@@ -196,9 +198,21 @@ export class CommandRouter {
       }
     }
 
+    // Validate --period and --interval for history command
+    if (command === 'history') {
+      if (options['period'] && !VALID_PERIODS.includes(options['period'] as any)) {
+        return errorResult(command, ErrorCodes.INVALID_PARAM_RANGE,
+          `Invalid period '${options['period']}'. Valid values: ${VALID_PERIODS.join(', ')}`);
+      }
+      if (options['interval'] && !VALID_INTERVALS.includes(options['interval'] as any)) {
+        return errorResult(command, ErrorCodes.INVALID_PARAM_RANGE,
+          `Invalid interval '${options['interval']}'. Valid values: ${VALID_INTERVALS.join(', ')}`);
+      }
+    }
+
     // Dispatch to handler
     try {
-      return definition.handler(options);
+      return await definition.handler(options);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return errorResult(command, 'INTERNAL_ERROR', `Command handler failed: ${message}`);
@@ -215,9 +229,9 @@ export class CommandRouter {
   /**
    * Convenience: parse + dispatch + formatOutput in one call.
    */
-  execute(args: string[]): string {
+  async execute(args: string[]): Promise<string> {
     const parsed = this.parse(args);
-    const result = this.dispatch(parsed);
+    const result = await this.dispatch(parsed);
     return this.formatOutput(result);
   }
 

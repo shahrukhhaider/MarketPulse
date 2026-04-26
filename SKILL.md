@@ -4,7 +4,15 @@ A CLI tool for real-time stock price tracking with watchlist management, configu
 
 ## Setup
 
-The CLI tool lives in the `stock-price-tracker` directory. All commands are run from within that directory.
+The CLI tool lives in the `stock-price-tracker` directory.
+
+**Environment variable:**
+
+Set `STOCK_TRACKER_HOME` to control where the `.stock-tracker/` data directory is created. If unset, defaults to the current working directory.
+
+```bash
+export STOCK_TRACKER_HOME=/path/to/stock-price-tracker
+```
 
 **Invocation format:**
 
@@ -291,7 +299,7 @@ node dist/src/cli.js start-monitor
 
 ## Data Directory
 
-All persistent data is stored in `.stock-tracker/` relative to the working directory:
+All persistent data is stored in `.stock-tracker/` relative to `STOCK_TRACKER_HOME` (or the current working directory if unset):
 
 | File | Purpose |
 |------|---------|
