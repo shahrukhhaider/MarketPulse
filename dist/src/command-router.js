@@ -54,18 +54,25 @@ class CommandRouter {
     }
     /**
      * Parse raw CLI args (typically process.argv.slice(2)) into a ParsedCommand.
-     * Expected format: <command> [--key value ...]
+     * Expected format: <command> [--key value ...] [--booleanFlag]
+     * Boolean flags (--flag with no following value or followed by another --flag) get value 'true'.
      */
     parse(args) {
         const command = args.length > 0 ? args[0] : '';
         const options = {};
         for (let i = 1; i < args.length; i++) {
             const arg = args[i];
-            if (arg.startsWith('--') && i + 1 < args.length) {
+            if (arg.startsWith('--')) {
                 const key = arg.slice(2);
-                const value = args[i + 1];
-                options[key] = value;
-                i++; // skip the value
+                const nextArg = i + 1 < args.length ? args[i + 1] : undefined;
+                // If no next arg, or next arg is also a flag, treat as boolean
+                if (nextArg === undefined || nextArg.startsWith('--')) {
+                    options[key] = 'true';
+                }
+                else {
+                    options[key] = nextArg;
+                    i++; // skip the value
+                }
             }
         }
         return { command, options };

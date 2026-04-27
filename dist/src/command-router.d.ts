@@ -20,7 +20,8 @@ export declare class CommandRouter {
     register(name: string, requiredParams: string[], handler: CommandHandler): void;
     /**
      * Parse raw CLI args (typically process.argv.slice(2)) into a ParsedCommand.
-     * Expected format: <command> [--key value ...]
+     * Expected format: <command> [--key value ...] [--booleanFlag]
+     * Boolean flags (--flag with no following value or followed by another --flag) get value 'true'.
      */
     parse(args: string[]): ParsedCommand;
     /**

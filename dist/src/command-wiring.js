@@ -53,7 +53,10 @@ const price_breakout_js_1 = require("./strategies/price-breakout.js");
 const composite_engine_js_1 = require("./strategies/composite-engine.js");
 const strategy_configs_js_1 = require("./strategies/strategy-configs.js");
 const caching_data_provider_js_1 = require("./caching-data-provider.js");
+const tuning_engine_js_1 = require("./tuning-engine.js");
 const history_cache_store_js_1 = require("./history-cache-store.js");
+const chart_generator_js_1 = require("./chart-generator.js");
+const node_fs_1 = require("node:fs");
 /**
  * Create a fully wired CommandRouter with real handlers connected to domain components.
  * Loads config and price data on initialization.
@@ -378,6 +381,18 @@ function createWiredRouter(options = {}) {
             // Run backtest
             const engine = new backtest_engine_js_1.BacktestEngine();
             const backtestResult = engine.run(pricePoints, strategyInstance, params, period);
+            // If --chart flag is present and backtest succeeded, generate HTML visualization
+            if (opts['chart'] !== undefined) {
+                const chartFilePath = (0, chart_generator_js_1.getChartFilePath)(dataDir, ticker);
+                const html = (0, chart_generator_js_1.generateChartHtml)({
+                    backtestResult,
+                    dataPoints: histResult.data.dataPoints,
+                    strategyParams: params,
+                });
+                (0, node_fs_1.writeFileSync)(chartFilePath, html, 'utf-8');
+                (0, chart_generator_js_1.openInBrowser)(chartFilePath);
+                return (0, command_router_js_1.successResult)('backtest', { ...backtestResult, chartFilePath });
+            }
             return (0, command_router_js_1.successResult)('backtest', backtestResult);
         }
         catch (err) {
@@ -395,6 +410,22 @@ function createWiredRouter(options = {}) {
                 ? `Cleared ${result.removed} cache entries for '${ticker}'`
                 : `Cleared ${result.removed} cache entries`,
         });
+    });
+    // --- tune ---
+    router.register('tune', ['ticker', 'strategy'], async (opts) => {
+        const input = {
+            ticker: opts['ticker'].toUpperCase(),
+            strategy: opts['strategy'],
+            time_horizon: opts['horizon'],
+            risk_profile: opts['risk'],
+            noCache: opts['no-cache'] !== undefined,
+        };
+        const tuningEngine = new tuning_engine_js_1.TuningEngine(cachingProvider, dataDir);
+        const outcome = await tuningEngine.run(input);
+        if (!outcome.success) {
+            return (0, command_router_js_1.errorResult)('tune', outcome.error.code, outcome.error.message);
+        }
+        return (0, command_router_js_1.successResult)('tune', outcome.data);
     });
     return {
         router,

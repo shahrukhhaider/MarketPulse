@@ -61,9 +61,9 @@ export const MOMENTUM_CONTINUATION_CONFIG: StrategyConfiguration = {
     { type: 'outperforms_index', period: 20, indexTicker: 'SPY' },
   ],
   exitRules: [
-    { type: 'hold_days', days: 5 },
+    { type: 'hold_days', days: 63 },
   ],
-  riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 2.0 },
+  riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 5.0 },
   indexTicker: 'SPY',
 };
 
@@ -82,9 +82,9 @@ export const TREND_PULLBACK_CONFIG: StrategyConfiguration = {
   ],
   exitRules: [
     { type: 'rsi_above', period: 14, threshold: 60 },
-    { type: 'hold_days', days: 7 },
+    { type: 'hold_days', days: 63 },
   ],
-  riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 2.0 },
+  riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 5.0 },
 };
 
 export const BREAKOUT_VOLUME_CONFIG: StrategyConfiguration = {
@@ -100,9 +100,9 @@ export const BREAKOUT_VOLUME_CONFIG: StrategyConfiguration = {
   ],
   exitRules: [
     { type: 'price_below_sma', period: 10 },
-    { type: 'hold_days', days: 5 },
+    { type: 'hold_days', days: 63 },
   ],
-  riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 2.0 },
+  riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 5.0 },
 };
 
 // ============================================================

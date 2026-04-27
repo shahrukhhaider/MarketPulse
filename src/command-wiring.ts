@@ -19,8 +19,12 @@ import { PriceBreakoutStrategy } from './strategies/price-breakout.js';
 import { CompositeStrategyEngine } from './strategies/composite-engine.js';
 import { getDefaultCompositeConfig, type CompositeStrategyParams } from './strategies/strategy-configs.js';
 import { CachingDataProvider } from './caching-data-provider.js';
+import { TuningEngine } from './tuning-engine.js';
+import type { TuningInput, TunableStrategy, TimeHorizon, RiskProfile } from './tuning-engine.js';
 import { normalizeTicker } from './history-cache-store.js';
 import type { CacheEntry } from './history-cache-store.js';
+import { generateChartHtml, getChartFilePath, openInBrowser } from './chart-generator.js';
+import { writeFileSync } from 'node:fs';
 
 export interface WiringOptions {
   dataDir?: string;
@@ -419,6 +423,19 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
       const engine = new BacktestEngine();
       const backtestResult = engine.run(pricePoints, strategyInstance, params, period);
 
+      // If --chart flag is present and backtest succeeded, generate HTML visualization
+      if (opts['chart'] !== undefined) {
+        const chartFilePath = getChartFilePath(dataDir, ticker);
+        const html = generateChartHtml({
+          backtestResult,
+          dataPoints: histResult.data.dataPoints,
+          strategyParams: params,
+        });
+        writeFileSync(chartFilePath, html, 'utf-8');
+        openInBrowser(chartFilePath);
+        return successResult('backtest', { ...backtestResult, chartFilePath });
+      }
+
       return successResult('backtest', backtestResult);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -436,6 +453,26 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         ? `Cleared ${result.removed} cache entries for '${ticker}'`
         : `Cleared ${result.removed} cache entries`,
     });
+  });
+
+  // --- tune ---
+  router.register('tune', ['ticker', 'strategy'], async (opts) => {
+    const input: TuningInput = {
+      ticker: opts['ticker'].toUpperCase(),
+      strategy: opts['strategy'] as TunableStrategy,
+      time_horizon: opts['horizon'] as TimeHorizon | undefined,
+      risk_profile: opts['risk'] as RiskProfile | undefined,
+      noCache: opts['no-cache'] !== undefined,
+    };
+
+    const tuningEngine = new TuningEngine(cachingProvider, dataDir);
+    const outcome = await tuningEngine.run(input);
+
+    if (!outcome.success) {
+      return errorResult('tune', outcome.error.code, outcome.error.message);
+    }
+
+    return successResult('tune', outcome.data);
   });
 
   return {
