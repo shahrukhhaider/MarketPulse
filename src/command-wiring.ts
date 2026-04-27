@@ -16,6 +16,8 @@ import { BacktestEngine, convertHistoricalData } from './backtest-engine.js';
 import { MovingAverageCrossoverStrategy } from './strategies/moving-average.js';
 import { RSIThresholdStrategy } from './strategies/rsi-threshold.js';
 import { PriceBreakoutStrategy } from './strategies/price-breakout.js';
+import { CompositeStrategyEngine } from './strategies/composite-engine.js';
+import { getDefaultCompositeConfig, type CompositeStrategyParams } from './strategies/strategy-configs.js';
 import { CachingDataProvider } from './caching-data-provider.js';
 import { normalizeTicker } from './history-cache-store.js';
 import type { CacheEntry } from './history-cache-store.js';
@@ -319,6 +321,9 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     'moving_average_crossover',
     'rsi_threshold',
     'price_breakout',
+    'momentum_continuation',
+    'trend_pullback',
+    'breakout_volume',
   ];
 
   router.register('backtest', ['ticker', 'strategy'], async (opts) => {
@@ -388,6 +393,28 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
       // Convert historical data to PricePoint[]
       const pricePoints = convertHistoricalData(histResult.data.dataPoints, ticker);
 
+      // For composite strategies: fetch auxiliary data if needed and reset engine state
+      if ('config' in params) {
+        const compositeParams = params as unknown as CompositeStrategyParams;
+        // Inject primary ticker's OHLCV data for volume/ATR calculations
+        compositeParams.primaryDataPoints = histResult.data.dataPoints;
+        const indexTicker = compositeParams.config.indexTicker;
+        if (indexTicker) {
+          try {
+            const auxResult = await priceFeedClient.fetchHistoricalData(indexTicker, period);
+            if (auxResult.success) {
+              compositeParams.auxiliaryData = {
+                [indexTicker]: auxResult.data.dataPoints,
+              };
+            }
+          } catch {
+            // Auxiliary data fetch failure is non-fatal; outperforms_index will just fail
+          }
+        }
+        // Reset composite engine state before backtest
+        (strategyInstance as any).reset?.();
+      }
+
       // Run backtest
       const engine = new BacktestEngine();
       const backtestResult = engine.run(pricePoints, strategyInstance, params, period);
@@ -432,6 +459,10 @@ function getStrategyInstance(strategyType: StrategyType) {
       return new RSIThresholdStrategy();
     case 'price_breakout':
       return new PriceBreakoutStrategy();
+    case 'momentum_continuation':
+    case 'trend_pullback':
+    case 'breakout_volume':
+      return new CompositeStrategyEngine(strategyType);
   }
 }
 
@@ -443,5 +474,9 @@ function getDefaultParams(strategyType: StrategyType): StrategyParams {
       return { period: 14, overbought: 70, oversold: 30 };
     case 'price_breakout':
       return { upperLevel: 100, lowerLevel: 50 };
+    case 'momentum_continuation':
+    case 'trend_pullback':
+    case 'breakout_volume':
+      return { config: getDefaultCompositeConfig(strategyType) } as CompositeStrategyParams;
   }
 }

@@ -1,3 +1,5 @@
+import type { CompositeStrategyParams } from './strategies/strategy-configs.js';
+
 // ============================================================
 // Strategy Parameter Interfaces
 // ============================================================
@@ -21,7 +23,8 @@ export interface PriceBreakoutParams {
 export type StrategyParams =
   | MovingAverageCrossoverParams
   | RSIThresholdParams
-  | PriceBreakoutParams;
+  | PriceBreakoutParams
+  | CompositeStrategyParams;
 
 // ============================================================
 // Strategy Types and Configuration
@@ -30,7 +33,12 @@ export type StrategyParams =
 export type StrategyType =
   | 'moving_average_crossover'
   | 'rsi_threshold'
-  | 'price_breakout';
+  | 'price_breakout'
+  | 'momentum_continuation'
+  | 'trend_pullback'
+  | 'breakout_volume';
+
+export type { CompositeStrategyParams } from './strategies/strategy-configs.js';
 
 export interface StrategyConfig {
   type: StrategyType;
@@ -196,6 +204,7 @@ export interface Trade {
 
 export interface PerformanceSummary {
   totalReturnPercent: number;
+  benchmarkReturnPercent: number;
   numberOfTrades: number;
   winRate: number;
   maxDrawdownPercent: number;

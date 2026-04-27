@@ -38,12 +38,21 @@ function computePerformanceSummary(signals, pricePoints) {
         }
     }
     const numberOfTrades = trades.length;
-    // Total return: percentage change from first to last price point
-    let totalReturnPercent = 0;
+    // Benchmark return: buy-and-hold percentage change from first to last price point
+    let benchmarkReturnPercent = 0;
     if (pricePoints.length >= 2) {
         const firstPrice = pricePoints[0].price;
         const lastPrice = pricePoints[pricePoints.length - 1].price;
-        totalReturnPercent = ((lastPrice - firstPrice) / firstPrice) * 100;
+        benchmarkReturnPercent = ((lastPrice - firstPrice) / firstPrice) * 100;
+    }
+    // Total return: cumulative return from strategy trades (0 if no trades)
+    let totalReturnPercent = 0;
+    if (trades.length > 0) {
+        let cumulativeValue = 1;
+        for (const trade of trades) {
+            cumulativeValue *= 1 + trade.profitLossPercent / 100;
+        }
+        totalReturnPercent = (cumulativeValue - 1) * 100;
     }
     // Win rate
     const profitableTrades = trades.filter((t) => t.profitLossPercent > 0).length;
@@ -75,6 +84,7 @@ function computePerformanceSummary(signals, pricePoints) {
     }
     return {
         totalReturnPercent,
+        benchmarkReturnPercent,
         numberOfTrades,
         winRate,
         maxDrawdownPercent,

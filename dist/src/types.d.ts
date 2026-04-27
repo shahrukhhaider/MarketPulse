@@ -1,3 +1,4 @@
+import type { CompositeStrategyParams } from './strategies/strategy-configs.js';
 export interface MovingAverageCrossoverParams {
     shortWindow: number;
     longWindow: number;
@@ -11,8 +12,9 @@ export interface PriceBreakoutParams {
     upperLevel: number;
     lowerLevel: number;
 }
-export type StrategyParams = MovingAverageCrossoverParams | RSIThresholdParams | PriceBreakoutParams;
-export type StrategyType = 'moving_average_crossover' | 'rsi_threshold' | 'price_breakout';
+export type StrategyParams = MovingAverageCrossoverParams | RSIThresholdParams | PriceBreakoutParams | CompositeStrategyParams;
+export type StrategyType = 'moving_average_crossover' | 'rsi_threshold' | 'price_breakout' | 'momentum_continuation' | 'trend_pullback' | 'breakout_volume';
+export type { CompositeStrategyParams } from './strategies/strategy-configs.js';
 export interface StrategyConfig {
     type: StrategyType;
     params: StrategyParams;
@@ -121,6 +123,7 @@ export interface Trade {
 }
 export interface PerformanceSummary {
     totalReturnPercent: number;
+    benchmarkReturnPercent: number;
     numberOfTrades: number;
     winRate: number;
     maxDrawdownPercent: number;

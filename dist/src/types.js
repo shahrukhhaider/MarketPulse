@@ -1,7 +1,4 @@
 "use strict";
-// ============================================================
-// Strategy Parameter Interfaces
-// ============================================================
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.VALID_INTERVALS = exports.VALID_PERIODS = exports.ErrorCodes = void 0;
 // ============================================================

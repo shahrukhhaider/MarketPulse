@@ -50,6 +50,8 @@ const backtest_engine_js_1 = require("./backtest-engine.js");
 const moving_average_js_1 = require("./strategies/moving-average.js");
 const rsi_threshold_js_1 = require("./strategies/rsi-threshold.js");
 const price_breakout_js_1 = require("./strategies/price-breakout.js");
+const composite_engine_js_1 = require("./strategies/composite-engine.js");
+const strategy_configs_js_1 = require("./strategies/strategy-configs.js");
 const caching_data_provider_js_1 = require("./caching-data-provider.js");
 const history_cache_store_js_1 = require("./history-cache-store.js");
 /**
@@ -288,6 +290,9 @@ function createWiredRouter(options = {}) {
         'moving_average_crossover',
         'rsi_threshold',
         'price_breakout',
+        'momentum_continuation',
+        'trend_pullback',
+        'breakout_volume',
     ];
     router.register('backtest', ['ticker', 'strategy'], async (opts) => {
         const ticker = opts['ticker'].toUpperCase();
@@ -348,6 +353,28 @@ function createWiredRouter(options = {}) {
             }
             // Convert historical data to PricePoint[]
             const pricePoints = (0, backtest_engine_js_1.convertHistoricalData)(histResult.data.dataPoints, ticker);
+            // For composite strategies: fetch auxiliary data if needed and reset engine state
+            if ('config' in params) {
+                const compositeParams = params;
+                // Inject primary ticker's OHLCV data for volume/ATR calculations
+                compositeParams.primaryDataPoints = histResult.data.dataPoints;
+                const indexTicker = compositeParams.config.indexTicker;
+                if (indexTicker) {
+                    try {
+                        const auxResult = await priceFeedClient.fetchHistoricalData(indexTicker, period);
+                        if (auxResult.success) {
+                            compositeParams.auxiliaryData = {
+                                [indexTicker]: auxResult.data.dataPoints,
+                            };
+                        }
+                    }
+                    catch {
+                        // Auxiliary data fetch failure is non-fatal; outperforms_index will just fail
+                    }
+                }
+                // Reset composite engine state before backtest
+                strategyInstance.reset?.();
+            }
             // Run backtest
             const engine = new backtest_engine_js_1.BacktestEngine();
             const backtestResult = engine.run(pricePoints, strategyInstance, params, period);
@@ -389,6 +416,10 @@ function getStrategyInstance(strategyType) {
             return new rsi_threshold_js_1.RSIThresholdStrategy();
         case 'price_breakout':
             return new price_breakout_js_1.PriceBreakoutStrategy();
+        case 'momentum_continuation':
+        case 'trend_pullback':
+        case 'breakout_volume':
+            return new composite_engine_js_1.CompositeStrategyEngine(strategyType);
     }
 }
 function getDefaultParams(strategyType) {
@@ -399,6 +430,10 @@ function getDefaultParams(strategyType) {
             return { period: 14, overbought: 70, oversold: 30 };
         case 'price_breakout':
             return { upperLevel: 100, lowerLevel: 50 };
+        case 'momentum_continuation':
+        case 'trend_pullback':
+        case 'breakout_volume':
+            return { config: (0, strategy_configs_js_1.getDefaultCompositeConfig)(strategyType) };
     }
 }
 //# sourceMappingURL=command-wiring.js.map
