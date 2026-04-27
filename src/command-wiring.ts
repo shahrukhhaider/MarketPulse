@@ -10,12 +10,23 @@ import { ProcessManager } from './process-manager.js';
 import { SignalStore } from './signal-store.js';
 import { ErrorCodes } from './types.js';
 import type { StrategyType, StrategyParams, HistoricalPeriod, HistoricalInterval } from './types.js';
+import { DataProviderRegistry } from './data-provider.js';
+import { YahooFinanceAdapter } from './yahoo-finance-adapter.js';
+import { BacktestEngine, convertHistoricalData } from './backtest-engine.js';
+import { MovingAverageCrossoverStrategy } from './strategies/moving-average.js';
+import { RSIThresholdStrategy } from './strategies/rsi-threshold.js';
+import { PriceBreakoutStrategy } from './strategies/price-breakout.js';
+import { CachingDataProvider } from './caching-data-provider.js';
+import { normalizeTicker } from './history-cache-store.js';
+import type { CacheEntry } from './history-cache-store.js';
 
 export interface WiringOptions {
   dataDir?: string;
   configPath?: string;
   priceDataPath?: string;
   yahooFinanceClient?: YahooFinanceClient;
+  providerName?: string;
+  noCache?: boolean;
 }
 
 export interface WiredRouter {
@@ -26,6 +37,8 @@ export interface WiredRouter {
   watchlistManager: WatchlistManager;
   strategyManager: StrategyManager;
   processManager: ProcessManager;
+  registry: DataProviderRegistry;
+  cachingProvider: CachingDataProvider;
 }
 
 /**
@@ -45,8 +58,23 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   const priceDataStore = new PriceDataStore();
   priceDataStore.load(priceDataPath);
 
+  // Create registry and register the Yahoo Finance adapter
+  const registry = new DataProviderRegistry();
+  const yahooAdapter = new YahooFinanceAdapter(options.yahooFinanceClient);
+  registry.register(yahooAdapter);
+
+  // Resolve active provider: use requested provider or fall back to yahoo
+  const activeProvider = (options.providerName ? registry.get(options.providerName) : undefined) ?? registry.get('yahoo')!;
+
+  // Wrap the active provider in CachingDataProvider
+  const cachingProvider = new CachingDataProvider(activeProvider, {
+    cacheDir: path.join(dataDir, 'history-cache'),
+    ttlMs: undefined, // use default 24h
+    noCache: options.noCache,
+  });
+
   // Create domain components
-  const priceFeedClient = new PriceFeedClient(options.yahooFinanceClient);
+  const priceFeedClient = new PriceFeedClient(cachingProvider);
   const watchlistManager = new WatchlistManager(config, configPath);
   const strategyManager = new StrategyManager(config, configPath);
   const processManager = new ProcessManager(dataDir);
@@ -247,8 +275,26 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     const ticker = opts['ticker'];
     const period = (opts['period'] as HistoricalPeriod) || undefined;
     const interval = (opts['interval'] as HistoricalInterval) || undefined;
+    const noCache = opts['no-cache'] !== undefined;
 
-    const result = await priceFeedClient.fetchHistoricalData(ticker, period, interval);
+    let result;
+    if (noCache) {
+      // Bypass cache: call inner provider directly, then write through to cache
+      result = await cachingProvider.innerProvider.getHistoricalData(ticker, period, interval);
+      if (result.success) {
+        const effectivePeriod: HistoricalPeriod = period ?? '1y';
+        const entry: CacheEntry = {
+          ticker: normalizeTicker(ticker),
+          period: effectivePeriod,
+          interval: result.data.interval,
+          fetchedAt: new Date().toISOString(),
+          dataPoints: result.data.dataPoints,
+        };
+        cachingProvider.cacheStore.write(entry);
+      }
+    } else {
+      result = await priceFeedClient.fetchHistoricalData(ticker, period, interval);
+    }
 
     if (!result.success) {
       const code = result.error.includes(ErrorCodes.INVALID_TICKER)
@@ -268,6 +314,103 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     });
   });
 
+  // --- backtest ---
+  const VALID_STRATEGY_TYPES: StrategyType[] = [
+    'moving_average_crossover',
+    'rsi_threshold',
+    'price_breakout',
+  ];
+
+  router.register('backtest', ['ticker', 'strategy'], async (opts) => {
+    const ticker = opts['ticker'].toUpperCase();
+    const strategyType = opts['strategy'] as StrategyType;
+
+    // Validate strategy type
+    if (!VALID_STRATEGY_TYPES.includes(strategyType)) {
+      return errorResult('backtest', ErrorCodes.INVALID_PARAM_RANGE,
+        `Invalid strategy type '${opts['strategy']}'. Valid types: ${VALID_STRATEGY_TYPES.join(', ')}`);
+    }
+
+    // Resolve strategy instance
+    const strategyInstance = getStrategyInstance(strategyType);
+
+    // Parse and validate optional --params
+    let params: StrategyParams;
+    if (opts['params']) {
+      try {
+        params = JSON.parse(opts['params']) as StrategyParams;
+      } catch {
+        return errorResult('backtest', ErrorCodes.INVALID_PARAM_RANGE,
+          `Invalid JSON for --params: ${opts['params']}`);
+      }
+      const validation = strategyInstance.validateParams(params);
+      if (!validation.valid) {
+        return errorResult('backtest', ErrorCodes.INVALID_PARAM_RANGE,
+          `${ErrorCodes.INVALID_PARAM_RANGE}: ${validation.error}`);
+      }
+    } else {
+      params = getDefaultParams(strategyType);
+    }
+
+    // Use optional --period, defaulting to "1y"
+    const period = (opts['period'] as HistoricalPeriod) || '1y';
+    const noCache = opts['no-cache'] !== undefined;
+
+    // Fetch historical data
+    try {
+      let histResult;
+      if (noCache) {
+        // Bypass cache: call inner provider directly, then write through to cache
+        histResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
+        if (histResult.success) {
+          const entry: CacheEntry = {
+            ticker: normalizeTicker(ticker),
+            period,
+            interval: histResult.data.interval,
+            fetchedAt: new Date().toISOString(),
+            dataPoints: histResult.data.dataPoints,
+          };
+          cachingProvider.cacheStore.write(entry);
+        }
+      } else {
+        histResult = await priceFeedClient.fetchHistoricalData(ticker, period);
+      }
+
+      if (!histResult.success) {
+        const code = histResult.error.includes(ErrorCodes.INVALID_TICKER)
+          ? ErrorCodes.INVALID_TICKER
+          : histResult.error.includes(ErrorCodes.INVALID_PARAM_RANGE)
+            ? ErrorCodes.INVALID_PARAM_RANGE
+            : ErrorCodes.PRICE_FEED_UNAVAILABLE;
+        return errorResult('backtest', code, histResult.error);
+      }
+
+      // Convert historical data to PricePoint[]
+      const pricePoints = convertHistoricalData(histResult.data.dataPoints, ticker);
+
+      // Run backtest
+      const engine = new BacktestEngine();
+      const backtestResult = engine.run(pricePoints, strategyInstance, params, period);
+
+      return successResult('backtest', backtestResult);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return errorResult('backtest', ErrorCodes.PRICE_FEED_UNAVAILABLE, message);
+    }
+  });
+
+  // --- clear-cache ---
+  router.register('clear-cache', [], (opts) => {
+    const ticker = opts['ticker'] ? opts['ticker'].toUpperCase() : undefined;
+    const result = cachingProvider.clearCache(ticker);
+    return successResult('clear-cache', {
+      removed: result.removed,
+      message: ticker
+        ? `Cleared ${result.removed} cache entries for '${ticker}'`
+        : `Cleared ${result.removed} cache entries`,
+    });
+  });
+
   return {
     router,
     config,
@@ -276,7 +419,20 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     watchlistManager,
     strategyManager,
     processManager,
+    registry,
+    cachingProvider,
   };
+}
+
+function getStrategyInstance(strategyType: StrategyType) {
+  switch (strategyType) {
+    case 'moving_average_crossover':
+      return new MovingAverageCrossoverStrategy();
+    case 'rsi_threshold':
+      return new RSIThresholdStrategy();
+    case 'price_breakout':
+      return new PriceBreakoutStrategy();
+  }
 }
 
 function getDefaultParams(strategyType: StrategyType): StrategyParams {

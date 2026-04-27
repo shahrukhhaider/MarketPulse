@@ -114,4 +114,26 @@ export interface HistoricalData {
 }
 export declare const VALID_PERIODS: HistoricalPeriod[];
 export declare const VALID_INTERVALS: HistoricalInterval[];
+export interface Trade {
+    buySignal: Signal;
+    sellSignal: Signal;
+    profitLossPercent: number;
+}
+export interface PerformanceSummary {
+    totalReturnPercent: number;
+    numberOfTrades: number;
+    winRate: number;
+    maxDrawdownPercent: number;
+    trades: Trade[];
+    sharpeRatio: number;
+}
+export interface BacktestResult {
+    ticker: string;
+    strategyType: StrategyType;
+    params: StrategyParams;
+    period: string;
+    dataPointsEvaluated: number;
+    signals: Signal[];
+    performanceSummary: PerformanceSummary;
+}
 //# sourceMappingURL=types.d.ts.map

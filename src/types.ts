@@ -183,3 +183,32 @@ export interface HistoricalData {
 
 export const VALID_PERIODS: HistoricalPeriod[] = ['1mo', '3mo', '6mo', '1y', '2y', '5y'];
 export const VALID_INTERVALS: HistoricalInterval[] = ['1d', '1wk', '1mo'];
+
+// ============================================================
+// Backtest Types
+// ============================================================
+
+export interface Trade {
+  buySignal: Signal;
+  sellSignal: Signal;
+  profitLossPercent: number;
+}
+
+export interface PerformanceSummary {
+  totalReturnPercent: number;
+  numberOfTrades: number;
+  winRate: number;
+  maxDrawdownPercent: number;
+  trades: Trade[];
+  sharpeRatio: number;
+}
+
+export interface BacktestResult {
+  ticker: string;
+  strategyType: StrategyType;
+  params: StrategyParams;
+  period: string;
+  dataPointsEvaluated: number;
+  signals: Signal[];
+  performanceSummary: PerformanceSummary;
+}

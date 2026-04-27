@@ -1,8 +1,10 @@
 // @ts-ignore -- yahoo-finance2 is ESM-only; resolved at runtime by vitest/node
 import YahooFinanceModule from 'yahoo-finance2';
-import type { PricePoint, HistoricalPeriod, HistoricalInterval, HistoricalDataPoint, HistoricalData } from './types.js';
-import { ErrorCodes, VALID_PERIODS, VALID_INTERVALS } from './types.js';
+import type { PricePoint, HistoricalPeriod, HistoricalInterval, HistoricalData } from './types.js';
+import { ErrorCodes } from './types.js';
 import type { Result } from './config-store.js';
+import type { DataProvider, QuoteResult } from './data-provider.js';
+import { YahooFinanceAdapter } from './yahoo-finance-adapter.js';
 
 // yahoo-finance2 v3 exports a class constructor; v2 exported a pre-built instance.
 // Handle both patterns for backward compatibility.
@@ -48,16 +50,30 @@ export function isInvalidTickerError(err: unknown): boolean {
   );
 }
 
+/**
+ * Duck-type check: does the argument look like a DataProvider?
+ */
+function isDataProvider(obj: unknown): obj is DataProvider {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    typeof (obj as any).name === 'string' &&
+    typeof (obj as any).getQuote === 'function'
+  );
+}
+
 export class PriceFeedClient {
   private available: boolean = true;
-  private yahooFinance: YahooFinanceClient;
+  private provider: DataProvider;
 
-  constructor(yahooFinanceClient?: YahooFinanceClient) {
-    if (yahooFinanceClient) {
-      this.yahooFinance = yahooFinanceClient;
+  constructor(providerOrClient?: DataProvider | YahooFinanceClient) {
+    if (providerOrClient && isDataProvider(providerOrClient)) {
+      this.provider = providerOrClient;
     } else {
-      // Use the default yahoo-finance2 v3 instance
-      this.yahooFinance = defaultYahooFinance as unknown as YahooFinanceClient;
+      // Wrap a YahooFinanceClient (or default) in the adapter
+      this.provider = new YahooFinanceAdapter(
+        providerOrClient as YahooFinanceClient | undefined
+      );
     }
   }
 
@@ -69,7 +85,7 @@ export class PriceFeedClient {
   }
 
   /**
-   * Validate whether a ticker symbol exists on Yahoo Finance.
+   * Validate whether a ticker symbol exists.
    */
   async validateTicker(ticker: string): Promise<Result<boolean>> {
     if (!this.available) {
@@ -79,25 +95,10 @@ export class PriceFeedClient {
       };
     }
 
-    const normalized = ticker.toUpperCase();
-
     try {
-      const quote = await this.yahooFinance.quote(normalized);
-      if (quote && quote.regularMarketPrice != null) {
-        return { success: true, data: true };
-      }
-      return {
-        success: false,
-        error: `${ErrorCodes.INVALID_TICKER}: Ticker symbol '${normalized}' not found in price feed`,
-      };
+      return await this.provider.validateTicker(ticker);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      if (isInvalidTickerError(err)) {
-        return {
-          success: false,
-          error: `${ErrorCodes.INVALID_TICKER}: ${message}`,
-        };
-      }
       return {
         success: false,
         error: `${ErrorCodes.PRICE_FEED_UNAVAILABLE}: ${message}`,
@@ -106,7 +107,7 @@ export class PriceFeedClient {
   }
 
   /**
-   * Fetch the current price for a single ticker from Yahoo Finance.
+   * Fetch the current price for a single ticker.
    */
   async fetchCurrentPrice(ticker: string): Promise<Result<PricePoint>> {
     if (!this.available) {
@@ -116,32 +117,22 @@ export class PriceFeedClient {
       };
     }
 
-    const normalized = ticker.toUpperCase();
-
     try {
-      const quote = await this.yahooFinance.quote(normalized);
-      if (!quote || quote.regularMarketPrice == null) {
-        return {
-          success: false,
-          error: `${ErrorCodes.PRICE_FEED_UNAVAILABLE}: No price data available for '${normalized}'`,
-        };
+      const result = await this.provider.getQuote(ticker);
+      if (!result.success) {
+        return result;
       }
+      // Map QuoteResult → PricePoint (structurally compatible)
       return {
         success: true,
         data: {
-          ticker: normalized,
-          price: quote.regularMarketPrice,
-          timestamp: new Date().toISOString(),
+          ticker: result.data.ticker,
+          price: result.data.price,
+          timestamp: result.data.timestamp,
         },
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      if (isInvalidTickerError(err)) {
-        return {
-          success: false,
-          error: `${ErrorCodes.INVALID_TICKER}: ${message}`,
-        };
-      }
       return {
         success: false,
         error: `${ErrorCodes.PRICE_FEED_UNAVAILABLE}: ${message}`,
@@ -151,8 +142,6 @@ export class PriceFeedClient {
 
   /**
    * Fetch current prices for multiple tickers in a single batch call.
-   * Returns a map of ticker -> PricePoint for all tickers with valid quotes.
-   * Silently skips tickers without valid price data.
    */
   async fetchBatchPrices(
     tickers: string[]
@@ -168,26 +157,21 @@ export class PriceFeedClient {
       };
     }
 
-    const normalized = tickers.map((t) => t.toUpperCase());
-
     try {
-      const quotes = await this.yahooFinance.quote(normalized);
-      const results = new Map<string, PricePoint>();
-      const timestamp = new Date().toISOString();
-
-      const quoteArray = Array.isArray(quotes) ? quotes : [quotes];
-      for (const quote of quoteArray) {
-        if (quote && quote.symbol && quote.regularMarketPrice != null) {
-          const sym = quote.symbol.toUpperCase();
-          results.set(sym, {
-            ticker: sym,
-            price: quote.regularMarketPrice,
-            timestamp,
-          });
-        }
+      const result = await this.provider.getQuotes(tickers);
+      if (!result.success) {
+        return result;
       }
-
-      return { success: true, data: results };
+      // Map Map<string, QuoteResult> → Map<string, PricePoint>
+      const pricePoints = new Map<string, PricePoint>();
+      for (const [sym, quote] of result.data) {
+        pricePoints.set(sym, {
+          ticker: quote.ticker,
+          price: quote.price,
+          timestamp: quote.timestamp,
+        });
+      }
+      return { success: true, data: pricePoints };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return {
@@ -212,111 +196,14 @@ export class PriceFeedClient {
       };
     }
 
-    const actualPeriod = period ?? '1y';
-    const actualInterval = interval ?? '1d';
-
-    if (!VALID_PERIODS.includes(actualPeriod as HistoricalPeriod)) {
-      return {
-        success: false,
-        error: `${ErrorCodes.INVALID_PARAM_RANGE}: Invalid period '${actualPeriod}'. Valid values: ${VALID_PERIODS.join(', ')}`,
-      };
-    }
-
-    if (!VALID_INTERVALS.includes(actualInterval as HistoricalInterval)) {
-      return {
-        success: false,
-        error: `${ErrorCodes.INVALID_PARAM_RANGE}: Invalid interval '${actualInterval}'. Valid values: ${VALID_INTERVALS.join(', ')}`,
-      };
-    }
-
-    const normalized = ticker.toUpperCase();
-
-    const period1 = computePeriodStartDate(actualPeriod);
-
     try {
-      const response = await this.yahooFinance.chart(normalized, {
-        period1,
-        interval: actualInterval,
-      });
-
-      if (!response || !response.quotes || !Array.isArray(response.quotes) || response.quotes.length === 0) {
-        return {
-          success: true,
-          data: { ticker: normalized, interval: actualInterval, dataPoints: [] },
-        };
-      }
-
-      const dataPoints: HistoricalDataPoint[] = response.quotes
-        .filter((q: any) =>
-          q.date != null &&
-          q.open != null &&
-          q.high != null &&
-          q.low != null &&
-          q.close != null &&
-          q.volume != null
-        )
-        .map((q: any) => ({
-          date: toISODateString(q.date),
-          open: q.open,
-          high: q.high,
-          low: q.low,
-          close: q.close,
-          volume: q.volume,
-        }))
-        .sort((a: HistoricalDataPoint, b: HistoricalDataPoint) => a.date.localeCompare(b.date));
-
-      return {
-        success: true,
-        data: { ticker: normalized, interval: actualInterval, dataPoints },
-      };
+      return await this.provider.getHistoricalData(ticker, period, interval);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      if (isInvalidTickerError(err)) {
-        return {
-          success: false,
-          error: `${ErrorCodes.INVALID_TICKER}: ${message}`,
-        };
-      }
       return {
         success: false,
         error: `${ErrorCodes.PRICE_FEED_UNAVAILABLE}: ${message}`,
       };
     }
   }
-}
-
-/**
- * Compute the start date by subtracting the given period from the current date.
- */
-function computePeriodStartDate(period: HistoricalPeriod): Date {
-  const now = new Date();
-  switch (period) {
-    case '1mo':
-      now.setMonth(now.getMonth() - 1);
-      break;
-    case '3mo':
-      now.setMonth(now.getMonth() - 3);
-      break;
-    case '6mo':
-      now.setMonth(now.getMonth() - 6);
-      break;
-    case '1y':
-      now.setFullYear(now.getFullYear() - 1);
-      break;
-    case '2y':
-      now.setFullYear(now.getFullYear() - 2);
-      break;
-    case '5y':
-      now.setFullYear(now.getFullYear() - 5);
-      break;
-  }
-  return now;
-}
-
-/**
- * Convert a Date object to an ISO 8601 date string (YYYY-MM-DD).
- */
-function toISODateString(date: Date | string): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  return d.toISOString().split('T')[0];
 }
