@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BREAKOUT_VOLUME_CONFIG = exports.TREND_PULLBACK_CONFIG = exports.MOMENTUM_CONTINUATION_CONFIG = void 0;
+exports.isV2Config = isV2Config;
+exports.isV1Config = isV1Config;
 exports.getDefaultCompositeConfig = getDefaultCompositeConfig;
 // ============================================================
 // Default Strategy Configurations
@@ -19,6 +21,8 @@ exports.MOMENTUM_CONTINUATION_CONFIG = {
     ],
     exitRules: [
         { type: 'hold_days', days: 63 },
+        { type: 'price_below_sma', period: 10 },
+        { type: 'rsi_above', period: 14, threshold: 70 },
     ],
     riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 5.0 },
     indexTicker: 'SPY',
@@ -39,6 +43,7 @@ exports.TREND_PULLBACK_CONFIG = {
     exitRules: [
         { type: 'rsi_above', period: 14, threshold: 60 },
         { type: 'hold_days', days: 63 },
+        { type: 'price_below_sma', period: 10 },
     ],
     riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 5.0 },
 };
@@ -56,9 +61,19 @@ exports.BREAKOUT_VOLUME_CONFIG = {
     exitRules: [
         { type: 'price_below_sma', period: 10 },
         { type: 'hold_days', days: 63 },
+        { type: 'rsi_above', period: 14, threshold: 70 },
     ],
     riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 5.0 },
 };
+// ============================================================
+// Configuration Detection Helpers
+// ============================================================
+function isV2Config(config) {
+    return config && typeof config.phases === 'object';
+}
+function isV1Config(config) {
+    return config && Array.isArray(config.directionFilters);
+}
 // ============================================================
 // Config Lookup
 // ============================================================

@@ -1,4 +1,4 @@
-import type { CompositeStrategyParams } from './strategies/strategy-configs.js';
+import type { CompositeStrategyParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
 
 // ============================================================
 // Strategy Parameter Interfaces
@@ -24,7 +24,8 @@ export type StrategyParams =
   | MovingAverageCrossoverParams
   | RSIThresholdParams
   | PriceBreakoutParams
-  | CompositeStrategyParams;
+  | CompositeStrategyParams
+  | PhasedStrategyParams;
 
 // ============================================================
 // Strategy Types and Configuration
@@ -38,7 +39,7 @@ export type StrategyType =
   | 'trend_pullback'
   | 'breakout_volume';
 
-export type { CompositeStrategyParams } from './strategies/strategy-configs.js';
+export type { CompositeStrategyParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
 
 export interface StrategyConfig {
   type: StrategyType;
@@ -109,6 +110,13 @@ export interface Signal {
   timestamp: string; // ISO 8601
   previousDirection?: SignalDirection;
   previousTimestamp?: string;
+}
+
+export interface V2Signal extends Signal {
+  stopLossPrice?: number;
+  profitTargetPrice?: number;
+  rValue?: number;
+  exitReason?: 'stop_loss' | 'profit_target' | 'trend_failsafe';
 }
 
 // ============================================================
@@ -200,6 +208,16 @@ export interface Trade {
   buySignal: Signal;
   sellSignal: Signal;
   profitLossPercent: number;
+}
+
+export interface V2Trade extends Trade {
+  entryPrice: number;
+  exitPrice: number;
+  stopLossPrice: number;
+  profitTargetPrice: number;
+  rValue: number;
+  exitReason: 'stop_loss' | 'profit_target' | 'trend_failsafe';
+  barsHeld: number;
 }
 
 export interface PerformanceSummary {

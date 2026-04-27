@@ -32,6 +32,13 @@ export interface StrategyConfiguration {
   exitRules: ExitRule[];
   riskRule?: RiskRule;
   indexTicker?: string;
+
+  // Confidence-score fields (all optional for backward compatibility)
+  signalMode?: 'binary' | 'confidence';
+  confidenceThreshold?: number;   // (0, 1], default 0.6
+  directionWeight?: number;       // >= 0, default 1.0
+  timingWeight?: number;          // >= 0, default 1.0
+  confirmationWeight?: number;    // >= 0, default 1.0
 }
 
 // ============================================================
@@ -41,6 +48,45 @@ export interface StrategyConfiguration {
 export interface CompositeStrategyParams {
   config: StrategyConfiguration;
   auxiliaryData?: Record<string, HistoricalDataPoint[]>;
+  primaryDataPoints?: HistoricalDataPoint[];
+}
+
+// ============================================================
+// V2 Phased Strategy Types
+// ============================================================
+
+export interface PhaseDefinition {
+  conditions: FilterCondition[];
+  logic: 'ALL' | 'ANY';
+}
+
+export interface PhasedStrategyConfiguration {
+  name: string;
+  phases: {
+    direction: PhaseDefinition;  // ALL-of logic
+    setup: PhaseDefinition;      // ANY-of logic
+    trigger: PhaseDefinition;    // ALL-of logic
+  };
+  stopLoss: {
+    atr_period: number;          // default 14
+    atr_multiple: number;        // default 1.5
+    swing_low_lookback: number;  // default 10
+    swing_buffer_atr: number;    // default 0.3
+  };
+  profitTarget: {
+    target_r_multiple: number;   // default 2
+  };
+  trendExit: {
+    trend_exit_sma_period: number; // default 50
+  };
+  maxRisk: {
+    max_risk_pct: number;        // default 3
+  };
+  min_hold_days: number;         // 7 (short_term) or 30 (long_term), NOT tunable
+}
+
+export interface PhasedStrategyParams {
+  config: PhasedStrategyConfiguration;
   primaryDataPoints?: HistoricalDataPoint[];
 }
 
@@ -62,6 +108,8 @@ export const MOMENTUM_CONTINUATION_CONFIG: StrategyConfiguration = {
   ],
   exitRules: [
     { type: 'hold_days', days: 63 },
+    { type: 'price_below_sma', period: 10 },
+    { type: 'rsi_above', period: 14, threshold: 70 },
   ],
   riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 5.0 },
   indexTicker: 'SPY',
@@ -83,6 +131,7 @@ export const TREND_PULLBACK_CONFIG: StrategyConfiguration = {
   exitRules: [
     { type: 'rsi_above', period: 14, threshold: 60 },
     { type: 'hold_days', days: 63 },
+    { type: 'price_below_sma', period: 10 },
   ],
   riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 5.0 },
 };
@@ -101,9 +150,22 @@ export const BREAKOUT_VOLUME_CONFIG: StrategyConfiguration = {
   exitRules: [
     { type: 'price_below_sma', period: 10 },
     { type: 'hold_days', days: 63 },
+    { type: 'rsi_above', period: 14, threshold: 70 },
   ],
   riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 5.0 },
 };
+
+// ============================================================
+// Configuration Detection Helpers
+// ============================================================
+
+export function isV2Config(config: any): config is PhasedStrategyConfiguration {
+  return config && typeof config.phases === 'object';
+}
+
+export function isV1Config(config: any): config is StrategyConfiguration {
+  return config && Array.isArray(config.directionFilters);
+}
 
 // ============================================================
 // Config Lookup

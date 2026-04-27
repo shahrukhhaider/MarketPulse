@@ -4,10 +4,14 @@ import type {
   Strategy,
   StrategyParams,
   Signal,
+  V2Signal,
+  V2Trade,
   BacktestResult,
   PerformanceSummary,
   Trade,
 } from './types.js';
+import type { PhasedStrategyEngine } from './strategies/phased-engine.js';
+import type { PhasedStrategyParams } from './strategies/strategy-configs.js';
 
 export function convertHistoricalData(
   dataPoints: HistoricalDataPoint[],
@@ -113,6 +117,73 @@ export function computePerformanceSummary(
   };
 }
 
+export function computePerformanceSummaryFromTrades(
+  trades: Trade[],
+  dataPoints: HistoricalDataPoint[]
+): PerformanceSummary {
+  const numberOfTrades = trades.length;
+
+  // Benchmark return: buy-and-hold percentage change from first to last data point
+  let benchmarkReturnPercent = 0;
+  if (dataPoints.length >= 2) {
+    const firstPrice = dataPoints[0].close;
+    const lastPrice = dataPoints[dataPoints.length - 1].close;
+    benchmarkReturnPercent = ((lastPrice - firstPrice) / firstPrice) * 100;
+  }
+
+  // Total return: cumulative return from strategy trades
+  let totalReturnPercent = 0;
+  if (trades.length > 0) {
+    let cumulativeValue = 1;
+    for (const trade of trades) {
+      cumulativeValue *= 1 + trade.profitLossPercent / 100;
+    }
+    totalReturnPercent = (cumulativeValue - 1) * 100;
+  }
+
+  // Win rate
+  const profitableTrades = trades.filter((t) => t.profitLossPercent > 0).length;
+  const winRate = numberOfTrades > 0 ? profitableTrades / numberOfTrades : 0;
+
+  // Max drawdown
+  let maxDrawdownPercent = 0;
+  if (trades.length > 0) {
+    let cumulativeValue = 1;
+    let peak = 1;
+    for (const trade of trades) {
+      cumulativeValue *= 1 + trade.profitLossPercent / 100;
+      if (cumulativeValue > peak) {
+        peak = cumulativeValue;
+      }
+      const drawdown = ((peak - cumulativeValue) / peak) * 100;
+      if (drawdown > maxDrawdownPercent) {
+        maxDrawdownPercent = drawdown;
+      }
+    }
+  }
+
+  // Sharpe ratio
+  let sharpeRatio = 0;
+  if (numberOfTrades >= 2) {
+    const returns = trades.map((t) => t.profitLossPercent);
+    const mean = returns.reduce((sum, r) => sum + r, 0) / returns.length;
+    const variance =
+      returns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / returns.length;
+    const stddev = Math.sqrt(variance);
+    sharpeRatio = stddev !== 0 ? mean / stddev : 0;
+  }
+
+  return {
+    totalReturnPercent,
+    benchmarkReturnPercent,
+    numberOfTrades,
+    winRate,
+    maxDrawdownPercent,
+    trades,
+    sharpeRatio,
+  };
+}
+
 export class BacktestEngine {
   run(
     pricePoints: PricePoint[],
@@ -158,6 +229,70 @@ export class BacktestEngine {
       params,
       period,
       dataPointsEvaluated: pricePoints.length,
+      signals,
+      performanceSummary,
+    };
+  }
+
+  runV2(
+    dataPoints: HistoricalDataPoint[],
+    engine: PhasedStrategyEngine,
+    params: PhasedStrategyParams,
+    period: string = '1y'
+  ): BacktestResult {
+    engine.reset();
+
+    const signals: V2Signal[] = [];
+    const trades: V2Trade[] = [];
+    const ticker = '';
+    const minDataPoints = engine.minimumDataPointsForParams(params);
+
+    // Track open position state
+    let pendingBuySignal: V2Signal | null = null;
+    let entryBarIndex = 0;
+
+    for (let i = minDataPoints; i <= dataPoints.length; i++) {
+      const slice = dataPoints.slice(0, i);
+      const signal = engine.evaluateWithOHLCV(slice, params);
+
+      if (signal.direction === 'BUY') {
+        signals.push(signal);
+        pendingBuySignal = signal;
+        entryBarIndex = i;
+      } else if (signal.direction === 'SELL' && pendingBuySignal) {
+        signals.push(signal);
+
+        const entryPrice = pendingBuySignal.price;
+        const exitPrice = signal.price;
+        const profitLossPercent = ((exitPrice - entryPrice) / entryPrice) * 100;
+        const barsHeld = i - entryBarIndex;
+
+        const v2Trade: V2Trade = {
+          buySignal: pendingBuySignal,
+          sellSignal: signal,
+          profitLossPercent,
+          entryPrice,
+          exitPrice,
+          stopLossPrice: pendingBuySignal.stopLossPrice ?? 0,
+          profitTargetPrice: pendingBuySignal.profitTargetPrice ?? 0,
+          rValue: pendingBuySignal.rValue ?? 0,
+          exitReason: signal.exitReason ?? 'trend_failsafe',
+          barsHeld,
+        };
+
+        trades.push(v2Trade);
+        pendingBuySignal = null;
+      }
+    }
+
+    const performanceSummary = computePerformanceSummaryFromTrades(trades, dataPoints);
+
+    return {
+      ticker,
+      strategyType: engine.type,
+      params,
+      period,
+      dataPointsEvaluated: dataPoints.length,
       signals,
       performanceSummary,
     };

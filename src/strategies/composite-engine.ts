@@ -8,7 +8,7 @@ import type {
   HistoricalDataPoint,
 } from '../types.js';
 import { sma, rsi, atr } from '../indicators.js';
-import { evaluateConditions } from './filter-evaluator.js';
+import { evaluateConditions, scoreConditions } from './filter-evaluator.js';
 import {
   getDefaultCompositeConfig,
   type CompositeStrategyParams,
@@ -108,20 +108,46 @@ export class CompositeStrategyEngine implements Strategy {
     }
 
     // --- Entry signal evaluation (only when no position is open) ---
-    const directionPass = evaluateConditions(config.directionFilters, prices, dataPoints, auxiliaryData);
-    const timingPass = evaluateConditions(config.timingFilters, prices, dataPoints, auxiliaryData);
-    const confirmationPass = evaluateConditions(config.confirmationFilters, prices, dataPoints, auxiliaryData);
+    if (config.signalMode === 'confidence') {
+      const directionScore = scoreConditions(config.directionFilters, prices, dataPoints, auxiliaryData);
+      const timingScore = scoreConditions(config.timingFilters, prices, dataPoints, auxiliaryData);
+      const confirmationScore = scoreConditions(config.confirmationFilters, prices, dataPoints, auxiliaryData);
 
-    if (directionPass && timingPass && confirmationPass) {
-      // Compute stop-loss
-      this.stopLossPrice = this.computeStopLoss(config.riskRule, latest.price, dataPoints);
-      this.positionOpen = true;
-      this.entryBarIndex = barIndex;
-      this.entryPrice = latest.price;
-      return this.makeSignal(latest, 'BUY');
+      const dw = config.directionWeight ?? 1.0;
+      const tw = config.timingWeight ?? 1.0;
+      const cw = config.confirmationWeight ?? 1.0;
+      const totalWeight = dw + tw + cw;
+
+      const compositeScore = totalWeight === 0
+        ? 0
+        : (dw * directionScore + tw * timingScore + cw * confirmationScore) / totalWeight;
+
+      const threshold = config.confidenceThreshold ?? 0.6;
+
+      if (compositeScore > threshold) {
+        this.stopLossPrice = this.computeStopLoss(config.riskRule, latest.price, dataPoints);
+        this.positionOpen = true;
+        this.entryBarIndex = barIndex;
+        this.entryPrice = latest.price;
+        return this.makeSignal(latest, 'BUY');
+      }
+      return this.makeSignal(latest, 'HOLD');
+    } else {
+      // Existing binary AND path (unchanged)
+      const directionPass = evaluateConditions(config.directionFilters, prices, dataPoints, auxiliaryData);
+      const timingPass = evaluateConditions(config.timingFilters, prices, dataPoints, auxiliaryData);
+      const confirmationPass = evaluateConditions(config.confirmationFilters, prices, dataPoints, auxiliaryData);
+
+      if (directionPass && timingPass && confirmationPass) {
+        this.stopLossPrice = this.computeStopLoss(config.riskRule, latest.price, dataPoints);
+        this.positionOpen = true;
+        this.entryBarIndex = barIndex;
+        this.entryPrice = latest.price;
+        return this.makeSignal(latest, 'BUY');
+      }
+
+      return this.makeSignal(latest, 'HOLD');
     }
-
-    return this.makeSignal(latest, 'HOLD');
   }
 
   validateParams(params: StrategyParams): { valid: boolean; error?: string } {
@@ -163,6 +189,22 @@ export class CompositeStrategyEngine implements Strategy {
       if (err) return { valid: false, error: err };
     }
 
+    // Validate confidence-score fields
+    if (config.confidenceThreshold !== undefined) {
+      if (config.confidenceThreshold <= 0 || config.confidenceThreshold > 1) {
+        return { valid: false, error: 'confidenceThreshold must be in range (0, 1]' };
+      }
+    }
+    if (config.directionWeight !== undefined && config.directionWeight < 0) {
+      return { valid: false, error: 'directionWeight must be >= 0' };
+    }
+    if (config.timingWeight !== undefined && config.timingWeight < 0) {
+      return { valid: false, error: 'timingWeight must be >= 0' };
+    }
+    if (config.confirmationWeight !== undefined && config.confirmationWeight < 0) {
+      return { valid: false, error: 'confirmationWeight must be >= 0' };
+    }
+
     return { valid: true };
   }
 
@@ -195,17 +237,23 @@ export class CompositeStrategyEngine implements Strategy {
     barIndex: number,
     currentPrice: number,
   ): boolean {
-    // Stop-loss check
+    // 1. ATR stop-loss check — always active, even during hold period
     if (this.stopLossPrice !== undefined && currentPrice <= this.stopLossPrice) {
       return true;
     }
 
+    // 2. Hold period gate — suppress all other exits while position age < hold_days
+    const holdDaysRule = config.exitRules.find((r): r is Extract<ExitRule, { type: 'hold_days' }> => r.type === 'hold_days');
+    if (holdDaysRule && (barIndex - this.entryBarIndex) < holdDaysRule.days) {
+      return false;
+    }
+
+    // 3. Evaluate remaining exit rules (hold_days is a gate, not a trigger — skip it)
     for (const rule of config.exitRules) {
       switch (rule.type) {
-        case 'hold_days': {
-          if (barIndex - this.entryBarIndex >= rule.days) return true;
+        case 'hold_days':
+          // Not a trigger — handled above as a gate
           break;
-        }
         case 'rsi_above': {
           const rsiVal = rsi(prices, rule.period);
           if (rsiVal !== undefined && rsiVal > rule.threshold) return true;

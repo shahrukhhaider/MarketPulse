@@ -1,4 +1,4 @@
-import type { StrategyConfiguration } from './strategies/strategy-configs.js';
+import type { StrategyConfiguration, PhasedStrategyConfiguration } from './strategies/strategy-configs.js';
 import type { TimeHorizon, TunableStrategy } from './tuning-engine.js';
 
 export type { TimeHorizon, TunableStrategy } from './tuning-engine.js';
@@ -8,6 +8,11 @@ export type ParameterSpace = Record<string, number[]>;
 export interface GridEntry {
   params: Record<string, number>;
   config: StrategyConfiguration;
+}
+
+export interface V2GridEntry {
+  params: Record<string, number>;
+  config: PhasedStrategyConfiguration;
 }
 
 /**
@@ -34,7 +39,13 @@ function getTrendPullbackSpace(horizon: TimeHorizon): ParameterSpace {
       sma_slow: [100, 150, 200],
       rsi_threshold: [35, 40, 45],
       atr_stop_multiple: [1.5, 2.0, 2.5],
-      hold_days: [5, 10, 15],
+      hold_days: [7],
+      exit_sma_period: [5, 10, 20],
+      exit_rsi_threshold: [65, 70, 75, 80],
+      confidence_threshold: [0.5, 0.6, 0.7],
+      direction_weight: [0.5, 1.0],
+      timing_weight: [0.5, 1.0],
+      confirmation_weight: [0.5, 1.0],
     };
   }
   return {
@@ -42,7 +53,13 @@ function getTrendPullbackSpace(horizon: TimeHorizon): ParameterSpace {
     sma_slow: [200, 300],
     rsi_threshold: [40, 50],
     atr_stop_multiple: [2.0, 3.0],
-    hold_days: [60, 120, 250],
+    hold_days: [15],
+    exit_sma_period: [10, 20, 50],
+    exit_rsi_threshold: [65, 70, 75, 80],
+    confidence_threshold: [0.5, 0.6, 0.7],
+    direction_weight: [0.5, 1.0],
+    timing_weight: [0.5, 1.0],
+    confirmation_weight: [0.5, 1.0],
   };
 }
 
@@ -54,7 +71,13 @@ function getBreakoutVolumeSpace(horizon: TimeHorizon): ParameterSpace {
       volume_avg_period: [10, 20],
       volume_multiplier: [1.5, 2.0, 2.5],
       atr_stop_multiple: [1.5, 2.0, 2.5],
-      hold_days: [5, 10, 15],
+      hold_days: [7],
+      exit_sma_period: [5, 10, 20],
+      exit_rsi_threshold: [65, 70, 75, 80],
+      confidence_threshold: [0.5, 0.6, 0.7],
+      direction_weight: [0.5, 1.0],
+      timing_weight: [0.5, 1.0],
+      confirmation_weight: [0.5, 1.0],
     };
   }
   return {
@@ -63,7 +86,13 @@ function getBreakoutVolumeSpace(horizon: TimeHorizon): ParameterSpace {
     volume_avg_period: [20, 50],
     volume_multiplier: [1.5, 2.0],
     atr_stop_multiple: [2.0, 3.0],
-    hold_days: [60, 120, 250],
+    hold_days: [15],
+    exit_sma_period: [10, 20, 50],
+    exit_rsi_threshold: [65, 70, 75, 80],
+    confidence_threshold: [0.5, 0.6, 0.7],
+    direction_weight: [0.5, 1.0],
+    timing_weight: [0.5, 1.0],
+    confirmation_weight: [0.5, 1.0],
   };
 }
 
@@ -76,7 +105,13 @@ function getMomentumContinuationSpace(horizon: TimeHorizon): ParameterSpace {
       short_return_period: [3, 5],
       short_return_threshold: [2, 3, 5],
       atr_stop_multiple: [1.5, 2.0, 2.5],
-      hold_days: [5, 10, 15],
+      hold_days: [7],
+      exit_sma_period: [5, 10, 20],
+      exit_rsi_threshold: [65, 70, 75, 80],
+      confidence_threshold: [0.5, 0.6, 0.7],
+      direction_weight: [0.5, 1.0],
+      timing_weight: [0.5, 1.0],
+      confirmation_weight: [0.5, 1.0],
     };
   }
   return {
@@ -86,7 +121,13 @@ function getMomentumContinuationSpace(horizon: TimeHorizon): ParameterSpace {
     short_return_period: [5, 10],
     short_return_threshold: [3, 5],
     atr_stop_multiple: [2.0, 3.0],
-    hold_days: [60, 120, 250],
+    hold_days: [15],
+    exit_sma_period: [10, 20, 50],
+    exit_rsi_threshold: [65, 70, 75, 80],
+    confidence_threshold: [0.5, 0.6, 0.7],
+    direction_weight: [0.5, 1.0],
+    timing_weight: [0.5, 1.0],
+    confirmation_weight: [0.5, 1.0],
   };
 }
 
@@ -137,7 +178,7 @@ function cartesianProduct(arrays: number[][]): number[][] {
 /**
  * Map a parameter combination to a StrategyConfiguration for the given strategy.
  */
-function buildConfig(
+export function buildConfig(
   strategy: TunableStrategy,
   params: Record<string, number>
 ): StrategyConfiguration {
@@ -166,10 +207,16 @@ function buildTrendPullbackConfig(params: Record<string, number>): StrategyConfi
       { type: 'volume_below_avg', period: 20 },
     ],
     exitRules: [
-      { type: 'rsi_above', period: 14, threshold: 60 },
+      { type: 'rsi_above', period: 14, threshold: params.exit_rsi_threshold },
       { type: 'hold_days', days: params.hold_days },
+      { type: 'price_below_sma', period: params.exit_sma_period },
     ],
     riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: params.atr_stop_multiple },
+    signalMode: 'confidence',
+    confidenceThreshold: params.confidence_threshold,
+    directionWeight: params.direction_weight,
+    timingWeight: params.timing_weight,
+    confirmationWeight: params.confirmation_weight,
   };
 }
 
@@ -186,10 +233,16 @@ function buildBreakoutVolumeConfig(params: Record<string, number>): StrategyConf
       { type: 'volume_above_avg', period: params.volume_avg_period, multiplier: params.volume_multiplier },
     ],
     exitRules: [
-      { type: 'price_below_sma', period: params.sma_trend_period },
+      { type: 'price_below_sma', period: params.exit_sma_period },
       { type: 'hold_days', days: params.hold_days },
+      { type: 'rsi_above', period: 14, threshold: params.exit_rsi_threshold },
     ],
     riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: params.atr_stop_multiple },
+    signalMode: 'confidence',
+    confidenceThreshold: params.confidence_threshold,
+    directionWeight: params.direction_weight,
+    timingWeight: params.timing_weight,
+    confirmationWeight: params.confirmation_weight,
   };
 }
 
@@ -208,10 +261,105 @@ function buildMomentumContinuationConfig(params: Record<string, number>): Strate
     ],
     exitRules: [
       { type: 'hold_days', days: params.hold_days },
+      { type: 'price_below_sma', period: params.exit_sma_period },
+      { type: 'rsi_above', period: 14, threshold: params.exit_rsi_threshold },
     ],
     riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: params.atr_stop_multiple },
     indexTicker: 'SPY',
+    signalMode: 'confidence',
+    confidenceThreshold: params.confidence_threshold,
+    directionWeight: params.direction_weight,
+    timingWeight: params.timing_weight,
+    confirmationWeight: params.confirmation_weight,
   };
+}
+
+/**
+ * Return the V2 parameter space with 6 tunable parameters.
+ * Total combinations: 3 × 3 × 3 × 3 × 2 × 3 = 486
+ */
+export function getV2ParameterSpace(): ParameterSpace {
+  return {
+    rsi_threshold: [40, 45, 50],
+    return_20d: [3, 4, 6],
+    distance_to_sma50: [3, 5, 8],
+    atr_multiple: [1.2, 1.5, 2.0],
+    target_r_multiple: [2, 3],
+    swing_low_lookback: [5, 10, 20],
+  };
+}
+
+/**
+ * Map a V2 parameter combination to a PhasedStrategyConfiguration.
+ */
+export function buildV2Config(
+  params: Record<string, number>,
+  minHoldDays: number
+): PhasedStrategyConfiguration {
+  return {
+    name: 'phased_momentum',
+    phases: {
+      direction: {
+        conditions: [
+          { type: 'price_above_sma', period: 50 },
+          { type: 'sma_above_sma', shortPeriod: 50, longPeriod: 200 },
+        ],
+        logic: 'ALL',
+      },
+      setup: {
+        conditions: [
+          { type: 'price_below_sma', period: 20 },
+          { type: 'rsi_below', period: 14, threshold: params.rsi_threshold },
+        ],
+        logic: 'ANY',
+      },
+      trigger: {
+        conditions: [
+          { type: 'return_above', period: 20, threshold: params.return_20d },
+          { type: 'price_near_sma', period: 50, tolerance: params.distance_to_sma50 / 100 },
+        ],
+        logic: 'ALL',
+      },
+    },
+    stopLoss: {
+      atr_period: 14,
+      atr_multiple: params.atr_multiple,
+      swing_low_lookback: Math.round(params.swing_low_lookback),
+      swing_buffer_atr: 0.3,
+    },
+    profitTarget: {
+      target_r_multiple: params.target_r_multiple,
+    },
+    trendExit: {
+      trend_exit_sma_period: 50,
+    },
+    maxRisk: {
+      max_risk_pct: 3,
+    },
+    min_hold_days: minHoldDays,
+  };
+}
+
+/**
+ * Generate the full V2 parameter grid using Cartesian product.
+ * Sets min_hold_days to 7 for short_term, 30 for long_term.
+ */
+export function generateV2Grid(horizon: TimeHorizon): V2GridEntry[] {
+  const space = getV2ParameterSpace();
+  const paramNames = Object.keys(space);
+  const paramArrays = paramNames.map(name => space[name]);
+  const minHoldDays = horizon === 'short_term' ? 7 : 30;
+
+  const combinations = cartesianProduct(paramArrays);
+
+  return combinations.map(values => {
+    const params: Record<string, number> = {};
+    paramNames.forEach((name, i) => {
+      params[name] = values[i];
+    });
+    const config = buildV2Config(params, minHoldDays);
+    return { params, config };
+  });
 }
 
 /**

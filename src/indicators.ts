@@ -124,3 +124,48 @@ export function avgVolume(dataPoints: HistoricalDataPoint[], period: number): nu
   }
   return sum / period;
 }
+
+/**
+ * Swing Low — lowest low over the last `lookback` data points.
+ * Used for structure stop-loss calculation.
+ * Requires at least `lookback` data points.
+ */
+export function swingLow(dataPoints: HistoricalDataPoint[], lookback: number): number | undefined {
+  if (dataPoints.length < lookback) return undefined;
+
+  let min = Infinity;
+  for (let i = dataPoints.length - lookback; i < dataPoints.length; i++) {
+    if (dataPoints[i].low < min) min = dataPoints[i].low;
+  }
+  return min;
+}
+
+/**
+ * Percentage distance from the current price to its SMA.
+ * Formula: ((currentPrice - SMA) / SMA) × 100
+ * Requires at least `smaPeriod` prices.
+ */
+export function distanceToSma(prices: number[], smaPeriod: number): number | undefined {
+  if (prices.length < smaPeriod) return undefined;
+
+  const smaValue = sma(prices, smaPeriod);
+  if (smaValue === undefined || smaValue === 0) return undefined;
+
+  const currentPrice = prices[prices.length - 1];
+  return ((currentPrice - smaValue) / smaValue) * 100;
+}
+
+/**
+ * Highest High — highest high over the last `lookback` data points.
+ * Used for trigger phase breakout conditions.
+ * Requires at least `lookback` data points.
+ */
+export function highestHigh(dataPoints: HistoricalDataPoint[], lookback: number): number | undefined {
+  if (dataPoints.length < lookback) return undefined;
+
+  let max = -Infinity;
+  for (let i = dataPoints.length - lookback; i < dataPoints.length; i++) {
+    if (dataPoints[i].high > max) max = dataPoints[i].high;
+  }
+  return max;
+}

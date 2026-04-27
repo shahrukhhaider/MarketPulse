@@ -297,6 +297,143 @@ node dist/src/cli.js configure-strategy --ticker GOOGL --strategy price_breakout
 node dist/src/cli.js start-monitor
 ```
 
+---
+
+### 9. backtest
+
+Run a historical backtest for a strategy against a ticker.
+
+```bash
+node dist/src/cli.js backtest --ticker <SYMBOL> --strategy <TYPE> [--period <PERIOD>] [--params <JSON>] [--chart] [--no-cache]
+```
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `--ticker` | Yes | Stock ticker symbol |
+| `--strategy` | Yes | Strategy type: `momentum_continuation`, `trend_pullback`, `breakout_volume`, `moving_average_crossover`, `rsi_threshold`, `price_breakout` |
+| `--period` | No | Historical period: `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y` (default: `1y`) |
+| `--params` | No | JSON string of strategy parameters (uses defaults if omitted) |
+| `--chart` | No | Generate an HTML chart and open it in the browser |
+| `--no-cache` | No | Bypass the historical data cache |
+
+**Natural language triggers:** "backtest NVDA with momentum", "run a backtest on TSLA breakout strategy", "test momentum continuation on AAPL over 2 years"
+
+**Example:**
+```bash
+# Backtest with defaults
+node dist/src/cli.js backtest --ticker NVDA --strategy momentum_continuation --period 2y
+
+# Backtest with chart output
+node dist/src/cli.js backtest --ticker NVDA --strategy momentum_continuation --period 2y --chart
+```
+
+Returns `data.performanceSummary` with `totalReturnPercent`, `numberOfTrades`, `winRate`, `maxDrawdownPercent`, `sharpeRatio`, and individual `trades`.
+
+---
+
+### 10. tune
+
+Run parameter grid search to find optimal strategy parameters for a ticker.
+
+```bash
+node dist/src/cli.js tune --ticker <SYMBOL> --strategy <TYPE> [--horizon <HORIZON>] [--risk <PROFILE>] [--no-cache]
+```
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `--ticker` | Yes | Stock ticker symbol |
+| `--strategy` | Yes | Tunable strategy: `momentum_continuation`, `trend_pullback`, `breakout_volume` |
+| `--horizon` | No | Time horizon: `short_term` or `long_term` (default: `long_term`) |
+| `--risk` | No | Risk profile: `low`, `medium`, `high` |
+| `--no-cache` | No | Bypass the historical data cache |
+
+**Natural language triggers:** "tune NVDA momentum strategy", "optimize breakout parameters for TSLA", "find best params for trend pullback on AAPL"
+
+**Example:**
+```bash
+node dist/src/cli.js tune --ticker NVDA --strategy momentum_continuation --horizon short_term
+```
+
+Returns `data.best_region` with optimal parameter ranges and `data.best_score`.
+
+---
+
+### 11. tune-and-chart
+
+Tune parameters, then run a backtest with the optimized params and generate an HTML chart. This is the recommended workflow for evaluating a strategy.
+
+```bash
+node dist/src/cli.js tune-and-chart --ticker <SYMBOL> --strategy <TYPE> [--horizon <HORIZON>] [--risk <PROFILE>] [--no-cache]
+```
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `--ticker` | Yes | Stock ticker symbol |
+| `--strategy` | Yes | Tunable strategy: `momentum_continuation`, `trend_pullback`, `breakout_volume` |
+| `--horizon` | No | Time horizon: `short_term` or `long_term` (default: `long_term`) |
+| `--risk` | No | Risk profile: `low`, `medium`, `high` |
+| `--no-cache` | No | Bypass the historical data cache |
+
+**Natural language triggers:** "tune and backtest NVDA momentum", "optimize and chart breakout for TSLA", "run full analysis on AAPL trend pullback"
+
+**Example:**
+```bash
+node dist/src/cli.js tune-and-chart --ticker NVDA --strategy momentum_continuation --horizon short_term
+```
+
+Returns combined `data.tuning` (best params), `data.midpoint_params`, and `data.backtest` (performance + chart path). Opens the chart in the browser automatically.
+
+---
+
+### 12. clear-cache
+
+Clear cached historical data.
+
+```bash
+node dist/src/cli.js clear-cache [--ticker <SYMBOL>]
+```
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `--ticker` | No | Clear cache for a specific ticker only. If omitted, clears all cached data. |
+
+**Natural language triggers:** "clear cache", "refresh data for NVDA", "clear historical data cache"
+
+**Example:**
+```bash
+# Clear all cache
+node dist/src/cli.js clear-cache
+
+# Clear cache for one ticker
+node dist/src/cli.js clear-cache --ticker NVDA
+```
+
+---
+
+## Typical Workflows (continued)
+
+### Tune and evaluate a strategy
+
+The recommended workflow is: tune first, then backtest with optimized params.
+
+```bash
+# Option 1: All-in-one (tune + backtest + chart)
+node dist/src/cli.js tune-and-chart --ticker NVDA --strategy momentum_continuation --horizon short_term
+
+# Option 2: Step by step
+# Step 1: Tune to find optimal parameters
+node dist/src/cli.js tune --ticker NVDA --strategy momentum_continuation --horizon short_term
+# Step 2: Backtest with the tuned params (copy best_region midpoints into --params)
+node dist/src/cli.js backtest --ticker NVDA --strategy momentum_continuation --period 2y --chart --params '{"config": {...}}'
+```
+
+### Compare strategies for a ticker
+
+```bash
+node dist/src/cli.js tune-and-chart --ticker NVDA --strategy momentum_continuation --horizon short_term
+node dist/src/cli.js tune-and-chart --ticker NVDA --strategy breakout_volume --horizon short_term
+```
+
 ## Data Directory
 
 All persistent data is stored in `.stock-tracker/` relative to `STOCK_TRACKER_HOME` (or the current working directory if unset):
@@ -307,6 +444,9 @@ All persistent data is stored in `.stock-tracker/` relative to `STOCK_TRACKER_HO
 | `price-data.json` | Historical price data |
 | `signals-{pid}.json` | Session-scoped signal file (one per monitor process) |
 | `monitor.pid` | PID of the active background process |
+| `history-cache/` | Cached historical data (24h TTL) |
+| `{TICKER}_backtest_{timestamp}.html` | Backtest chart visualizations |
+| `{TICKER}_{strategy}_{horizon}_{risk}.json` | Tuning result cache |
 
 ## Error Handling
 

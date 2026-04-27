@@ -1,5 +1,6 @@
 import type { BacktestResult, StrategyParams, Trade } from './types.js';
-import type { StrategyConfiguration, ExitRule, RiskRule } from './strategies/strategy-configs.js';
+import type { StrategyConfiguration, ExitRule, RiskRule, PhasedStrategyConfiguration } from './strategies/strategy-configs.js';
+import { isV2Config } from './strategies/strategy-configs.js';
 import type { FilterCondition } from './strategies/filter-evaluator.js';
 
 // ============================================================
@@ -167,6 +168,50 @@ export function formatSimpleReasoning(strategyType: string, params: StrategyPara
 }
 
 // ============================================================
+// V2 Phased Strategy Reasoning
+// ============================================================
+
+export function formatV2EntryReasoning(config: PhasedStrategyConfiguration): string {
+  const lines: string[] = [];
+  lines.push(`Strategy: ${config.name} (V2 Phased)`);
+
+  lines.push('Direction phase (ALL-of):');
+  for (const f of config.phases.direction.conditions) {
+    lines.push(`  - ${describeFilter(f)}`);
+  }
+
+  lines.push('Setup phase (ANY-of):');
+  for (const f of config.phases.setup.conditions) {
+    lines.push(`  - ${describeFilter(f)}`);
+  }
+
+  lines.push('Trigger phase (ALL-of):');
+  for (const f of config.phases.trigger.conditions) {
+    lines.push(`  - ${describeFilter(f)}`);
+  }
+
+  return lines.join('\n');
+}
+
+export function formatV2ExitReasoning(config: PhasedStrategyConfiguration, trade: Trade): string {
+  const lines: string[] = [];
+  const v2Trade = trade as any;
+
+  lines.push('Exit rules (priority order):');
+  lines.push(`  1. Stop-loss: ATR(${config.stopLoss.atr_period}) × ${config.stopLoss.atr_multiple}`);
+  lines.push(`  2. Profit target: ${config.profitTarget.target_r_multiple}R multiple`);
+  lines.push(`  3. Trend failsafe: close < SMA(${config.trendExit.trend_exit_sma_period})`);
+  lines.push(`Max risk: ${config.maxRisk.max_risk_pct}%`);
+  lines.push(`Min hold days: ${config.min_hold_days}`);
+
+  if (v2Trade.exitReason) {
+    lines.push(`Exit reason: ${v2Trade.exitReason}`);
+  }
+
+  return lines.join('\n');
+}
+
+// ============================================================
 // Main: Annotate Trades With Reasoning
 // ============================================================
 
@@ -188,9 +233,14 @@ export function annotateTradesWithReasoning(
     let exitReasoning: string;
 
     if (isComposite) {
-      const config = (strategyParams as { config: StrategyConfiguration }).config;
-      entryReasoning = formatCompositeEntryReasoning(config);
-      exitReasoning = formatCompositeExitReasoning(config);
+      const config = (strategyParams as { config: any }).config;
+      if (isV2Config(config)) {
+        entryReasoning = formatV2EntryReasoning(config);
+        exitReasoning = formatV2ExitReasoning(config, trade);
+      } else {
+        entryReasoning = formatCompositeEntryReasoning(config);
+        exitReasoning = formatCompositeExitReasoning(config);
+      }
     } else {
       const reasoning = formatSimpleReasoning(backtestResult.strategyType, strategyParams);
       entryReasoning = reasoning;

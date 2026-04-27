@@ -52,11 +52,13 @@ const rsi_threshold_js_1 = require("./strategies/rsi-threshold.js");
 const price_breakout_js_1 = require("./strategies/price-breakout.js");
 const composite_engine_js_1 = require("./strategies/composite-engine.js");
 const strategy_configs_js_1 = require("./strategies/strategy-configs.js");
+const phased_engine_js_1 = require("./strategies/phased-engine.js");
 const caching_data_provider_js_1 = require("./caching-data-provider.js");
 const tuning_engine_js_1 = require("./tuning-engine.js");
 const history_cache_store_js_1 = require("./history-cache-store.js");
 const chart_generator_js_1 = require("./chart-generator.js");
 const node_fs_1 = require("node:fs");
+const parameter_grid_js_1 = require("./parameter-grid.js");
 /**
  * Create a fully wired CommandRouter with real handlers connected to domain components.
  * Loads config and price data on initialization.
@@ -315,6 +317,66 @@ function createWiredRouter(options = {}) {
             catch {
                 return (0, command_router_js_1.errorResult)('backtest', types_js_1.ErrorCodes.INVALID_PARAM_RANGE, `Invalid JSON for --params: ${opts['params']}`);
             }
+            // V2 path: detect phased strategy configuration
+            if ((0, strategy_configs_js_1.isV2Config)(params.config ?? params)) {
+                const parsed = params.config ?? params;
+                const v2Engine = new phased_engine_js_1.PhasedStrategyEngine(strategyType);
+                const v2Params = { config: parsed };
+                const validation = v2Engine.validateParams(v2Params);
+                if (!validation.valid) {
+                    return (0, command_router_js_1.errorResult)('backtest', types_js_1.ErrorCodes.INVALID_PARAM_RANGE, `${types_js_1.ErrorCodes.INVALID_PARAM_RANGE}: ${validation.error}`);
+                }
+                const period = opts['period'] || '1y';
+                const noCache = opts['no-cache'] !== undefined;
+                try {
+                    let histResult;
+                    if (noCache) {
+                        histResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
+                        if (histResult.success) {
+                            const entry = {
+                                ticker: (0, history_cache_store_js_1.normalizeTicker)(ticker),
+                                period,
+                                interval: histResult.data.interval,
+                                fetchedAt: new Date().toISOString(),
+                                dataPoints: histResult.data.dataPoints,
+                            };
+                            cachingProvider.cacheStore.write(entry);
+                        }
+                    }
+                    else {
+                        histResult = await priceFeedClient.fetchHistoricalData(ticker, period);
+                    }
+                    if (!histResult.success) {
+                        const code = histResult.error.includes(types_js_1.ErrorCodes.INVALID_TICKER)
+                            ? types_js_1.ErrorCodes.INVALID_TICKER
+                            : histResult.error.includes(types_js_1.ErrorCodes.INVALID_PARAM_RANGE)
+                                ? types_js_1.ErrorCodes.INVALID_PARAM_RANGE
+                                : types_js_1.ErrorCodes.PRICE_FEED_UNAVAILABLE;
+                        return (0, command_router_js_1.errorResult)('backtest', code, histResult.error);
+                    }
+                    v2Params.primaryDataPoints = histResult.data.dataPoints;
+                    v2Engine.reset();
+                    const engine = new backtest_engine_js_1.BacktestEngine();
+                    const backtestResult = engine.runV2(histResult.data.dataPoints, v2Engine, v2Params, period);
+                    if (opts['chart'] !== undefined) {
+                        const chartFilePath = (0, chart_generator_js_1.getChartFilePath)(dataDir, ticker);
+                        const html = (0, chart_generator_js_1.generateChartHtml)({
+                            backtestResult,
+                            dataPoints: histResult.data.dataPoints,
+                            strategyParams: v2Params,
+                        });
+                        (0, node_fs_1.writeFileSync)(chartFilePath, html, 'utf-8');
+                        (0, chart_generator_js_1.openInBrowser)(chartFilePath);
+                        return (0, command_router_js_1.successResult)('backtest', { ...backtestResult, chartFilePath });
+                    }
+                    return (0, command_router_js_1.successResult)('backtest', backtestResult);
+                }
+                catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    return (0, command_router_js_1.errorResult)('backtest', types_js_1.ErrorCodes.PRICE_FEED_UNAVAILABLE, message);
+                }
+            }
+            // V1 path: validate with existing strategy instance
             const validation = strategyInstance.validateParams(params);
             if (!validation.valid) {
                 return (0, command_router_js_1.errorResult)('backtest', types_js_1.ErrorCodes.INVALID_PARAM_RANGE, `${types_js_1.ErrorCodes.INVALID_PARAM_RANGE}: ${validation.error}`);
@@ -326,7 +388,7 @@ function createWiredRouter(options = {}) {
         // Use optional --period, defaulting to "1y"
         const period = opts['period'] || '1y';
         const noCache = opts['no-cache'] !== undefined;
-        // Fetch historical data
+        // Fetch historical data (V1 path)
         try {
             let histResult;
             if (noCache) {
@@ -413,9 +475,122 @@ function createWiredRouter(options = {}) {
     });
     // --- tune ---
     router.register('tune', ['ticker', 'strategy'], async (opts) => {
+        const ticker = opts['ticker'].toUpperCase();
+        const strategy = opts['strategy'];
+        const isV2 = opts['v2'] !== undefined;
+        if (isV2) {
+            // V2 tuning path: use generateV2Grid + BacktestEngine.runV2
+            const horizon = opts['horizon'] ?? 'long_term';
+            const period = horizon === 'short_term' ? '2y' : '5y';
+            const noCache = opts['no-cache'] !== undefined;
+            try {
+                let dataResult;
+                if (noCache) {
+                    dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
+                }
+                else {
+                    dataResult = await priceFeedClient.fetchHistoricalData(ticker, period);
+                }
+                if (!dataResult.success) {
+                    return (0, command_router_js_1.errorResult)('tune', 'DATA_PROVIDER_ERROR', dataResult.error);
+                }
+                const dataPoints = dataResult.data.dataPoints;
+                if (dataPoints.length < 100) {
+                    return (0, command_router_js_1.errorResult)('tune', 'INSUFFICIENT_DATA', `Insufficient data: need at least 100 data points, got ${dataPoints.length}`);
+                }
+                // V2 engine requires ~200 data points minimum (SMA 200 in direction phase).
+                // Use full dataset for evaluation — walk-forward split is impractical
+                // with short_term (2y / ~500 points) given the high minimum data requirement.
+                const grid = (0, parameter_grid_js_1.generateV2Grid)(horizon);
+                const v2Results = [];
+                for (const entry of grid) {
+                    const v2Params = { config: entry.config };
+                    // Full-data backtest
+                    const engine = new phased_engine_js_1.PhasedStrategyEngine(strategy);
+                    engine.reset();
+                    const bt = new backtest_engine_js_1.BacktestEngine();
+                    const result = bt.runV2(dataPoints, engine, v2Params, period);
+                    const trades = result.performanceSummary.trades;
+                    let profitFactor = 0;
+                    if (trades.length > 0) {
+                        let grossProfits = 0, grossLosses = 0;
+                        for (const t of trades) {
+                            if (t.profitLossPercent > 0)
+                                grossProfits += t.profitLossPercent;
+                            else if (t.profitLossPercent < 0)
+                                grossLosses += Math.abs(t.profitLossPercent);
+                        }
+                        profitFactor = grossLosses === 0 ? Infinity : grossProfits / grossLosses;
+                    }
+                    const metrics = {
+                        totalReturnPercent: result.performanceSummary.totalReturnPercent,
+                        sharpeRatio: result.performanceSummary.sharpeRatio,
+                        maxDrawdownPercent: result.performanceSummary.maxDrawdownPercent,
+                        winRate: result.performanceSummary.winRate,
+                        tradeCount: result.performanceSummary.numberOfTrades,
+                        profitFactor,
+                    };
+                    v2Results.push({
+                        params: entry.params,
+                        inSample: metrics,
+                        outOfSample: metrics,
+                    });
+                }
+                // Filter: OOS drawdown <= 25%, profit factor >= 1.2, positive return
+                const filtered = v2Results.filter(r => r.outOfSample.maxDrawdownPercent <= 25 &&
+                    r.outOfSample.profitFactor >= 1.0 &&
+                    r.outOfSample.totalReturnPercent > 0);
+                // Fallback: if strict filter yields nothing, relax to any config with trades
+                const candidates = filtered.length > 0
+                    ? filtered
+                    : v2Results.filter(r => r.outOfSample.tradeCount > 0);
+                if (candidates.length === 0) {
+                    return (0, command_router_js_1.errorResult)('tune', 'NO_VIABLE_CONFIGS', `No viable V2 configurations found for ${ticker} / ${strategy}`);
+                }
+                // Rank by OOS Sharpe ratio descending
+                candidates.sort((a, b) => b.outOfSample.sharpeRatio - a.outOfSample.sharpeRatio);
+                const topCount = Math.max(1, Math.ceil(candidates.length * 0.2));
+                const topConfigs = candidates.slice(0, topCount);
+                // Compute best region
+                const bestRegion = {};
+                const paramNames = Object.keys(topConfigs[0].params);
+                for (const name of paramNames) {
+                    const values = topConfigs.map(c => c.params[name]);
+                    bestRegion[name] = { min: Math.min(...values), max: Math.max(...values) };
+                }
+                // Summary metrics (mean of top configs)
+                const n = topConfigs.length;
+                const summaryMetrics = {
+                    totalReturnPercent: topConfigs.reduce((s, c) => s + c.outOfSample.totalReturnPercent, 0) / n,
+                    sharpeRatio: topConfigs.reduce((s, c) => s + c.outOfSample.sharpeRatio, 0) / n,
+                    maxDrawdownPercent: topConfigs.reduce((s, c) => s + c.outOfSample.maxDrawdownPercent, 0) / n,
+                    winRate: topConfigs.reduce((s, c) => s + c.outOfSample.winRate, 0) / n,
+                    tradeCount: topConfigs.reduce((s, c) => s + c.outOfSample.tradeCount, 0) / n,
+                    profitFactor: topConfigs.reduce((s, c) => s + c.outOfSample.profitFactor, 0) / n,
+                };
+                const riskProfile = opts['risk'] ?? 'low';
+                const profile = `${horizon}_${riskProfile}`;
+                return (0, command_router_js_1.successResult)('tune', {
+                    ticker,
+                    strategy,
+                    profile,
+                    best_region: bestRegion,
+                    summary_metrics: summaryMetrics,
+                    configurations_evaluated: grid.length,
+                    configurations_passed_filter: candidates.length,
+                    computed_at: new Date().toISOString(),
+                    v2: true,
+                });
+            }
+            catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                return (0, command_router_js_1.errorResult)('tune', 'TUNING_ERROR', message);
+            }
+        }
+        // V1 tuning path (unchanged)
         const input = {
-            ticker: opts['ticker'].toUpperCase(),
-            strategy: opts['strategy'],
+            ticker,
+            strategy,
             time_horizon: opts['horizon'],
             risk_profile: opts['risk'],
             noCache: opts['no-cache'] !== undefined,
@@ -426,6 +601,210 @@ function createWiredRouter(options = {}) {
             return (0, command_router_js_1.errorResult)('tune', outcome.error.code, outcome.error.message);
         }
         return (0, command_router_js_1.successResult)('tune', outcome.data);
+    });
+    // --- tune-and-chart ---
+    router.register('tune-and-chart', ['ticker', 'strategy'], async (opts) => {
+        const ticker = opts['ticker'].toUpperCase();
+        const strategy = opts['strategy'];
+        const horizon = opts['horizon'] ?? 'long_term';
+        const noCache = opts['no-cache'] !== undefined;
+        const isV2 = opts['v2'] !== undefined;
+        if (isV2) {
+            // V2 tune-and-chart path
+            const period = horizon === 'short_term' ? '2y' : '5y';
+            try {
+                // Step 1: Run V2 tuning inline (same logic as tune --v2)
+                let dataResult;
+                if (noCache) {
+                    dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
+                }
+                else {
+                    dataResult = await priceFeedClient.fetchHistoricalData(ticker, period);
+                }
+                if (!dataResult.success) {
+                    return (0, command_router_js_1.errorResult)('tune-and-chart', 'DATA_PROVIDER_ERROR', dataResult.error);
+                }
+                const dataPoints = dataResult.data.dataPoints;
+                if (dataPoints.length < 100) {
+                    return (0, command_router_js_1.errorResult)('tune-and-chart', 'INSUFFICIENT_DATA', `Insufficient data: need at least 100 data points, got ${dataPoints.length}`);
+                }
+                const grid = (0, parameter_grid_js_1.generateV2Grid)(horizon);
+                const v2Results = [];
+                for (const entry of grid) {
+                    const v2Params = { config: entry.config };
+                    const btEngine = new phased_engine_js_1.PhasedStrategyEngine(strategy);
+                    btEngine.reset();
+                    const bt = new backtest_engine_js_1.BacktestEngine();
+                    const result = bt.runV2(dataPoints, btEngine, v2Params, period);
+                    const trades = result.performanceSummary.trades;
+                    let profitFactor = 0;
+                    if (trades.length > 0) {
+                        let grossProfits = 0, grossLosses = 0;
+                        for (const t of trades) {
+                            if (t.profitLossPercent > 0)
+                                grossProfits += t.profitLossPercent;
+                            else if (t.profitLossPercent < 0)
+                                grossLosses += Math.abs(t.profitLossPercent);
+                        }
+                        profitFactor = grossLosses === 0 ? Infinity : grossProfits / grossLosses;
+                    }
+                    v2Results.push({
+                        params: entry.params,
+                        outOfSample: {
+                            totalReturnPercent: result.performanceSummary.totalReturnPercent,
+                            sharpeRatio: result.performanceSummary.sharpeRatio,
+                            maxDrawdownPercent: result.performanceSummary.maxDrawdownPercent,
+                            winRate: result.performanceSummary.winRate,
+                            tradeCount: result.performanceSummary.numberOfTrades,
+                            profitFactor,
+                        },
+                    });
+                }
+                const filtered = v2Results.filter(r => r.outOfSample.maxDrawdownPercent <= 25 &&
+                    r.outOfSample.profitFactor >= 1.0 &&
+                    r.outOfSample.totalReturnPercent > 0);
+                // Fallback: if strict filter yields nothing, relax to any config with trades
+                const candidates = filtered.length > 0
+                    ? filtered
+                    : v2Results.filter(r => r.outOfSample.tradeCount > 0);
+                if (candidates.length === 0) {
+                    return (0, command_router_js_1.errorResult)('tune-and-chart', 'NO_VIABLE_CONFIGS', `No viable V2 configurations found for ${ticker} / ${strategy}`);
+                }
+                candidates.sort((a, b) => b.outOfSample.sharpeRatio - a.outOfSample.sharpeRatio);
+                const topCount = Math.max(1, Math.ceil(candidates.length * 0.2));
+                const topConfigs = candidates.slice(0, topCount);
+                // Compute best region
+                const bestRegion = {};
+                const paramNames = Object.keys(topConfigs[0].params);
+                for (const name of paramNames) {
+                    const values = topConfigs.map(c => c.params[name]);
+                    bestRegion[name] = { min: Math.min(...values), max: Math.max(...values) };
+                }
+                const riskProfile = opts['risk'] ?? 'low';
+                const profile = `${horizon}_${riskProfile}`;
+                const n = topConfigs.length;
+                const summaryMetrics = {
+                    totalReturnPercent: topConfigs.reduce((s, c) => s + c.outOfSample.totalReturnPercent, 0) / n,
+                    sharpeRatio: topConfigs.reduce((s, c) => s + c.outOfSample.sharpeRatio, 0) / n,
+                    maxDrawdownPercent: topConfigs.reduce((s, c) => s + c.outOfSample.maxDrawdownPercent, 0) / n,
+                    winRate: topConfigs.reduce((s, c) => s + c.outOfSample.winRate, 0) / n,
+                    tradeCount: topConfigs.reduce((s, c) => s + c.outOfSample.tradeCount, 0) / n,
+                    profitFactor: topConfigs.reduce((s, c) => s + c.outOfSample.profitFactor, 0) / n,
+                };
+                const tuningData = {
+                    ticker,
+                    strategy,
+                    profile,
+                    best_region: bestRegion,
+                    summary_metrics: summaryMetrics,
+                    configurations_evaluated: grid.length,
+                    configurations_passed_filter: candidates.length,
+                    computed_at: new Date().toISOString(),
+                    v2: true,
+                };
+                // Step 2: Compute midpoint params from best_region
+                const midpointParams = {};
+                for (const [key, range] of Object.entries(bestRegion)) {
+                    midpointParams[key] = (range.min + range.max) / 2;
+                }
+                // Step 3: Build V2 config from midpoint params
+                const minHoldDays = horizon === 'short_term' ? 7 : 30;
+                const v2Config = (0, parameter_grid_js_1.buildV2Config)(midpointParams, minHoldDays);
+                const v2Params = { config: v2Config, primaryDataPoints: dataPoints };
+                // Step 4: Run backtest with V2 config on full data
+                const v2Engine = new phased_engine_js_1.PhasedStrategyEngine(strategy);
+                v2Engine.reset();
+                const btEngine = new backtest_engine_js_1.BacktestEngine();
+                const backtestResult = btEngine.runV2(dataPoints, v2Engine, v2Params, period);
+                // Step 5: Generate chart
+                const chartFilePath = (0, chart_generator_js_1.getChartFilePath)(dataDir, ticker);
+                const html = (0, chart_generator_js_1.generateChartHtml)({
+                    backtestResult,
+                    dataPoints,
+                    strategyParams: v2Params,
+                });
+                (0, node_fs_1.writeFileSync)(chartFilePath, html, 'utf-8');
+                (0, chart_generator_js_1.openInBrowser)(chartFilePath);
+                return (0, command_router_js_1.successResult)('tune-and-chart', {
+                    tuning: tuningData,
+                    midpoint_params: midpointParams,
+                    backtest: { ...backtestResult, chartFilePath },
+                });
+            }
+            catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                return (0, command_router_js_1.errorResult)('tune-and-chart', 'BACKTEST_ERROR', message);
+            }
+        }
+        // V1 tune-and-chart path (unchanged)
+        // Step 1: Run tuning
+        const tuningInput = {
+            ticker,
+            strategy,
+            time_horizon: horizon,
+            risk_profile: opts['risk'],
+            noCache,
+        };
+        const tuningEngine = new tuning_engine_js_1.TuningEngine(cachingProvider, dataDir);
+        const outcome = await tuningEngine.run(tuningInput);
+        if (!outcome.success) {
+            return (0, command_router_js_1.errorResult)('tune-and-chart', outcome.error.code, outcome.error.message);
+        }
+        // Step 2: Compute midpoint params from best_region
+        const bestRegion = outcome.data.best_region;
+        const midpointParams = {};
+        for (const [key, range] of Object.entries(bestRegion)) {
+            midpointParams[key] = (range.min + range.max) / 2;
+        }
+        // Step 3: Build StrategyConfiguration from midpoint params
+        const config = (0, parameter_grid_js_1.buildConfig)(strategy, midpointParams);
+        const compositeParams = { config };
+        // Step 4: Fetch historical data for backtest
+        const period = horizon === 'short_term' ? '2y' : '5y';
+        try {
+            const histResult = await priceFeedClient.fetchHistoricalData(ticker, period);
+            if (!histResult.success) {
+                return (0, command_router_js_1.errorResult)('tune-and-chart', 'DATA_PROVIDER_ERROR', histResult.error);
+            }
+            const pricePoints = (0, backtest_engine_js_1.convertHistoricalData)(histResult.data.dataPoints, ticker);
+            // Inject primary data and auxiliary data
+            compositeParams.primaryDataPoints = histResult.data.dataPoints;
+            const indexTicker = config.indexTicker;
+            if (indexTicker) {
+                try {
+                    const auxResult = await priceFeedClient.fetchHistoricalData(indexTicker, period);
+                    if (auxResult.success) {
+                        compositeParams.auxiliaryData = { [indexTicker]: auxResult.data.dataPoints };
+                    }
+                }
+                catch {
+                    // Non-fatal
+                }
+            }
+            // Step 5: Run backtest
+            const strategyInstance = new composite_engine_js_1.CompositeStrategyEngine(strategy);
+            const engine = new backtest_engine_js_1.BacktestEngine();
+            const backtestResult = engine.run(pricePoints, strategyInstance, compositeParams, period);
+            // Step 6: Generate chart
+            const chartFilePath = (0, chart_generator_js_1.getChartFilePath)(dataDir, ticker);
+            const html = (0, chart_generator_js_1.generateChartHtml)({
+                backtestResult,
+                dataPoints: histResult.data.dataPoints,
+                strategyParams: compositeParams,
+            });
+            (0, node_fs_1.writeFileSync)(chartFilePath, html, 'utf-8');
+            (0, chart_generator_js_1.openInBrowser)(chartFilePath);
+            // Step 7: Return combined result
+            return (0, command_router_js_1.successResult)('tune-and-chart', {
+                tuning: outcome.data,
+                midpoint_params: midpointParams,
+                backtest: { ...backtestResult, chartFilePath },
+            });
+        }
+        catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return (0, command_router_js_1.errorResult)('tune-and-chart', 'BACKTEST_ERROR', message);
+        }
     });
     return {
         router,

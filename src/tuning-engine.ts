@@ -180,7 +180,6 @@ export class TuningEngine {
 
     // Step 6: Filter
     const filtered = wfResults.filter(r =>
-      r.outOfSample.tradeCount >= 10 &&
       r.outOfSample.maxDrawdownPercent <= 25 &&
       r.outOfSample.profitFactor >= 1.2 &&
       r.outOfSample.totalReturnPercent > 0

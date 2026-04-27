@@ -1,4 +1,4 @@
-import type { CompositeStrategyParams } from './strategies/strategy-configs.js';
+import type { CompositeStrategyParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
 export interface MovingAverageCrossoverParams {
     shortWindow: number;
     longWindow: number;
@@ -12,9 +12,9 @@ export interface PriceBreakoutParams {
     upperLevel: number;
     lowerLevel: number;
 }
-export type StrategyParams = MovingAverageCrossoverParams | RSIThresholdParams | PriceBreakoutParams | CompositeStrategyParams;
+export type StrategyParams = MovingAverageCrossoverParams | RSIThresholdParams | PriceBreakoutParams | CompositeStrategyParams | PhasedStrategyParams;
 export type StrategyType = 'moving_average_crossover' | 'rsi_threshold' | 'price_breakout' | 'momentum_continuation' | 'trend_pullback' | 'breakout_volume';
-export type { CompositeStrategyParams } from './strategies/strategy-configs.js';
+export type { CompositeStrategyParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
 export interface StrategyConfig {
     type: StrategyType;
     params: StrategyParams;
@@ -63,6 +63,12 @@ export interface Signal {
     timestamp: string;
     previousDirection?: SignalDirection;
     previousTimestamp?: string;
+}
+export interface V2Signal extends Signal {
+    stopLossPrice?: number;
+    profitTargetPrice?: number;
+    rValue?: number;
+    exitReason?: 'stop_loss' | 'profit_target' | 'trend_failsafe';
 }
 export interface ProcessStatus {
     state: 'running' | 'stopped';
@@ -120,6 +126,15 @@ export interface Trade {
     buySignal: Signal;
     sellSignal: Signal;
     profitLossPercent: number;
+}
+export interface V2Trade extends Trade {
+    entryPrice: number;
+    exitPrice: number;
+    stopLossPrice: number;
+    profitTargetPrice: number;
+    rValue: number;
+    exitReason: 'stop_loss' | 'profit_target' | 'trend_failsafe';
+    barsHeld: number;
 }
 export interface PerformanceSummary {
     totalReturnPercent: number;

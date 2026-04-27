@@ -38,4 +38,22 @@ export declare function lowest(prices: number[], period: number): number | undef
  * Requires at least `period` data points.
  */
 export declare function avgVolume(dataPoints: HistoricalDataPoint[], period: number): number | undefined;
+/**
+ * Swing Low — lowest low over the last `lookback` data points.
+ * Used for structure stop-loss calculation.
+ * Requires at least `lookback` data points.
+ */
+export declare function swingLow(dataPoints: HistoricalDataPoint[], lookback: number): number | undefined;
+/**
+ * Percentage distance from the current price to its SMA.
+ * Formula: ((currentPrice - SMA) / SMA) × 100
+ * Requires at least `smaPeriod` prices.
+ */
+export declare function distanceToSma(prices: number[], smaPeriod: number): number | undefined;
+/**
+ * Highest High — highest high over the last `lookback` data points.
+ * Used for trigger phase breakout conditions.
+ * Requires at least `lookback` data points.
+ */
+export declare function highestHigh(dataPoints: HistoricalDataPoint[], lookback: number): number | undefined;
 //# sourceMappingURL=indicators.d.ts.map

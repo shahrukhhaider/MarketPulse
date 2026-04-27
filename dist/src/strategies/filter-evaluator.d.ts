@@ -44,5 +44,7 @@ export type FilterCondition = {
     period: number;
     indexTicker: string;
 };
+export declare function scoreCondition(condition: FilterCondition, prices: number[], dataPoints: HistoricalDataPoint[], auxiliaryData?: Record<string, HistoricalDataPoint[]>): number;
+export declare function scoreConditions(conditions: FilterCondition[], prices: number[], dataPoints: HistoricalDataPoint[], auxiliaryData?: Record<string, HistoricalDataPoint[]>): number;
 export declare function evaluateConditions(conditions: FilterCondition[], prices: number[], dataPoints: HistoricalDataPoint[], auxiliaryData?: Record<string, HistoricalDataPoint[]>): boolean;
 //# sourceMappingURL=filter-evaluator.d.ts.map
