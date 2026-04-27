@@ -56,4 +56,23 @@ export declare function distanceToSma(prices: number[], smaPeriod: number): numb
  * Requires at least `lookback` data points.
  */
 export declare function highestHigh(dataPoints: HistoricalDataPoint[], lookback: number): number | undefined;
+/**
+ * Percentage range over a window of data points.
+ * Formula: (highestHigh - lowestLow) / close
+ * Uses the last `window` data points from the array.
+ * Requires at least `window` data points.
+ */
+export declare function range_pct(dataPoints: HistoricalDataPoint[], window: number): number | undefined;
+/**
+ * Ratio of short-term ATR to long-term ATR.
+ * Returns undefined if either ATR is undefined or long-term ATR is 0.
+ */
+export declare function atr_ratio(dataPoints: HistoricalDataPoint[], shortPeriod: number, longPeriod: number): number | undefined;
+/**
+ * Whether the current SMA exceeds the previous bar's SMA (positive slope).
+ * Computes SMA over the full prices array vs SMA over all-but-last.
+ * Returns true if current SMA > previous SMA, false otherwise.
+ * Returns undefined if insufficient data.
+ */
+export declare function sma_slope(prices: number[], period: number): boolean | undefined;
 //# sourceMappingURL=indicators.d.ts.map

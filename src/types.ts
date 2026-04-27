@@ -1,4 +1,4 @@
-import type { CompositeStrategyParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
+import type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
 
 // ============================================================
 // Strategy Parameter Interfaces
@@ -25,7 +25,8 @@ export type StrategyParams =
   | RSIThresholdParams
   | PriceBreakoutParams
   | CompositeStrategyParams
-  | PhasedStrategyParams;
+  | PhasedStrategyParams
+  | ConsolidationBreakoutParams;
 
 // ============================================================
 // Strategy Types and Configuration
@@ -37,9 +38,10 @@ export type StrategyType =
   | 'price_breakout'
   | 'momentum_continuation'
   | 'trend_pullback'
-  | 'breakout_volume';
+  | 'breakout_volume'
+  | 'consolidation_breakout';
 
-export type { CompositeStrategyParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
+export type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
 
 export interface StrategyConfig {
   type: StrategyType;
@@ -56,6 +58,13 @@ export interface Strategy {
   evaluate(priceHistory: PricePoint[], params: StrategyParams): Signal;
   validateParams(params: StrategyParams): { valid: boolean; error?: string };
   minimumDataPoints(): number;
+}
+
+export interface V2CompatibleEngine {
+  type: StrategyType;
+  reset(): void;
+  evaluateWithOHLCV(dataPoints: HistoricalDataPoint[], params: any): V2Signal;
+  minimumDataPointsForParams(params: any): number;
 }
 
 // ============================================================

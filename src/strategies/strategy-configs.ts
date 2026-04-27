@@ -156,8 +156,57 @@ export const BREAKOUT_VOLUME_CONFIG: StrategyConfiguration = {
 };
 
 // ============================================================
+// V3 Consolidation Breakout Strategy Types
+// ============================================================
+
+export interface ConsolidationBreakoutConfiguration {
+  name: string;
+  consolidation: {
+    consolidation_window: number;     // 5, 10, 15
+    max_range_pct: number;            // 4, 6, 8
+    atr_ratio_threshold: number;      // 0.8, 1.0
+    sma_proximity_pct?: number;       // 2, 3 (optional)
+    max_staleness: number;            // fixed 20
+  };
+  breakout: {
+    volume_multiplier: number;        // 1.2, 1.5
+    return_20d_threshold?: number;    // 3, 5, 8 (optional)
+  };
+  direction: {
+    require_sma20_above_sma50: boolean;
+    require_sma50_slope_positive: boolean;
+  };
+  overextension: {
+    overextension_pct: number;        // 5, 8, 12
+  };
+  stopLoss: {
+    atr_multiple: number;             // 1.2, 1.6, 2.0
+    swing_lookback: number;           // 10, 15, 20
+    buffer: number;                   // fixed 0.3
+  };
+  profitTarget: {
+    r_multiple: number;               // 2, 2.5, 3
+  };
+  maxRisk: {
+    max_risk_pct: number;             // 2, 3, 4
+  };
+  trendExit: {
+    trend_exit_sma_period: number;    // fixed 50
+  };
+}
+
+export interface ConsolidationBreakoutParams {
+  config: ConsolidationBreakoutConfiguration;
+  primaryDataPoints?: HistoricalDataPoint[];
+}
+
+// ============================================================
 // Configuration Detection Helpers
 // ============================================================
+
+export function isConsolidationBreakoutConfig(config: any): config is ConsolidationBreakoutConfiguration {
+  return config && typeof config.consolidation === 'object';
+}
 
 export function isV2Config(config: any): config is PhasedStrategyConfiguration {
   return config && typeof config.phases === 'object';

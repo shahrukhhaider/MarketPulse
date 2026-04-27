@@ -310,7 +310,7 @@ node dist/src/cli.js backtest --ticker <SYMBOL> --strategy <TYPE> [--period <PER
 | Param | Required | Description |
 |-------|----------|-------------|
 | `--ticker` | Yes | Stock ticker symbol |
-| `--strategy` | Yes | Strategy type: `momentum_continuation`, `trend_pullback`, `breakout_volume`, `moving_average_crossover`, `rsi_threshold`, `price_breakout` |
+| `--strategy` | Yes | Strategy type: `momentum_continuation`, `trend_pullback`, `breakout_volume`, `consolidation_breakout`, `moving_average_crossover`, `rsi_threshold`, `price_breakout` |
 | `--period` | No | Historical period: `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y` (default: `1y`) |
 | `--params` | No | JSON string of strategy parameters (uses defaults if omitted) |
 | `--chart` | No | Generate an HTML chart and open it in the browser |
@@ -342,16 +342,20 @@ node dist/src/cli.js tune --ticker <SYMBOL> --strategy <TYPE> [--horizon <HORIZO
 | Param | Required | Description |
 |-------|----------|-------------|
 | `--ticker` | Yes | Stock ticker symbol |
-| `--strategy` | Yes | Tunable strategy: `momentum_continuation`, `trend_pullback`, `breakout_volume` |
+| `--strategy` | Yes | Tunable strategy: `momentum_continuation`, `trend_pullback`, `breakout_volume`, `consolidation_breakout` |
 | `--horizon` | No | Time horizon: `short_term` or `long_term` (default: `long_term`) |
 | `--risk` | No | Risk profile: `low`, `medium`, `high` |
 | `--no-cache` | No | Bypass the historical data cache |
+| `--v3` | No | Use V3 consolidation breakout engine (required for `consolidation_breakout` strategy) |
 
-**Natural language triggers:** "tune NVDA momentum strategy", "optimize breakout parameters for TSLA", "find best params for trend pullback on AAPL"
+**Natural language triggers:** "tune NVDA momentum strategy", "optimize breakout parameters for TSLA", "find best params for trend pullback on AAPL", "tune consolidation breakout for NVDA"
 
 **Example:**
 ```bash
 node dist/src/cli.js tune --ticker NVDA --strategy momentum_continuation --horizon short_term
+
+# V3 consolidation breakout tuning
+node dist/src/cli.js tune --ticker NVDA --strategy consolidation_breakout --v3
 ```
 
 Returns `data.best_region` with optimal parameter ranges and `data.best_score`.
@@ -369,19 +373,23 @@ node dist/src/cli.js tune-and-chart --ticker <SYMBOL> --strategy <TYPE> [--horiz
 | Param | Required | Description |
 |-------|----------|-------------|
 | `--ticker` | Yes | Stock ticker symbol |
-| `--strategy` | Yes | Tunable strategy: `momentum_continuation`, `trend_pullback`, `breakout_volume` |
+| `--strategy` | Yes | Tunable strategy: `momentum_continuation`, `trend_pullback`, `breakout_volume`, `consolidation_breakout` |
 | `--horizon` | No | Time horizon: `short_term` or `long_term` (default: `long_term`) |
 | `--risk` | No | Risk profile: `low`, `medium`, `high` |
 | `--no-cache` | No | Bypass the historical data cache |
+| `--v3` | No | Use V3 consolidation breakout engine (required for `consolidation_breakout` strategy) |
 
-**Natural language triggers:** "tune and backtest NVDA momentum", "optimize and chart breakout for TSLA", "run full analysis on AAPL trend pullback"
+**Natural language triggers:** "tune and backtest NVDA momentum", "optimize and chart breakout for TSLA", "run full analysis on AAPL trend pullback", "tune and chart consolidation breakout for NVDA"
 
 **Example:**
 ```bash
 node dist/src/cli.js tune-and-chart --ticker NVDA --strategy momentum_continuation --horizon short_term
+
+# V3 consolidation breakout — tune, backtest, and chart in one step
+node dist/src/cli.js tune-and-chart --ticker NVDA --strategy consolidation_breakout --v3
 ```
 
-Returns combined `data.tuning` (best params), `data.midpoint_params`, and `data.backtest` (performance + chart path). Opens the chart in the browser automatically.
+For V3, returns `data.tuning` (best params and metrics), `data.best_params`, and `data.backtest` (performance + chart path). Opens the chart in the browser automatically.
 
 ---
 
@@ -427,11 +435,26 @@ node dist/src/cli.js tune --ticker NVDA --strategy momentum_continuation --horiz
 node dist/src/cli.js backtest --ticker NVDA --strategy momentum_continuation --period 2y --chart --params '{"config": {...}}'
 ```
 
+### V3 Consolidation Breakout workflow
+
+The consolidation breakout engine (V3) detects consolidation → breakout patterns with volume confirmation. Use `--v3` flag.
+
+```bash
+# All-in-one: tune + backtest + chart
+node dist/src/cli.js tune-and-chart --ticker NVDA --strategy consolidation_breakout --v3
+
+# Tune only
+node dist/src/cli.js tune --ticker NVDA --strategy consolidation_breakout --v3
+```
+
+V3 uses 5 years of data and searches 4,374+ parameter combinations. The tuner selects the config with the highest total return (minimum 3 trades required). Tunable parameters: `consolidation_window`, `max_range_pct`, `atr_ratio_threshold`, `volume_multiplier`, `overextension_pct`, `atr_multiple`, `swing_lookback`, `max_risk_pct`, `r_multiple`.
+
 ### Compare strategies for a ticker
 
 ```bash
 node dist/src/cli.js tune-and-chart --ticker NVDA --strategy momentum_continuation --horizon short_term
 node dist/src/cli.js tune-and-chart --ticker NVDA --strategy breakout_volume --horizon short_term
+node dist/src/cli.js tune-and-chart --ticker NVDA --strategy consolidation_breakout --v3
 ```
 
 ## Data Directory

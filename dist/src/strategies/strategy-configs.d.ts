@@ -80,6 +80,46 @@ export interface PhasedStrategyParams {
 export declare const MOMENTUM_CONTINUATION_CONFIG: StrategyConfiguration;
 export declare const TREND_PULLBACK_CONFIG: StrategyConfiguration;
 export declare const BREAKOUT_VOLUME_CONFIG: StrategyConfiguration;
+export interface ConsolidationBreakoutConfiguration {
+    name: string;
+    consolidation: {
+        consolidation_window: number;
+        max_range_pct: number;
+        atr_ratio_threshold: number;
+        sma_proximity_pct?: number;
+        max_staleness: number;
+    };
+    breakout: {
+        volume_multiplier: number;
+        return_20d_threshold?: number;
+    };
+    direction: {
+        require_sma20_above_sma50: boolean;
+        require_sma50_slope_positive: boolean;
+    };
+    overextension: {
+        overextension_pct: number;
+    };
+    stopLoss: {
+        atr_multiple: number;
+        swing_lookback: number;
+        buffer: number;
+    };
+    profitTarget: {
+        r_multiple: number;
+    };
+    maxRisk: {
+        max_risk_pct: number;
+    };
+    trendExit: {
+        trend_exit_sma_period: number;
+    };
+}
+export interface ConsolidationBreakoutParams {
+    config: ConsolidationBreakoutConfiguration;
+    primaryDataPoints?: HistoricalDataPoint[];
+}
+export declare function isConsolidationBreakoutConfig(config: any): config is ConsolidationBreakoutConfiguration;
 export declare function isV2Config(config: any): config is PhasedStrategyConfiguration;
 export declare function isV1Config(config: any): config is StrategyConfiguration;
 export declare function getDefaultCompositeConfig(strategyType: StrategyType): StrategyConfiguration;

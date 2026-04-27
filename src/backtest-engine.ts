@@ -6,12 +6,12 @@ import type {
   Signal,
   V2Signal,
   V2Trade,
+  V2CompatibleEngine,
   BacktestResult,
   PerformanceSummary,
   Trade,
 } from './types.js';
-import type { PhasedStrategyEngine } from './strategies/phased-engine.js';
-import type { PhasedStrategyParams } from './strategies/strategy-configs.js';
+import type { PhasedStrategyParams, ConsolidationBreakoutParams } from './strategies/strategy-configs.js';
 
 export function convertHistoricalData(
   dataPoints: HistoricalDataPoint[],
@@ -236,8 +236,8 @@ export class BacktestEngine {
 
   runV2(
     dataPoints: HistoricalDataPoint[],
-    engine: PhasedStrategyEngine,
-    params: PhasedStrategyParams,
+    engine: V2CompatibleEngine,
+    params: PhasedStrategyParams | ConsolidationBreakoutParams,
     period: string = '1y'
   ): BacktestResult {
     engine.reset();

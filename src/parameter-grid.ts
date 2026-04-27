@@ -1,4 +1,4 @@
-import type { StrategyConfiguration, PhasedStrategyConfiguration } from './strategies/strategy-configs.js';
+import type { StrategyConfiguration, PhasedStrategyConfiguration, ConsolidationBreakoutConfiguration } from './strategies/strategy-configs.js';
 import type { TimeHorizon, TunableStrategy } from './tuning-engine.js';
 
 export type { TimeHorizon, TunableStrategy } from './tuning-engine.js';
@@ -13,6 +13,11 @@ export interface GridEntry {
 export interface V2GridEntry {
   params: Record<string, number>;
   config: PhasedStrategyConfiguration;
+}
+
+export interface ConsolidationBreakoutGridEntry {
+  params: Record<string, number>;
+  config: ConsolidationBreakoutConfiguration;
 }
 
 /**
@@ -374,4 +379,88 @@ export function serializeGridEntry(entry: GridEntry): string {
  */
 export function deserializeGridEntry(json: string): GridEntry {
   return JSON.parse(json) as GridEntry;
+}
+
+/**
+ * Return the consolidation-breakout parameter space with 9 tunable parameters.
+ * Total combinations: 3×3×2×2×3×3×3×3×3 = 4,374
+ */
+export function getConsolidationBreakoutParameterSpace(): ParameterSpace {
+  return {
+    consolidation_window: [5, 10, 15],
+    max_range_pct: [4, 6, 8],
+    atr_ratio_threshold: [0.8, 1.0],
+    volume_multiplier: [1.2, 1.5],
+    overextension_pct: [5, 8, 12],
+    atr_multiple: [1.2, 1.6, 2.0],
+    swing_lookback: [10, 15, 20],
+    max_risk_pct: [3, 5, 8],
+    r_multiple: [2, 2.5, 3],
+  };
+}
+
+/**
+ * Map a flat parameter combination to a ConsolidationBreakoutConfiguration.
+ * Fixed values: max_staleness=20, buffer=0.3, trend_exit_sma_period=50,
+ * direction flags=false, optional fields=undefined.
+ */
+export function buildConsolidationBreakoutConfig(
+  params: Record<string, number>
+): ConsolidationBreakoutConfiguration {
+  return {
+    name: `cb_w${params.consolidation_window}_r${params.max_range_pct}_atr${params.atr_ratio_threshold}_vol${params.volume_multiplier}_oe${params.overextension_pct}_am${params.atr_multiple}_sl${params.swing_lookback}_mr${params.max_risk_pct}_rm${params.r_multiple}`,
+    consolidation: {
+      consolidation_window: params.consolidation_window,
+      max_range_pct: params.max_range_pct,
+      atr_ratio_threshold: params.atr_ratio_threshold,
+      sma_proximity_pct: undefined,
+      max_staleness: 20,
+    },
+    breakout: {
+      volume_multiplier: params.volume_multiplier,
+      return_20d_threshold: undefined,
+    },
+    direction: {
+      require_sma20_above_sma50: false,
+      require_sma50_slope_positive: false,
+    },
+    overextension: {
+      overextension_pct: params.overextension_pct,
+    },
+    stopLoss: {
+      atr_multiple: params.atr_multiple,
+      swing_lookback: params.swing_lookback,
+      buffer: 0.3,
+    },
+    profitTarget: {
+      r_multiple: params.r_multiple,
+    },
+    maxRisk: {
+      max_risk_pct: params.max_risk_pct,
+    },
+    trendExit: {
+      trend_exit_sma_period: 50,
+    },
+  };
+}
+
+/**
+ * Generate the full consolidation-breakout parameter grid using Cartesian product.
+ * Produces 4,374 entries.
+ */
+export function generateConsolidationBreakoutGrid(): ConsolidationBreakoutGridEntry[] {
+  const space = getConsolidationBreakoutParameterSpace();
+  const paramNames = Object.keys(space);
+  const paramArrays = paramNames.map(name => space[name]);
+
+  const combinations = cartesianProduct(paramArrays);
+
+  return combinations.map(values => {
+    const params: Record<string, number> = {};
+    paramNames.forEach((name, i) => {
+      params[name] = values[i];
+    });
+    const config = buildConsolidationBreakoutConfig(params);
+    return { params, config };
+  });
 }

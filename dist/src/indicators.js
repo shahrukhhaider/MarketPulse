@@ -10,6 +10,9 @@ exports.avgVolume = avgVolume;
 exports.swingLow = swingLow;
 exports.distanceToSma = distanceToSma;
 exports.highestHigh = highestHigh;
+exports.range_pct = range_pct;
+exports.atr_ratio = atr_ratio;
+exports.sma_slope = sma_slope;
 /**
  * Simple Moving Average — arithmetic mean of the last `period` closing prices.
  * Requires at least `period` prices.
@@ -170,5 +173,51 @@ function highestHigh(dataPoints, lookback) {
             max = dataPoints[i].high;
     }
     return max;
+}
+/**
+ * Percentage range over a window of data points.
+ * Formula: (highestHigh - lowestLow) / close
+ * Uses the last `window` data points from the array.
+ * Requires at least `window` data points.
+ */
+function range_pct(dataPoints, window) {
+    if (dataPoints.length < window)
+        return undefined;
+    const hh = highestHigh(dataPoints, window);
+    const ll = swingLow(dataPoints, window);
+    if (hh === undefined || ll === undefined)
+        return undefined;
+    const close = dataPoints[dataPoints.length - 1].close;
+    if (close === 0)
+        return undefined;
+    return (hh - ll) / close;
+}
+/**
+ * Ratio of short-term ATR to long-term ATR.
+ * Returns undefined if either ATR is undefined or long-term ATR is 0.
+ */
+function atr_ratio(dataPoints, shortPeriod, longPeriod) {
+    const shortAtr = atr(dataPoints, shortPeriod);
+    const longAtr = atr(dataPoints, longPeriod);
+    if (shortAtr === undefined || longAtr === undefined)
+        return undefined;
+    if (longAtr === 0)
+        return undefined;
+    return shortAtr / longAtr;
+}
+/**
+ * Whether the current SMA exceeds the previous bar's SMA (positive slope).
+ * Computes SMA over the full prices array vs SMA over all-but-last.
+ * Returns true if current SMA > previous SMA, false otherwise.
+ * Returns undefined if insufficient data.
+ */
+function sma_slope(prices, period) {
+    if (prices.length < period + 1)
+        return undefined;
+    const currentSma = sma(prices, period);
+    const previousSma = sma(prices.slice(0, -1), period);
+    if (currentSma === undefined || previousSma === undefined)
+        return undefined;
+    return currentSma > previousSma;
 }
 //# sourceMappingURL=indicators.js.map

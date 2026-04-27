@@ -1,4 +1,4 @@
-import type { CompositeStrategyParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
+import type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
 export interface MovingAverageCrossoverParams {
     shortWindow: number;
     longWindow: number;
@@ -12,9 +12,9 @@ export interface PriceBreakoutParams {
     upperLevel: number;
     lowerLevel: number;
 }
-export type StrategyParams = MovingAverageCrossoverParams | RSIThresholdParams | PriceBreakoutParams | CompositeStrategyParams | PhasedStrategyParams;
-export type StrategyType = 'moving_average_crossover' | 'rsi_threshold' | 'price_breakout' | 'momentum_continuation' | 'trend_pullback' | 'breakout_volume';
-export type { CompositeStrategyParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
+export type StrategyParams = MovingAverageCrossoverParams | RSIThresholdParams | PriceBreakoutParams | CompositeStrategyParams | PhasedStrategyParams | ConsolidationBreakoutParams;
+export type StrategyType = 'moving_average_crossover' | 'rsi_threshold' | 'price_breakout' | 'momentum_continuation' | 'trend_pullback' | 'breakout_volume' | 'consolidation_breakout';
+export type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
 export interface StrategyConfig {
     type: StrategyType;
     params: StrategyParams;
@@ -28,6 +28,12 @@ export interface Strategy {
         error?: string;
     };
     minimumDataPoints(): number;
+}
+export interface V2CompatibleEngine {
+    type: StrategyType;
+    reset(): void;
+    evaluateWithOHLCV(dataPoints: HistoricalDataPoint[], params: any): V2Signal;
+    minimumDataPointsForParams(params: any): number;
 }
 export interface Settings {
     pollingInterval: number;

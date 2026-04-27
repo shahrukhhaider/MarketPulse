@@ -1,6 +1,6 @@
 import type { BacktestResult, StrategyParams, Trade } from './types.js';
-import type { StrategyConfiguration, ExitRule, RiskRule, PhasedStrategyConfiguration } from './strategies/strategy-configs.js';
-import { isV2Config } from './strategies/strategy-configs.js';
+import type { StrategyConfiguration, ExitRule, RiskRule, PhasedStrategyConfiguration, ConsolidationBreakoutConfiguration } from './strategies/strategy-configs.js';
+import { isV2Config, isConsolidationBreakoutConfig } from './strategies/strategy-configs.js';
 import type { FilterCondition } from './strategies/filter-evaluator.js';
 
 // ============================================================
@@ -212,6 +212,62 @@ export function formatV2ExitReasoning(config: PhasedStrategyConfiguration, trade
 }
 
 // ============================================================
+// V3 Consolidation Breakout Strategy Reasoning
+// ============================================================
+
+export function formatV3EntryReasoning(config: ConsolidationBreakoutConfiguration): string {
+  const lines: string[] = [];
+  lines.push(`Strategy: ${config.name} (V3 Consolidation Breakout)`);
+
+  lines.push('Direction conditions:');
+  lines.push('  - close > SMA(50)');
+  if (config.direction.require_sma20_above_sma50) {
+    lines.push('  - SMA(20) >= SMA(50)');
+  }
+  if (config.direction.require_sma50_slope_positive) {
+    lines.push('  - SMA(50) slope > 0');
+  }
+
+  lines.push('Consolidation detection:');
+  lines.push(`  - window: ${config.consolidation.consolidation_window} bars`);
+  lines.push(`  - max range: ${config.consolidation.max_range_pct}%`);
+  lines.push(`  - ATR ratio threshold: ${config.consolidation.atr_ratio_threshold}`);
+  if (config.consolidation.sma_proximity_pct != null) {
+    lines.push(`  - SMA proximity: ${config.consolidation.sma_proximity_pct}%`);
+  }
+  lines.push(`  - max staleness: ${config.consolidation.max_staleness} bars`);
+
+  lines.push('Breakout detection:');
+  lines.push(`  - volume multiplier: ${config.breakout.volume_multiplier}x`);
+  if (config.breakout.return_20d_threshold != null) {
+    lines.push(`  - 20d return threshold: ${config.breakout.return_20d_threshold}%`);
+  }
+
+  lines.push('Overextension filter:');
+  lines.push(`  - SMA20 limit: ${config.overextension.overextension_pct}%`);
+  lines.push(`  - SMA50 limit: ${config.overextension.overextension_pct * 1.5}%`);
+
+  return lines.join('\n');
+}
+
+export function formatV3ExitReasoning(config: ConsolidationBreakoutConfiguration, trade: Trade): string {
+  const lines: string[] = [];
+  const v3Trade = trade as any;
+
+  lines.push('Exit rules (priority order):');
+  lines.push(`  1. Stop-loss: ATR(14) × ${config.stopLoss.atr_multiple}, swing_lookback=${config.stopLoss.swing_lookback}, buffer=${config.stopLoss.buffer}`);
+  lines.push(`  2. Profit target: ${config.profitTarget.r_multiple}R multiple`);
+  lines.push(`  3. Trend failsafe: close < SMA(${config.trendExit.trend_exit_sma_period})`);
+  lines.push(`Max risk: ${config.maxRisk.max_risk_pct}%`);
+
+  if (v3Trade.exitReason) {
+    lines.push(`Exit reason: ${v3Trade.exitReason}`);
+  }
+
+  return lines.join('\n');
+}
+
+// ============================================================
 // Main: Annotate Trades With Reasoning
 // ============================================================
 
@@ -234,7 +290,10 @@ export function annotateTradesWithReasoning(
 
     if (isComposite) {
       const config = (strategyParams as { config: any }).config;
-      if (isV2Config(config)) {
+      if (isConsolidationBreakoutConfig(config)) {
+        entryReasoning = formatV3EntryReasoning(config);
+        exitReasoning = formatV3ExitReasoning(config, trade);
+      } else if (isV2Config(config)) {
         entryReasoning = formatV2EntryReasoning(config);
         exitReasoning = formatV2ExitReasoning(config, trade);
       } else {

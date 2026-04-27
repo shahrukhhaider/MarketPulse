@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BREAKOUT_VOLUME_CONFIG = exports.TREND_PULLBACK_CONFIG = exports.MOMENTUM_CONTINUATION_CONFIG = void 0;
+exports.isConsolidationBreakoutConfig = isConsolidationBreakoutConfig;
 exports.isV2Config = isV2Config;
 exports.isV1Config = isV1Config;
 exports.getDefaultCompositeConfig = getDefaultCompositeConfig;
@@ -68,6 +69,9 @@ exports.BREAKOUT_VOLUME_CONFIG = {
 // ============================================================
 // Configuration Detection Helpers
 // ============================================================
+function isConsolidationBreakoutConfig(config) {
+    return config && typeof config.consolidation === 'object';
+}
 function isV2Config(config) {
     return config && typeof config.phases === 'object';
 }
