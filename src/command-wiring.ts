@@ -29,6 +29,7 @@ import { generateChartHtml, getChartFilePath } from './chart-generator.js';
 import { writeFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { buildConfig, buildV2Config, generateV2Grid, generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig } from './parameter-grid.js';
+import { evaluateV3Configuration, splitData } from './walk-forward-validator.js';
 
 export interface WiringOptions {
   dataDir?: string;
@@ -617,93 +618,73 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         }
 
         const dataPoints = dataResult.data.dataPoints;
-        if (dataPoints.length < 100) {
-          return errorResult('tune', 'INSUFFICIENT_DATA',
-            `Insufficient data: need at least 100 data points, got ${dataPoints.length}`);
+
+        // Split data into IS (70%) and OOS (30%) — replaces inline < 100 check
+        const splitResult = splitData(dataPoints);
+        if ('error' in splitResult) {
+          return errorResult('tune', 'INSUFFICIENT_DATA', splitResult.error);
         }
+        const { inSample: isData, outOfSample: oosData } = splitResult;
 
         const grid = generateConsolidationBreakoutGrid();
-        const v3Results: Array<{
-          params: Record<string, number>;
-          inSample: { totalReturnPercent: number; sharpeRatio: number; maxDrawdownPercent: number; winRate: number; tradeCount: number; profitFactor: number };
-          outOfSample: { totalReturnPercent: number; sharpeRatio: number; maxDrawdownPercent: number; winRate: number; tradeCount: number; profitFactor: number };
+
+        // Evaluate each grid entry on IS data only
+        const isResults: Array<{
+          entry: typeof grid[0];
+          isMetrics: { totalReturnPercent: number; sharpeRatio: number; maxDrawdownPercent: number; winRate: number; tradeCount: number; profitFactor: number };
         }> = [];
 
         for (const entry of grid) {
-          const v3Params: ConsolidationBreakoutParams = { config: entry.config };
-
-          const engine = new ConsolidationBreakoutEngine();
-          engine.reset();
-          const bt = new BacktestEngine();
-          const result = bt.runV2(dataPoints, engine, v3Params, period);
-          const trades = result.performanceSummary.trades;
-          let profitFactor = 0;
-          if (trades.length > 0) {
-            let grossProfits = 0, grossLosses = 0;
-            for (const t of trades) {
-              if (t.profitLossPercent > 0) grossProfits += t.profitLossPercent;
-              else if (t.profitLossPercent < 0) grossLosses += Math.abs(t.profitLossPercent);
-            }
-            profitFactor = grossLosses === 0 ? Infinity : grossProfits / grossLosses;
-          }
-
-          const metrics = {
-            totalReturnPercent: result.performanceSummary.totalReturnPercent,
-            sharpeRatio: result.performanceSummary.sharpeRatio,
-            maxDrawdownPercent: result.performanceSummary.maxDrawdownPercent,
-            winRate: result.performanceSummary.winRate,
-            tradeCount: result.performanceSummary.numberOfTrades,
-            profitFactor,
-          };
-
-          v3Results.push({
-            params: entry.params,
-            inSample: metrics,
-            outOfSample: metrics,
-          });
+          const metrics = evaluateV3Configuration(entry, isData);
+          isResults.push({ entry, isMetrics: metrics });
         }
 
-        // Filter: OOS drawdown <= 25%, profit factor >= 1.0, positive return, min 3 trades
-        const filtered = v3Results.filter(r =>
-          r.outOfSample.maxDrawdownPercent <= 25 &&
-          r.outOfSample.profitFactor >= 1.0 &&
-          r.outOfSample.totalReturnPercent > 0 &&
-          r.outOfSample.tradeCount >= 3
+        // Filter using IS metrics: drawdown ≤ 25%, profit factor ≥ 1.0, positive return, ≥ 3 trades
+        const filtered = isResults.filter(r =>
+          r.isMetrics.maxDrawdownPercent <= 25 &&
+          r.isMetrics.profitFactor >= 1.0 &&
+          r.isMetrics.totalReturnPercent > 0 &&
+          r.isMetrics.tradeCount >= 3
         );
 
         // Fallback: if strict filter yields nothing, relax to any config with trades
         const candidates = filtered.length > 0
           ? filtered
-          : v3Results.filter(r => r.outOfSample.tradeCount > 0);
+          : isResults.filter(r => r.isMetrics.tradeCount > 0);
 
         if (candidates.length === 0) {
           return errorResult('tune', 'NO_VIABLE_CONFIGS',
             `No viable V3 configurations found for ${ticker} / ${strategy}`);
         }
 
-        // Rank by OOS total return descending
-        candidates.sort((a, b) => b.outOfSample.totalReturnPercent - a.outOfSample.totalReturnPercent);
+        // Rank by IS total return descending
+        candidates.sort((a, b) => b.isMetrics.totalReturnPercent - a.isMetrics.totalReturnPercent);
         const topCount = Math.max(1, Math.ceil(candidates.length * 0.2));
         const topConfigs = candidates.slice(0, topCount);
 
         // Compute best region
         const bestRegion: Record<string, { min: number; max: number }> = {};
-        const paramNames = Object.keys(topConfigs[0].params);
+        const paramNames = Object.keys(topConfigs[0].entry.params);
         for (const name of paramNames) {
-          const values = topConfigs.map(c => c.params[name]);
+          const values = topConfigs.map(c => c.entry.params[name]);
           bestRegion[name] = { min: Math.min(...values), max: Math.max(...values) };
         }
 
-        // Summary metrics (mean of top configs)
+        // Summary metrics (mean of top IS configs)
         const n = topConfigs.length;
         const summaryMetrics = {
-          totalReturnPercent: topConfigs.reduce((s, c) => s + c.outOfSample.totalReturnPercent, 0) / n,
-          sharpeRatio: topConfigs.reduce((s, c) => s + c.outOfSample.sharpeRatio, 0) / n,
-          maxDrawdownPercent: topConfigs.reduce((s, c) => s + c.outOfSample.maxDrawdownPercent, 0) / n,
-          winRate: topConfigs.reduce((s, c) => s + c.outOfSample.winRate, 0) / n,
-          tradeCount: topConfigs.reduce((s, c) => s + c.outOfSample.tradeCount, 0) / n,
-          profitFactor: topConfigs.reduce((s, c) => s + c.outOfSample.profitFactor, 0) / n,
+          totalReturnPercent: topConfigs.reduce((s, c) => s + c.isMetrics.totalReturnPercent, 0) / n,
+          sharpeRatio: topConfigs.reduce((s, c) => s + c.isMetrics.sharpeRatio, 0) / n,
+          maxDrawdownPercent: topConfigs.reduce((s, c) => s + c.isMetrics.maxDrawdownPercent, 0) / n,
+          winRate: topConfigs.reduce((s, c) => s + c.isMetrics.winRate, 0) / n,
+          tradeCount: topConfigs.reduce((s, c) => s + c.isMetrics.tradeCount, 0) / n,
+          profitFactor: topConfigs.reduce((s, c) => s + c.isMetrics.profitFactor, 0) / n,
         };
+
+        // Best config: IS metrics from grid search, OOS metrics from validation
+        const bestEntry = candidates[0].entry;
+        const bestIsMetrics = candidates[0].isMetrics;
+        const bestOosMetrics = evaluateV3Configuration(bestEntry, oosData);
 
         const riskProfile = (opts['risk'] as RiskProfile) ?? 'low';
         const horizon = (opts['horizon'] as TimeHorizon) ?? 'long_term';
@@ -715,6 +696,8 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           profile,
           best_region: bestRegion,
           summary_metrics: summaryMetrics,
+          inSample: bestIsMetrics,
+          outOfSample: bestOosMetrics,
           configurations_evaluated: grid.length,
           configurations_passed_filter: candidates.length,
           computed_at: new Date().toISOString(),
@@ -902,70 +885,53 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         }
 
         const dataPoints = dataResult.data.dataPoints;
-        if (dataPoints.length < 100) {
-          return errorResult('tune-and-chart', 'INSUFFICIENT_DATA',
-            `Insufficient data: need at least 100 data points, got ${dataPoints.length}`);
+
+        // Split data into IS (70%) and OOS (30%) — replaces inline < 100 check
+        const splitResult = splitData(dataPoints);
+        if ('error' in splitResult) {
+          return errorResult('tune-and-chart', 'INSUFFICIENT_DATA', splitResult.error);
         }
+        const { inSample: isData, outOfSample: oosData } = splitResult;
 
         const grid = generateConsolidationBreakoutGrid();
-        const v3Results: Array<{
-          params: Record<string, number>;
-          outOfSample: { totalReturnPercent: number; sharpeRatio: number; maxDrawdownPercent: number; winRate: number; tradeCount: number; profitFactor: number };
+
+        // Evaluate each grid entry on IS data only
+        const isResults: Array<{
+          entry: typeof grid[0];
+          isMetrics: { totalReturnPercent: number; sharpeRatio: number; maxDrawdownPercent: number; winRate: number; tradeCount: number; profitFactor: number };
         }> = [];
 
         for (const entry of grid) {
-          const v3Params: ConsolidationBreakoutParams = { config: entry.config };
-
-          const btEngine = new ConsolidationBreakoutEngine();
-          btEngine.reset();
-          const bt = new BacktestEngine();
-          const result = bt.runV2(dataPoints, btEngine, v3Params, period);
-          const trades = result.performanceSummary.trades;
-          let profitFactor = 0;
-          if (trades.length > 0) {
-            let grossProfits = 0, grossLosses = 0;
-            for (const t of trades) {
-              if (t.profitLossPercent > 0) grossProfits += t.profitLossPercent;
-              else if (t.profitLossPercent < 0) grossLosses += Math.abs(t.profitLossPercent);
-            }
-            profitFactor = grossLosses === 0 ? Infinity : grossProfits / grossLosses;
-          }
-
-          v3Results.push({
-            params: entry.params,
-            outOfSample: {
-              totalReturnPercent: result.performanceSummary.totalReturnPercent,
-              sharpeRatio: result.performanceSummary.sharpeRatio,
-              maxDrawdownPercent: result.performanceSummary.maxDrawdownPercent,
-              winRate: result.performanceSummary.winRate,
-              tradeCount: result.performanceSummary.numberOfTrades,
-              profitFactor,
-            },
-          });
+          const metrics = evaluateV3Configuration(entry, isData);
+          isResults.push({ entry, isMetrics: metrics });
         }
 
-        const filtered = v3Results.filter(r =>
-          r.outOfSample.maxDrawdownPercent <= 25 &&
-          r.outOfSample.profitFactor >= 1.0 &&
-          r.outOfSample.totalReturnPercent > 0 &&
-          r.outOfSample.tradeCount >= 3
+        // Filter using IS metrics: drawdown ≤ 25%, profit factor ≥ 1.0, positive return, ≥ 3 trades
+        const filtered = isResults.filter(r =>
+          r.isMetrics.maxDrawdownPercent <= 25 &&
+          r.isMetrics.profitFactor >= 1.0 &&
+          r.isMetrics.totalReturnPercent > 0 &&
+          r.isMetrics.tradeCount >= 3
         );
 
         // Fallback: if strict filter yields nothing, relax to any config with trades
         const candidates = filtered.length > 0
           ? filtered
-          : v3Results.filter(r => r.outOfSample.tradeCount > 0);
+          : isResults.filter(r => r.isMetrics.tradeCount > 0);
 
         if (candidates.length === 0) {
           return errorResult('tune-and-chart', 'NO_VIABLE_CONFIGS',
             `No viable V3 configurations found for ${ticker} / ${strategy}`);
         }
 
-        candidates.sort((a, b) => b.outOfSample.totalReturnPercent - a.outOfSample.totalReturnPercent);
+        // Rank by IS total return descending
+        candidates.sort((a, b) => b.isMetrics.totalReturnPercent - a.isMetrics.totalReturnPercent);
 
-        // Use the single best config directly — no midpointing
-        const bestCandidate = candidates[0];
-        const bestParams = bestCandidate.params;
+        // Best config: IS metrics from grid search, OOS metrics from validation
+        const bestEntry = candidates[0].entry;
+        const bestIsMetrics = candidates[0].isMetrics;
+        const bestOosMetrics = evaluateV3Configuration(bestEntry, oosData);
+        const bestParams = bestEntry.params;
 
         const riskProfile = (opts['risk'] as RiskProfile) ?? 'low';
         const profile = `${horizon}_${riskProfile}`;
@@ -975,7 +941,9 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           strategy,
           profile,
           best_params: bestParams,
-          best_metrics: bestCandidate.outOfSample,
+          best_metrics: bestOosMetrics,
+          inSample: bestIsMetrics,
+          outOfSample: bestOosMetrics,
           configurations_evaluated: grid.length,
           configurations_passed_filter: candidates.length,
           computed_at: new Date().toISOString(),
