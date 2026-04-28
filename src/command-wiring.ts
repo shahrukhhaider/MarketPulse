@@ -25,8 +25,9 @@ import { TuningEngine } from './tuning-engine.js';
 import type { TuningInput, TunableStrategy, TimeHorizon, RiskProfile, BestRegion } from './tuning-engine.js';
 import { normalizeTicker } from './history-cache-store.js';
 import type { CacheEntry } from './history-cache-store.js';
-import { generateChartHtml, getChartFilePath, openInBrowser } from './chart-generator.js';
+import { generateChartHtml, getChartFilePath } from './chart-generator.js';
 import { writeFileSync } from 'node:fs';
+import * as nodePath from 'node:path';
 import { buildConfig, buildV2Config, generateV2Grid, generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig } from './parameter-grid.js';
 
 export interface WiringOptions {
@@ -411,8 +412,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
               strategyParams: v2Params,
             });
             writeFileSync(chartFilePath, html, 'utf-8');
-            openInBrowser(chartFilePath);
-            return successResult('backtest', { ...backtestResult, chartFilePath });
+            return successResult('backtest', { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` });
           }
 
           return successResult('backtest', backtestResult);
@@ -475,8 +475,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
               strategyParams: v3Params,
             });
             writeFileSync(chartFilePath, html, 'utf-8');
-            openInBrowser(chartFilePath);
-            return successResult('backtest', { ...backtestResult, chartFilePath });
+            return successResult('backtest', { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` });
           }
 
           return successResult('backtest', backtestResult);
@@ -571,8 +570,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           strategyParams: params,
         });
         writeFileSync(chartFilePath, html, 'utf-8');
-        openInBrowser(chartFilePath);
-        return successResult('backtest', { ...backtestResult, chartFilePath });
+        return successResult('backtest', { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` });
       }
 
       return successResult('backtest', backtestResult);
@@ -1001,12 +999,11 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           strategyParams: v3Params,
         });
         writeFileSync(chartFilePath, html, 'utf-8');
-        openInBrowser(chartFilePath);
 
         return successResult('tune-and-chart', {
           tuning: tuningData,
           best_params: bestParams,
-          backtest: { ...backtestResult, chartFilePath },
+          backtest: { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` },
         });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -1151,12 +1148,11 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           strategyParams: v2Params,
         });
         writeFileSync(chartFilePath, html, 'utf-8');
-        openInBrowser(chartFilePath);
 
         return successResult('tune-and-chart', {
           tuning: tuningData,
           midpoint_params: midpointParams,
-          backtest: { ...backtestResult, chartFilePath },
+          backtest: { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` },
         });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -1229,13 +1225,12 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         strategyParams: compositeParams,
       });
       writeFileSync(chartFilePath, html, 'utf-8');
-      openInBrowser(chartFilePath);
 
       // Step 7: Return combined result
       return successResult('tune-and-chart', {
         tuning: outcome.data,
         midpoint_params: midpointParams,
-        backtest: { ...backtestResult, chartFilePath },
+        backtest: { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` },
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

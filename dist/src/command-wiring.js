@@ -59,6 +59,7 @@ const tuning_engine_js_1 = require("./tuning-engine.js");
 const history_cache_store_js_1 = require("./history-cache-store.js");
 const chart_generator_js_1 = require("./chart-generator.js");
 const node_fs_1 = require("node:fs");
+const nodePath = __importStar(require("node:path"));
 const parameter_grid_js_1 = require("./parameter-grid.js");
 /**
  * Create a fully wired CommandRouter with real handlers connected to domain components.
@@ -368,8 +369,7 @@ function createWiredRouter(options = {}) {
                             strategyParams: v2Params,
                         });
                         (0, node_fs_1.writeFileSync)(chartFilePath, html, 'utf-8');
-                        (0, chart_generator_js_1.openInBrowser)(chartFilePath);
-                        return (0, command_router_js_1.successResult)('backtest', { ...backtestResult, chartFilePath });
+                        return (0, command_router_js_1.successResult)('backtest', { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` });
                     }
                     return (0, command_router_js_1.successResult)('backtest', backtestResult);
                 }
@@ -426,8 +426,7 @@ function createWiredRouter(options = {}) {
                             strategyParams: v3Params,
                         });
                         (0, node_fs_1.writeFileSync)(chartFilePath, html, 'utf-8');
-                        (0, chart_generator_js_1.openInBrowser)(chartFilePath);
-                        return (0, command_router_js_1.successResult)('backtest', { ...backtestResult, chartFilePath });
+                        return (0, command_router_js_1.successResult)('backtest', { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` });
                     }
                     return (0, command_router_js_1.successResult)('backtest', backtestResult);
                 }
@@ -515,8 +514,7 @@ function createWiredRouter(options = {}) {
                     strategyParams: params,
                 });
                 (0, node_fs_1.writeFileSync)(chartFilePath, html, 'utf-8');
-                (0, chart_generator_js_1.openInBrowser)(chartFilePath);
-                return (0, command_router_js_1.successResult)('backtest', { ...backtestResult, chartFilePath });
+                return (0, command_router_js_1.successResult)('backtest', { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` });
             }
             return (0, command_router_js_1.successResult)('backtest', backtestResult);
         }
@@ -874,11 +872,10 @@ function createWiredRouter(options = {}) {
                     strategyParams: v3Params,
                 });
                 (0, node_fs_1.writeFileSync)(chartFilePath, html, 'utf-8');
-                (0, chart_generator_js_1.openInBrowser)(chartFilePath);
                 return (0, command_router_js_1.successResult)('tune-and-chart', {
                     tuning: tuningData,
                     best_params: bestParams,
-                    backtest: { ...backtestResult, chartFilePath },
+                    backtest: { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` },
                 });
             }
             catch (err) {
@@ -1001,11 +998,10 @@ function createWiredRouter(options = {}) {
                     strategyParams: v2Params,
                 });
                 (0, node_fs_1.writeFileSync)(chartFilePath, html, 'utf-8');
-                (0, chart_generator_js_1.openInBrowser)(chartFilePath);
                 return (0, command_router_js_1.successResult)('tune-and-chart', {
                     tuning: tuningData,
                     midpoint_params: midpointParams,
-                    backtest: { ...backtestResult, chartFilePath },
+                    backtest: { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` },
                 });
             }
             catch (err) {
@@ -1070,12 +1066,11 @@ function createWiredRouter(options = {}) {
                 strategyParams: compositeParams,
             });
             (0, node_fs_1.writeFileSync)(chartFilePath, html, 'utf-8');
-            (0, chart_generator_js_1.openInBrowser)(chartFilePath);
             // Step 7: Return combined result
             return (0, command_router_js_1.successResult)('tune-and-chart', {
                 tuning: outcome.data,
                 midpoint_params: midpointParams,
-                backtest: { ...backtestResult, chartFilePath },
+                backtest: { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` },
             });
         }
         catch (err) {
