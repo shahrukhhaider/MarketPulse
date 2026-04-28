@@ -193,6 +193,18 @@ export interface ConsolidationBreakoutConfiguration {
   trendExit: {
     trend_exit_sma_period: number;    // fixed 50
   };
+
+  exitMode?: 'fixed' | 'trailing';  // default: 'fixed'
+
+  trailingStop?: {
+    trailingMethod: 'sma20' | 'atr';
+    atrTrailMultiple?: number;           // required when trailingMethod is 'atr', > 0
+    atrTrailReference?: 'close' | 'highest_close'; // required when trailingMethod is 'atr'
+    smaTrailBuffer?: number;             // required when trailingMethod is 'sma20', >= 0
+    breakevenThreshold: number;          // R-multiples, > 0, default 1.0
+    trailActivationThreshold: number;    // R-multiples, >= breakevenThreshold, default 2.0
+    removeProfitTarget: boolean;         // default false
+  };
 }
 
 export interface ConsolidationBreakoutParams {

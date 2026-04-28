@@ -61,6 +61,11 @@ export class ConsolidationBreakoutEngine implements Strategy {
   private currentBarIndex = 0;
   private lastConsolidation: { bar: number; high: number; low: number } | null = null;
 
+  // Trailing exit state
+  private effectiveStopLoss = 0;
+  private originalStopLoss = 0;
+  private highestCloseSinceEntry = 0;
+
   reset(): void {
     this.positionOpen = false;
     this.entryBarIndex = -1;
@@ -69,6 +74,9 @@ export class ConsolidationBreakoutEngine implements Strategy {
     this.profitTargetPrice = 0;
     this.currentBarIndex = 0;
     this.lastConsolidation = null;
+    this.effectiveStopLoss = 0;
+    this.originalStopLoss = 0;
+    this.highestCloseSinceEntry = 0;
   }
 
   // ============================================================
@@ -344,6 +352,54 @@ export class ConsolidationBreakoutEngine implements Strategy {
     };
   }
 
+  /**
+   * Compute the trailing stop level for a given bar using the specified method.
+   *
+   * - 'sma20': SMA(20) - (smaTrailBuffer × ATR(14))
+   * - 'atr' with reference 'close': close - (atrTrailMultiple × ATR(14))
+   * - 'atr' with reference 'highest_close': highestCloseSinceEntry - (atrTrailMultiple × ATR(14))
+   *
+   * Returns undefined if required indicators are unavailable.
+   */
+  static computeTrailingStop(
+    dataPoints: HistoricalDataPoint[],
+    barIndex: number,
+    method: 'sma20' | 'atr',
+    config: {
+      smaTrailBuffer?: number;
+      atrTrailMultiple?: number;
+      atrTrailReference?: 'close' | 'highest_close';
+    },
+    highestCloseSinceEntry: number
+  ): number | undefined {
+    const slice = dataPoints.slice(0, barIndex + 1);
+
+    // ATR(14) is required for all methods
+    const atr14 = atr(slice, 14);
+    if (atr14 === undefined) return undefined;
+
+    if (method === 'sma20') {
+      const closes = slice.map(d => d.close);
+      const sma20 = sma(closes, 20);
+      if (sma20 === undefined) return undefined;
+
+      const buffer = config.smaTrailBuffer ?? 0;
+      return sma20 - buffer * atr14;
+    }
+
+    // method === 'atr'
+    const multiple = config.atrTrailMultiple ?? 0;
+    const reference = config.atrTrailReference ?? 'close';
+
+    if (reference === 'highest_close') {
+      return highestCloseSinceEntry - multiple * atr14;
+    }
+
+    // reference === 'close'
+    const currentClose = slice[slice.length - 1].close;
+    return currentClose - multiple * atr14;
+  }
+
   minimumDataPoints(): number {
     // Need at least 51 bars: SMA(50) requires 50 prices, plus ATR(20) needs 21 data points
     return 51;
@@ -436,6 +492,41 @@ export class ConsolidationBreakoutEngine implements Strategy {
       return { valid: false, error: 'swing_lookback must be >= 1' };
     }
 
+    // exitMode validation (if provided, must be "fixed" or "trailing")
+    if (config.exitMode !== undefined && config.exitMode !== 'fixed' && config.exitMode !== 'trailing') {
+      return { valid: false, error: 'exitMode must be "fixed" or "trailing"' };
+    }
+
+    // When exitMode is "trailing", validate trailing stop parameters
+    if (config.exitMode === 'trailing') {
+      const ts = config.trailingStop;
+
+      // trailingMethod must be "sma20" or "atr"
+      if (!ts || (ts.trailingMethod !== 'sma20' && ts.trailingMethod !== 'atr')) {
+        return { valid: false, error: 'trailingMethod must be "sma20" or "atr"' };
+      }
+
+      // atrTrailMultiple > 0 when method is "atr"
+      if (ts.trailingMethod === 'atr' && (ts.atrTrailMultiple === undefined || ts.atrTrailMultiple <= 0)) {
+        return { valid: false, error: 'atrTrailMultiple must be > 0 when trailingMethod is "atr"' };
+      }
+
+      // smaTrailBuffer >= 0 when method is "sma20"
+      if (ts.trailingMethod === 'sma20' && (ts.smaTrailBuffer === undefined || ts.smaTrailBuffer < 0)) {
+        return { valid: false, error: 'smaTrailBuffer must be >= 0 when trailingMethod is "sma20"' };
+      }
+
+      // breakevenThreshold > 0
+      if (ts.breakevenThreshold <= 0) {
+        return { valid: false, error: 'breakevenThreshold must be > 0' };
+      }
+
+      // trailActivationThreshold >= breakevenThreshold
+      if (ts.trailActivationThreshold < ts.breakevenThreshold) {
+        return { valid: false, error: 'trailActivationThreshold must be >= breakevenThreshold' };
+      }
+    }
+
     return { valid: true };
   }
 
@@ -483,7 +574,140 @@ export class ConsolidationBreakoutEngine implements Strategy {
     }
 
     if (this.positionOpen) {
-      // Evaluate exit conditions in priority order
+      // Determine exit mode (default to "fixed" for backward compatibility)
+      const exitMode = config.exitMode ?? 'fixed';
+
+      if (exitMode === 'trailing') {
+        // ---- Trailing exit mode ----
+        const ts = config.trailingStop;
+        const breakevenThreshold = ts?.breakevenThreshold ?? 1.0;
+        const trailActivationThreshold = ts?.trailActivationThreshold ?? 2.0;
+        const removeProfitTarget = ts?.removeProfitTarget ?? false;
+
+        // 1. Update highest close tracking
+        this.highestCloseSinceEntry = Math.max(this.highestCloseSinceEntry, currentBar.close);
+
+        // 2. Compute R_Profit
+        const rValue = this.entryPrice - this.originalStopLoss;
+        const rProfit = rValue > 0 ? (currentBar.close - this.entryPrice) / rValue : 0;
+
+        // 3. Phase evaluation
+        if (rProfit >= trailActivationThreshold && ts) {
+          // Trailing phase: compute trailing stop and apply ratchet
+          const barIndex = this.currentBarIndex - 1;
+          const computedStop = ConsolidationBreakoutEngine.computeTrailingStop(
+            dataPoints,
+            barIndex,
+            ts.trailingMethod,
+            {
+              smaTrailBuffer: ts.smaTrailBuffer,
+              atrTrailMultiple: ts.atrTrailMultiple,
+              atrTrailReference: ts.atrTrailReference,
+            },
+            this.highestCloseSinceEntry
+          );
+          if (computedStop !== undefined) {
+            this.effectiveStopLoss = Math.max(this.effectiveStopLoss, computedStop);
+          }
+        } else if (rProfit >= breakevenThreshold) {
+          // Breakeven phase: move stop to entry price
+          this.effectiveStopLoss = Math.max(this.effectiveStopLoss, this.entryPrice);
+        }
+        // Else: keep effectiveStopLoss unchanged
+
+        // 4. Exit priority chain (trailing mode)
+
+        // Priority 1: Effective stop-loss hit
+        if (currentBar.low <= this.effectiveStopLoss) {
+          this.positionOpen = false;
+          const exitReason = this.effectiveStopLoss > this.originalStopLoss ? 'trailing_stop' as const : 'stop_loss' as const;
+          const signal: V2Signal = {
+            id: crypto.randomUUID(),
+            ticker,
+            direction: 'SELL' as SignalDirection,
+            strategyType: this.type,
+            price: this.effectiveStopLoss,
+            timestamp: currentBar.date,
+            exitReason,
+            stopLossPrice: this.stopLossPrice,
+            profitTargetPrice: this.profitTargetPrice,
+            rValue,
+          };
+          this.entryBarIndex = -1;
+          this.entryPrice = 0;
+          this.stopLossPrice = 0;
+          this.profitTargetPrice = 0;
+          this.effectiveStopLoss = 0;
+          this.originalStopLoss = 0;
+          this.highestCloseSinceEntry = 0;
+          return signal;
+        }
+
+        // Priority 2: Profit target (if not removed)
+        if (!removeProfitTarget && currentBar.high >= this.profitTargetPrice) {
+          this.positionOpen = false;
+          const signal: V2Signal = {
+            id: crypto.randomUUID(),
+            ticker,
+            direction: 'SELL' as SignalDirection,
+            strategyType: this.type,
+            price: this.profitTargetPrice,
+            timestamp: currentBar.date,
+            exitReason: 'profit_target',
+            stopLossPrice: this.stopLossPrice,
+            profitTargetPrice: this.profitTargetPrice,
+            rValue,
+          };
+          this.entryBarIndex = -1;
+          this.entryPrice = 0;
+          this.stopLossPrice = 0;
+          this.profitTargetPrice = 0;
+          this.effectiveStopLoss = 0;
+          this.originalStopLoss = 0;
+          this.highestCloseSinceEntry = 0;
+          return signal;
+        }
+
+        // Priority 3: Trend failsafe
+        const slice = dataPoints.slice(0, this.currentBarIndex);
+        const closes = slice.map(d => d.close);
+        const trendSma = sma(closes, config.trendExit.trend_exit_sma_period);
+        if (trendSma !== undefined && currentBar.close < trendSma) {
+          this.positionOpen = false;
+          const signal: V2Signal = {
+            id: crypto.randomUUID(),
+            ticker,
+            direction: 'SELL' as SignalDirection,
+            strategyType: this.type,
+            price: currentBar.close,
+            timestamp: currentBar.date,
+            exitReason: 'trend_failsafe',
+            stopLossPrice: this.stopLossPrice,
+            profitTargetPrice: this.profitTargetPrice,
+            rValue,
+          };
+          this.entryBarIndex = -1;
+          this.entryPrice = 0;
+          this.stopLossPrice = 0;
+          this.profitTargetPrice = 0;
+          this.effectiveStopLoss = 0;
+          this.originalStopLoss = 0;
+          this.highestCloseSinceEntry = 0;
+          return signal;
+        }
+
+        // No exit condition triggered — HOLD
+        return {
+          id: crypto.randomUUID(),
+          ticker,
+          direction: 'HOLD' as SignalDirection,
+          strategyType: this.type,
+          price: currentBar.close,
+          timestamp: currentBar.date,
+        };
+      }
+
+      // ---- Fixed exit mode (existing behavior, unchanged) ----
 
       // Priority 1: Stop-loss — bar.low <= stopLossPrice
       if (currentBar.low <= this.stopLossPrice) {
@@ -505,6 +729,9 @@ export class ConsolidationBreakoutEngine implements Strategy {
         this.entryPrice = 0;
         this.stopLossPrice = 0;
         this.profitTargetPrice = 0;
+        this.effectiveStopLoss = 0;
+        this.originalStopLoss = 0;
+        this.highestCloseSinceEntry = 0;
         return signal;
       }
 
@@ -528,6 +755,9 @@ export class ConsolidationBreakoutEngine implements Strategy {
         this.entryPrice = 0;
         this.stopLossPrice = 0;
         this.profitTargetPrice = 0;
+        this.effectiveStopLoss = 0;
+        this.originalStopLoss = 0;
+        this.highestCloseSinceEntry = 0;
         return signal;
       }
 
@@ -554,6 +784,9 @@ export class ConsolidationBreakoutEngine implements Strategy {
         this.entryPrice = 0;
         this.stopLossPrice = 0;
         this.profitTargetPrice = 0;
+        this.effectiveStopLoss = 0;
+        this.originalStopLoss = 0;
+        this.highestCloseSinceEntry = 0;
         return signal;
       }
 
@@ -578,6 +811,9 @@ export class ConsolidationBreakoutEngine implements Strategy {
       this.stopLossPrice = entryResult.stopLossPrice;
       this.profitTargetPrice = entryResult.profitTargetPrice;
       this.entryBarIndex = barIndex;
+      this.originalStopLoss = entryResult.stopLossPrice;
+      this.effectiveStopLoss = entryResult.stopLossPrice;
+      this.highestCloseSinceEntry = entryResult.entryPrice;
 
       return {
         id: crypto.randomUUID(),

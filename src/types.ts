@@ -125,7 +125,7 @@ export interface V2Signal extends Signal {
   stopLossPrice?: number;
   profitTargetPrice?: number;
   rValue?: number;
-  exitReason?: 'stop_loss' | 'profit_target' | 'trend_failsafe';
+  exitReason?: 'stop_loss' | 'profit_target' | 'trend_failsafe' | 'trailing_stop';
 }
 
 // ============================================================
@@ -225,7 +225,7 @@ export interface V2Trade extends Trade {
   stopLossPrice: number;
   profitTargetPrice: number;
   rValue: number;
-  exitReason: 'stop_loss' | 'profit_target' | 'trend_failsafe';
+  exitReason: 'stop_loss' | 'profit_target' | 'trend_failsafe' | 'trailing_stop';
   barsHeld: number;
 }
 

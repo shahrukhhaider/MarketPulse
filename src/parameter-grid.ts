@@ -382,9 +382,51 @@ export function deserializeGridEntry(json: string): GridEntry {
 }
 
 /**
- * Return the consolidation-breakout parameter space with 9 tunable parameters.
- * Total combinations: 3×3×2×2×3×3×3×3×3 = 4,374
+ * Return the consolidation-breakout parameter space with 17 tunable parameters.
+ * Original 9 + 8 trailing exit parameters.
  */
+/**
+ * Resolve an exit preset index to a full trailing exit configuration.
+ * Collapses 8 trailing params (864 combos) into 8 curated presets.
+ *
+ * Active presets (included in grid):
+ *   0 — fixed: no trailing, baseline behavior
+ *   5 — trailing ATR×2.5 off highest_close, breakeven@0.75R, trail@1.5R, no profit cap
+ *
+ * Available for future expansion (add index to exit_preset array in getConsolidationBreakoutParameterSpace):
+ *   1 — trailing SMA20 (buffer 0.3), breakeven@1.0R, trail@2.0R, keeps profit target
+ *   2 — trailing SMA20 (buffer 0.3), breakeven@1.0R, trail@2.0R, removes profit target
+ *   3 — trailing ATR×2.5 off close, breakeven@1.0R, trail@2.0R, keeps profit target
+ *   4 — trailing ATR×2.5 off close, breakeven@1.0R, trail@2.0R, removes profit target
+ *   6 — trailing ATR×3.0 off highest_close, breakeven@1.5R, trail@2.5R, removes profit target (conservative)
+ *   7 — trailing SMA20 (buffer 0.5), breakeven@0.75R, trail@1.5R, removes profit target (aggressive)
+ */
+export function resolveExitPreset(preset: number): {
+  exitMode: 'fixed' | 'trailing';
+  trailingStop?: ConsolidationBreakoutConfiguration['trailingStop'];
+} {
+  switch (preset) {
+    case 0:
+      return { exitMode: 'fixed' };
+    case 1:
+      return { exitMode: 'trailing', trailingStop: { trailingMethod: 'sma20', smaTrailBuffer: 0.3, breakevenThreshold: 1.0, trailActivationThreshold: 2.0, removeProfitTarget: false } };
+    case 2:
+      return { exitMode: 'trailing', trailingStop: { trailingMethod: 'sma20', smaTrailBuffer: 0.3, breakevenThreshold: 1.0, trailActivationThreshold: 2.0, removeProfitTarget: true } };
+    case 3:
+      return { exitMode: 'trailing', trailingStop: { trailingMethod: 'atr', atrTrailMultiple: 2.5, atrTrailReference: 'close', breakevenThreshold: 1.0, trailActivationThreshold: 2.0, removeProfitTarget: false } };
+    case 4:
+      return { exitMode: 'trailing', trailingStop: { trailingMethod: 'atr', atrTrailMultiple: 2.5, atrTrailReference: 'close', breakevenThreshold: 1.0, trailActivationThreshold: 2.0, removeProfitTarget: true } };
+    case 5:
+      return { exitMode: 'trailing', trailingStop: { trailingMethod: 'atr', atrTrailMultiple: 2.5, atrTrailReference: 'highest_close', breakevenThreshold: 0.75, trailActivationThreshold: 1.5, removeProfitTarget: true } };
+    case 6:
+      return { exitMode: 'trailing', trailingStop: { trailingMethod: 'atr', atrTrailMultiple: 3.0, atrTrailReference: 'highest_close', breakevenThreshold: 1.5, trailActivationThreshold: 2.5, removeProfitTarget: true } };
+    case 7:
+      return { exitMode: 'trailing', trailingStop: { trailingMethod: 'sma20', smaTrailBuffer: 0.5, breakevenThreshold: 0.75, trailActivationThreshold: 1.5, removeProfitTarget: true } };
+    default:
+      return { exitMode: 'fixed' };
+  }
+}
+
 export function getConsolidationBreakoutParameterSpace(): ParameterSpace {
   return {
     consolidation_window: [5, 10, 15],
@@ -396,6 +438,9 @@ export function getConsolidationBreakoutParameterSpace(): ParameterSpace {
     swing_lookback: [10, 15, 20],
     max_risk_pct: [3, 5, 8],
     r_multiple: [2, 2.5, 3],
+    // Active presets: 0=fixed baseline, 5=trailing ATR highest_close aggressive
+    // To expand: add preset indices from resolveExitPreset (1-4, 6-7)
+    exit_preset: [0, 5],
   };
 }
 
@@ -407,8 +452,10 @@ export function getConsolidationBreakoutParameterSpace(): ParameterSpace {
 export function buildConsolidationBreakoutConfig(
   params: Record<string, number>
 ): ConsolidationBreakoutConfiguration {
+  const preset = resolveExitPreset(params.exit_preset ?? 0);
+
   return {
-    name: `cb_w${params.consolidation_window}_r${params.max_range_pct}_atr${params.atr_ratio_threshold}_vol${params.volume_multiplier}_oe${params.overextension_pct}_am${params.atr_multiple}_sl${params.swing_lookback}_mr${params.max_risk_pct}_rm${params.r_multiple}`,
+    name: `cb_w${params.consolidation_window}_r${params.max_range_pct}_atr${params.atr_ratio_threshold}_vol${params.volume_multiplier}_oe${params.overextension_pct}_am${params.atr_multiple}_sl${params.swing_lookback}_mr${params.max_risk_pct}_rm${params.r_multiple}_ep${params.exit_preset ?? 0}`,
     consolidation: {
       consolidation_window: params.consolidation_window,
       max_range_pct: params.max_range_pct,
@@ -441,12 +488,14 @@ export function buildConsolidationBreakoutConfig(
     trendExit: {
       trend_exit_sma_period: 50,
     },
+    exitMode: preset.exitMode,
+    trailingStop: preset.trailingStop,
   };
 }
 
 /**
  * Generate the full consolidation-breakout parameter grid using Cartesian product.
- * Produces 4,374 entries.
+ * Uses exit presets to keep the grid manageable (~35K entries instead of ~3.7M).
  */
 export function generateConsolidationBreakoutGrid(): ConsolidationBreakoutGridEntry[] {
   const space = getConsolidationBreakoutParameterSpace();

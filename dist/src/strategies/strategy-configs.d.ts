@@ -114,6 +114,16 @@ export interface ConsolidationBreakoutConfiguration {
     trendExit: {
         trend_exit_sma_period: number;
     };
+    exitMode?: 'fixed' | 'trailing';
+    trailingStop?: {
+        trailingMethod: 'sma20' | 'atr';
+        atrTrailMultiple?: number;
+        atrTrailReference?: 'close' | 'highest_close';
+        smaTrailBuffer?: number;
+        breakevenThreshold: number;
+        trailActivationThreshold: number;
+        removeProfitTarget: boolean;
+    };
 }
 export interface ConsolidationBreakoutParams {
     config: ConsolidationBreakoutConfiguration;
