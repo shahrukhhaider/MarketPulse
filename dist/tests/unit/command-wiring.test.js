@@ -94,9 +94,9 @@ function createMockYahooClient() {
     // Initialization
     // ============================================================
     (0, vitest_1.describe)('initialization', () => {
-        (0, vitest_1.it)('creates a router with all 13 commands registered', () => {
+        (0, vitest_1.it)('creates a router with all 17 commands registered', () => {
             const commands = wired.router.getRegisteredCommands();
-            (0, vitest_1.expect)(commands).toHaveLength(13);
+            (0, vitest_1.expect)(commands).toHaveLength(17);
             (0, vitest_1.expect)(commands).toContain('add-stock');
             (0, vitest_1.expect)(commands).toContain('remove-stock');
             (0, vitest_1.expect)(commands).toContain('list-watchlist');
@@ -109,6 +109,10 @@ function createMockYahooClient() {
             (0, vitest_1.expect)(commands).toContain('clear-cache');
             (0, vitest_1.expect)(commands).toContain('tune');
             (0, vitest_1.expect)(commands).toContain('tune-and-chart');
+            (0, vitest_1.expect)(commands).toContain('tune-pipeline');
+            (0, vitest_1.expect)(commands).toContain('scan');
+            (0, vitest_1.expect)(commands).toContain('chart');
+            (0, vitest_1.expect)(commands).toContain('scan-chart');
         });
         (0, vitest_1.it)('loads existing config on initialization', async () => {
             const configPath = path.join(tmpDir, 'config.json');

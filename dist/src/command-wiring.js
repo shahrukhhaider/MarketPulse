@@ -62,6 +62,12 @@ const node_fs_1 = require("node:fs");
 const nodePath = __importStar(require("node:path"));
 const parameter_grid_js_1 = require("./parameter-grid.js");
 const walk_forward_validator_js_1 = require("./walk-forward-validator.js");
+const strategy_registry_js_1 = require("./strategy-registry.js");
+const consolidation_breakout_strategy_js_1 = require("./strategies/consolidation-breakout-strategy.js");
+const tune_command_js_1 = require("./tune-command.js");
+const scan_command_js_1 = require("./scan-command.js");
+const chart_command_js_1 = require("./chart-command.js");
+const scan_chart_command_js_1 = require("./scan-chart-command.js");
 /**
  * Create a fully wired CommandRouter with real handlers connected to domain components.
  * Loads config and price data on initialization.
@@ -1045,6 +1051,18 @@ function createWiredRouter(options = {}) {
             return (0, command_router_js_1.errorResult)('tune-and-chart', 'BACKTEST_ERROR', message);
         }
     });
+    // --- Strategy Registry: instantiate and register strategies ---
+    const strategyRegistry = new strategy_registry_js_1.StrategyRegistry();
+    strategyRegistry.register(new consolidation_breakout_strategy_js_1.ConsolidationBreakoutStrategy());
+    // --- New pipeline commands: tune, scan, chart ---
+    const tuneHandler = (0, tune_command_js_1.createTuneHandler)({ cachingProvider, registry: strategyRegistry, dataDir });
+    const scanHandler = (0, scan_command_js_1.createScanHandler)({ cachingProvider, dataDir });
+    const chartHandler = (0, chart_command_js_1.createChartHandler)({ cachingProvider, registry: strategyRegistry, dataDir });
+    const scanChartHandler = (0, scan_chart_command_js_1.createScanChartHandler)({ cachingProvider, dataDir });
+    router.register('tune-pipeline', ['tickers', 'strategy'], tuneHandler);
+    router.register('scan', ['tickers', 'strategy'], scanHandler);
+    router.register('chart', ['ticker', 'strategy'], chartHandler);
+    router.register('scan-chart', ['ticker', 'strategy'], scanChartHandler);
     return {
         router,
         config,
@@ -1055,6 +1073,7 @@ function createWiredRouter(options = {}) {
         processManager,
         registry,
         cachingProvider,
+        strategyRegistry,
     };
 }
 function getStrategyInstance(strategyType) {

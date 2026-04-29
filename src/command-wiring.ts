@@ -30,6 +30,12 @@ import { writeFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { buildConfig, buildV2Config, generateV2Grid, generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig } from './parameter-grid.js';
 import { evaluateV3Configuration, splitData } from './walk-forward-validator.js';
+import { StrategyRegistry } from './strategy-registry.js';
+import { ConsolidationBreakoutStrategy } from './strategies/consolidation-breakout-strategy.js';
+import { createTuneHandler } from './tune-command.js';
+import { createScanHandler } from './scan-command.js';
+import { createChartHandler } from './chart-command.js';
+import { createScanChartHandler } from './scan-chart-command.js';
 
 export interface WiringOptions {
   dataDir?: string;
@@ -50,6 +56,7 @@ export interface WiredRouter {
   processManager: ProcessManager;
   registry: DataProviderRegistry;
   cachingProvider: CachingDataProvider;
+  strategyRegistry: StrategyRegistry;
 }
 
 /**
@@ -1206,6 +1213,21 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     }
   });
 
+  // --- Strategy Registry: instantiate and register strategies ---
+  const strategyRegistry = new StrategyRegistry();
+  strategyRegistry.register(new ConsolidationBreakoutStrategy());
+
+  // --- New pipeline commands: tune, scan, chart ---
+  const tuneHandler = createTuneHandler({ cachingProvider, registry: strategyRegistry, dataDir });
+  const scanHandler = createScanHandler({ cachingProvider, dataDir });
+  const chartHandler = createChartHandler({ cachingProvider, registry: strategyRegistry, dataDir });
+  const scanChartHandler = createScanChartHandler({ cachingProvider, dataDir });
+
+  router.register('tune-pipeline', ['tickers', 'strategy'], tuneHandler);
+  router.register('scan', ['tickers', 'strategy'], scanHandler);
+  router.register('chart', ['ticker', 'strategy'], chartHandler);
+  router.register('scan-chart', ['ticker', 'strategy'], scanChartHandler);
+
   return {
     router,
     config,
@@ -1216,6 +1238,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     processManager,
     registry,
     cachingProvider,
+    strategyRegistry,
   };
 }
 

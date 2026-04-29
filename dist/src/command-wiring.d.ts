@@ -8,6 +8,7 @@ import { StrategyManager } from './strategy-manager.js';
 import { ProcessManager } from './process-manager.js';
 import { DataProviderRegistry } from './data-provider.js';
 import { CachingDataProvider } from './caching-data-provider.js';
+import { StrategyRegistry } from './strategy-registry.js';
 export interface WiringOptions {
     dataDir?: string;
     configPath?: string;
@@ -26,6 +27,7 @@ export interface WiredRouter {
     processManager: ProcessManager;
     registry: DataProviderRegistry;
     cachingProvider: CachingDataProvider;
+    strategyRegistry: StrategyRegistry;
 }
 /**
  * Create a fully wired CommandRouter with real handlers connected to domain components.
