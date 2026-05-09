@@ -1,4 +1,4 @@
-import type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
+import type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams, TrendPullbackParams } from './strategies/strategy-configs.js';
 
 // ============================================================
 // Strategy Parameter Interfaces
@@ -26,7 +26,8 @@ export type StrategyParams =
   | PriceBreakoutParams
   | CompositeStrategyParams
   | PhasedStrategyParams
-  | ConsolidationBreakoutParams;
+  | ConsolidationBreakoutParams
+  | TrendPullbackParams;
 
 // ============================================================
 // Strategy Types and Configuration
@@ -41,7 +42,7 @@ export type StrategyType =
   | 'breakout_volume'
   | 'consolidation_breakout';
 
-export type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams } from './strategies/strategy-configs.js';
+export type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams, TrendPullbackParams } from './strategies/strategy-configs.js';
 
 export interface StrategyConfig {
   type: StrategyType;

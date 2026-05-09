@@ -1,5 +1,6 @@
 import { exec } from 'node:child_process';
 import type { BacktestResult, HistoricalDataPoint, StrategyParams } from './types.js';
+import type { CombinedPerformanceMetrics } from './pipeline-functions.js';
 import { annotateTradesWithReasoning } from './trade-annotator.js';
 import type { TradeReasoning } from './trade-annotator.js';
 
@@ -39,6 +40,13 @@ export interface ChartGeneratorInput {
   backtestResult: BacktestResult;
   dataPoints: HistoricalDataPoint[];
   strategyParams: StrategyParams;
+}
+
+export interface CombinedChartInput {
+  cbResult: BacktestResult;
+  tpResult: BacktestResult;
+  dataPoints: HistoricalDataPoint[];
+  combinedMetrics: CombinedPerformanceMetrics;
 }
 
 // ============================================================
@@ -119,6 +127,60 @@ export function buildMarkers(
       time: trade.sellSignal.timestamp,
       position: 'aboveBar',
       color: '#ef5350',
+      shape: 'arrowDown',
+      text: 'SELL',
+    });
+  }
+
+  markers.sort((a, b) => a.time.localeCompare(b.time));
+  return markers;
+}
+
+/**
+ * Build combined markers from two BacktestResult objects (consolidation_breakout and trend_pullback).
+ * Each strategy gets distinct colors:
+ *   - consolidation_breakout: BUY=#26a69a (green), SELL=#ef5350 (red)
+ *   - trend_pullback: BUY=#42a5f5 (blue), SELL=#ffa726 (orange)
+ * All markers use arrowUp for BUY and arrowDown for SELL.
+ * Markers are sorted by time for Lightweight Charts compatibility.
+ */
+export function buildCombinedMarkers(
+  cbResult: BacktestResult,
+  tpResult: BacktestResult
+): Array<{ time: string; position: string; color: string; shape: string; text: string }> {
+  const markers: Array<{ time: string; position: string; color: string; shape: string; text: string }> = [];
+
+  // Consolidation breakout markers: BUY=#26a69a, SELL=#ef5350
+  for (const trade of cbResult.performanceSummary.trades) {
+    markers.push({
+      time: trade.buySignal.timestamp,
+      position: 'belowBar',
+      color: '#26a69a',
+      shape: 'arrowUp',
+      text: 'BUY',
+    });
+    markers.push({
+      time: trade.sellSignal.timestamp,
+      position: 'aboveBar',
+      color: '#ef5350',
+      shape: 'arrowDown',
+      text: 'SELL',
+    });
+  }
+
+  // Trend pullback markers: BUY=#42a5f5, SELL=#ffa726
+  for (const trade of tpResult.performanceSummary.trades) {
+    markers.push({
+      time: trade.buySignal.timestamp,
+      position: 'belowBar',
+      color: '#42a5f5',
+      shape: 'arrowUp',
+      text: 'BUY',
+    });
+    markers.push({
+      time: trade.sellSignal.timestamp,
+      position: 'aboveBar',
+      color: '#ffa726',
       shape: 'arrowDown',
       text: 'SELL',
     });
@@ -393,6 +455,248 @@ ${tradeDetailHtml}
         card.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
+  });
+})();
+</script>
+</body>
+</html>`;
+}
+
+// ============================================================
+// Combined V3 Chart Generation
+// ============================================================
+
+/**
+ * Generate a self-contained HTML string for the combined V3 strategy visualization.
+ * Renders a candlestick chart with markers from both consolidation_breakout and trend_pullback,
+ * a legend identifying strategy colors, combined performance metrics, and per-strategy breakdowns.
+ */
+export function generateCombinedChartHtml(input: CombinedChartInput): string {
+  const { cbResult, tpResult, dataPoints, combinedMetrics } = input;
+  const ticker = cbResult.ticker || tpResult.ticker || 'Unknown';
+  const period = cbResult.period || tpResult.period || '';
+  const title = `${ticker} Combined V3 Backtest — Consolidation Breakout + Trend Pullback (${period})`;
+
+  if (dataPoints.length < 2) {
+    return renderCombinedInsufficientDataHtml(title, ticker);
+  }
+
+  const candlestickData = buildCandlestickData(dataPoints);
+  const volumeData = buildVolumeData(dataPoints);
+  const markers = buildCombinedMarkers(cbResult, tpResult);
+  const combinedMetricsHtml = renderCombinedMetricsSection(combinedMetrics);
+  const perStrategyHtml = renderPerStrategyBreakdown(combinedMetrics);
+  const legendHtml = renderStrategyLegend();
+
+  return renderCombinedFullHtml(title, ticker, period, dataPoints.length, candlestickData, volumeData, markers, legendHtml, combinedMetricsHtml, perStrategyHtml);
+}
+
+/**
+ * Render the insufficient data HTML page for combined chart.
+ */
+function renderCombinedInsufficientDataHtml(title: string, ticker: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(title)}</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #1a1a2e; color: #e0e0e0; }
+.message { text-align: center; margin-top: 100px; }
+.message h1 { color: #ef5350; }
+</style>
+</head>
+<body>
+<div class="message">
+  <h1>Insufficient data</h1>
+  <p>Not enough data points to render a combined chart for ${escapeHtml(ticker)}. At least 2 data points are required.</p>
+</div>
+</body>
+</html>`;
+}
+
+/**
+ * Render the strategy legend HTML showing color coding for each strategy.
+ */
+function renderStrategyLegend(): string {
+  return `<section id="strategy-legend">
+  <h2>Strategy Legend</h2>
+  <div class="legend-grid">
+    <div class="legend-item">
+      <span class="legend-color" style="background: #26a69a;"></span>
+      <span class="legend-label">Consolidation Breakout — BUY</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-color" style="background: #ef5350;"></span>
+      <span class="legend-label">Consolidation Breakout — SELL</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-color" style="background: #42a5f5;"></span>
+      <span class="legend-label">Trend Pullback — BUY</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-color" style="background: #ffa726;"></span>
+      <span class="legend-label">Trend Pullback — SELL</span>
+    </div>
+  </div>
+</section>`;
+}
+
+/**
+ * Render the combined performance metrics section HTML.
+ */
+function renderCombinedMetricsSection(metrics: CombinedPerformanceMetrics): string {
+  return `<section id="combined-metrics-section">
+  <h2>Combined Performance Metrics</h2>
+  <div class="metrics-grid">
+    <div class="metric"><span class="metric-label">Total Return</span><span class="metric-value">${formatMetric(metrics.totalReturnPercent)}%</span></div>
+    <div class="metric"><span class="metric-label">Trades</span><span class="metric-value">${formatMetric(metrics.numberOfTrades)}</span></div>
+    <div class="metric"><span class="metric-label">Win Rate</span><span class="metric-value">${formatMetric(metrics.winRate)}</span></div>
+    <div class="metric"><span class="metric-label">Max Drawdown</span><span class="metric-value">${formatMetric(metrics.maxDrawdownPercent)}%</span></div>
+    <div class="metric"><span class="metric-label">Sharpe Ratio</span><span class="metric-value">${formatMetric(metrics.sharpeRatio)}</span></div>
+    <div class="metric"><span class="metric-label">Profit Factor</span><span class="metric-value">${formatMetric(metrics.profitFactor)}</span></div>
+  </div>
+</section>`;
+}
+
+/**
+ * Render the per-strategy breakdown section HTML.
+ */
+function renderPerStrategyBreakdown(metrics: CombinedPerformanceMetrics): string {
+  const cb = metrics.perStrategy.consolidation_breakout;
+  const tp = metrics.perStrategy.trend_pullback;
+
+  return `<section id="per-strategy-section">
+  <h2>Per-Strategy Breakdown</h2>
+  <div class="strategy-breakdown">
+    <div class="strategy-block">
+      <h3>Consolidation Breakout</h3>
+      <div class="metrics-grid">
+        <div class="metric"><span class="metric-label">Total Return</span><span class="metric-value">${formatMetric(cb.totalReturnPercent)}%</span></div>
+        <div class="metric"><span class="metric-label">Trades</span><span class="metric-value">${formatMetric(cb.numberOfTrades)}</span></div>
+        <div class="metric"><span class="metric-label">Win Rate</span><span class="metric-value">${formatMetric(cb.winRate)}</span></div>
+        <div class="metric"><span class="metric-label">Max Drawdown</span><span class="metric-value">${formatMetric(cb.maxDrawdownPercent)}%</span></div>
+        <div class="metric"><span class="metric-label">Sharpe Ratio</span><span class="metric-value">${formatMetric(cb.sharpeRatio)}</span></div>
+      </div>
+    </div>
+    <div class="strategy-block">
+      <h3>Trend Pullback</h3>
+      <div class="metrics-grid">
+        <div class="metric"><span class="metric-label">Total Return</span><span class="metric-value">${formatMetric(tp.totalReturnPercent)}%</span></div>
+        <div class="metric"><span class="metric-label">Trades</span><span class="metric-value">${formatMetric(tp.numberOfTrades)}</span></div>
+        <div class="metric"><span class="metric-label">Win Rate</span><span class="metric-value">${formatMetric(tp.winRate)}</span></div>
+        <div class="metric"><span class="metric-label">Max Drawdown</span><span class="metric-value">${formatMetric(tp.maxDrawdownPercent)}%</span></div>
+        <div class="metric"><span class="metric-label">Sharpe Ratio</span><span class="metric-value">${formatMetric(tp.sharpeRatio)}</span></div>
+      </div>
+    </div>
+  </div>
+</section>`;
+}
+
+/**
+ * Render the full combined chart HTML document.
+ */
+function renderCombinedFullHtml(
+  title: string,
+  ticker: string,
+  period: string,
+  dataPointCount: number,
+  candlestickData: Array<{ time: string; open: number; high: number; low: number; close: number }>,
+  volumeData: Array<{ time: string; value: number; color: string }>,
+  markers: Array<{ time: string; position: string; color: string; shape: string; text: string }>,
+  legendHtml: string,
+  combinedMetricsHtml: string,
+  perStrategyHtml: string
+): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(title)}</title>
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+header { margin-bottom: 20px; }
+header h1 { font-size: 1.5rem; color: #ffffff; }
+header p { color: #a0a0b0; margin-top: 4px; }
+#chart-container { width: 100%; height: 450px; margin-bottom: 20px; border-radius: 8px; overflow: hidden; }
+#strategy-legend { background: #16213e; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+#strategy-legend h2 { font-size: 1.2rem; margin-bottom: 12px; color: #ffffff; }
+.legend-grid { display: flex; flex-wrap: wrap; gap: 16px; }
+.legend-item { display: flex; align-items: center; gap: 8px; }
+.legend-color { width: 16px; height: 16px; border-radius: 3px; display: inline-block; }
+.legend-label { font-size: 0.9rem; color: #e0e0e0; }
+#combined-metrics-section, #per-strategy-section { background: #16213e; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+#combined-metrics-section h2, #per-strategy-section h2 { font-size: 1.2rem; margin-bottom: 12px; color: #ffffff; }
+.metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.metric { background: #0f3460; border-radius: 6px; padding: 12px; text-align: center; }
+.metric-label { display: block; font-size: 0.8rem; color: #a0a0b0; margin-bottom: 4px; }
+.metric-value { display: block; font-size: 1.2rem; font-weight: bold; color: #e0e0e0; }
+.strategy-breakdown { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.strategy-block { background: #0f3460; border-radius: 8px; padding: 16px; }
+.strategy-block h3 { font-size: 1rem; margin-bottom: 12px; color: #ffffff; }
+.strategy-block .metrics-grid { gap: 8px; }
+.strategy-block .metric { background: #1a1a2e; }
+</style>
+</head>
+<body>
+<header>
+  <h1>${escapeHtml(ticker)} — Combined V3 Strategy Suite</h1>
+  <p>Period: ${escapeHtml(period)} | Data points: ${dataPointCount} | Strategies: Consolidation Breakout + Trend Pullback</p>
+</header>
+
+<div id="chart-container"></div>
+
+${legendHtml}
+
+${combinedMetricsHtml}
+
+${perStrategyHtml}
+
+<script>
+(function() {
+  var chartData = ${JSON.stringify(candlestickData)};
+  var volumeData = ${JSON.stringify(volumeData)};
+  var markers = ${JSON.stringify(markers)};
+
+  var container = document.getElementById('chart-container');
+  var chart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: 450,
+    layout: { background: { type: 'solid', color: '#1a1a2e' }, textColor: '#e0e0e0' },
+    grid: { vertLines: { color: '#2a2a4e' }, horzLines: { color: '#2a2a4e' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    timeScale: { borderColor: '#2a2a4e' },
+    rightPriceScale: { borderColor: '#2a2a4e' }
+  });
+
+  var candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+    upColor: '#26a69a',
+    downColor: '#ef5350',
+    borderDownColor: '#ef5350',
+    borderUpColor: '#26a69a',
+    wickDownColor: '#ef5350',
+    wickUpColor: '#26a69a'
+  });
+  candleSeries.setData(chartData);
+  var seriesMarkers = LightweightCharts.createSeriesMarkers(candleSeries, markers);
+
+  var volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
+    priceFormat: { type: 'volume' },
+    priceScaleId: 'volume'
+  });
+  chart.priceScale('volume').applyOptions({
+    scaleMargins: { top: 0.8, bottom: 0 }
+  });
+  volumeSeries.setData(volumeData);
+
+  chart.timeScale().fitContent();
+
+  window.addEventListener('resize', function() {
+    chart.applyOptions({ width: container.clientWidth });
   });
 })();
 </script>

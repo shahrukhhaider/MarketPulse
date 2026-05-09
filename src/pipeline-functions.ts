@@ -1,11 +1,12 @@
-import type { HistoricalDataPoint, BacktestResult } from './types.js';
+import type { HistoricalDataPoint, BacktestResult, PerformanceSummary, Trade } from './types.js';
 import type { TuningPerformanceMetrics } from './tuning-engine.js';
-import type { ConsolidationBreakoutGridEntry } from './parameter-grid.js';
-import { generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig } from './parameter-grid.js';
-import { splitData, evaluateV3Configuration } from './walk-forward-validator.js';
+import type { ConsolidationBreakoutGridEntry, TrendPullbackGridEntry } from './parameter-grid.js';
+import { generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig, generateTrendPullbackGrid, buildTrendPullbackGridConfig } from './parameter-grid.js';
+import { splitData, evaluateV3Configuration, evaluateTrendPullbackConfiguration } from './walk-forward-validator.js';
 import { BacktestEngine } from './backtest-engine.js';
 import { ConsolidationBreakoutEngine } from './strategies/consolidation-breakout-engine.js';
-import type { ConsolidationBreakoutParams } from './strategies/strategy-configs.js';
+import { TrendPullbackEngine } from './strategies/trend-pullback-engine.js';
+import type { ConsolidationBreakoutParams, TrendPullbackParams } from './strategies/strategy-configs.js';
 import { generateChartHtml, getChartFilePath } from './chart-generator.js';
 import { writeFileSync } from 'node:fs';
 
@@ -15,11 +16,47 @@ import { writeFileSync } from 'node:fs';
 
 export interface TuneResult {
   bestParams: Record<string, number>;
-  bestEntry: ConsolidationBreakoutGridEntry;
+  bestEntry: ConsolidationBreakoutGridEntry | TrendPullbackGridEntry;
   isMetrics: TuningPerformanceMetrics;
   oosMetrics: TuningPerformanceMetrics;
   configurationsEvaluated: number;
   configurationsPassed: number;
+}
+
+// ============================================================
+// V3TuneResult Interface
+// ============================================================
+
+export interface V3TuneResult {
+  consolidation_breakout: TuneResult | { error: string };
+  trend_pullback: TuneResult | { error: string };
+}
+
+// ============================================================
+// CombinedPerformanceMetrics Interface
+// ============================================================
+
+export interface CombinedPerformanceMetrics {
+  totalReturnPercent: number;
+  numberOfTrades: number;
+  winRate: number;
+  maxDrawdownPercent: number;
+  sharpeRatio: number;
+  profitFactor: number;
+  perStrategy: {
+    consolidation_breakout: PerformanceSummary;
+    trend_pullback: PerformanceSummary;
+  };
+}
+
+// ============================================================
+// V3BacktestResult Interface
+// ============================================================
+
+export interface V3BacktestResult {
+  consolidation_breakout: BacktestResult;
+  trend_pullback: BacktestResult;
+  combined: CombinedPerformanceMetrics;
 }
 
 // ============================================================
@@ -50,21 +87,28 @@ export function tuneParams(
   const { inSample: isData, outOfSample: oosData } = splitResult;
 
   // Step 2: Generate grid entries
-  let grid: ConsolidationBreakoutGridEntry[];
+  let grid: ConsolidationBreakoutGridEntry[] | TrendPullbackGridEntry[];
   if (strategy === 'consolidation_breakout') {
     grid = generateConsolidationBreakoutGrid();
+  } else if (strategy === 'trend_pullback') {
+    grid = generateTrendPullbackGrid();
   } else {
     return { error: `Unsupported strategy for tuneParams: ${strategy}` };
   }
 
   // Step 3: Evaluate each entry on IS data
   const isResults: Array<{
-    entry: ConsolidationBreakoutGridEntry;
+    entry: ConsolidationBreakoutGridEntry | TrendPullbackGridEntry;
     isMetrics: TuningPerformanceMetrics;
   }> = [];
 
   for (const entry of grid) {
-    const metrics = evaluateV3Configuration(entry, isData);
+    let metrics: TuningPerformanceMetrics;
+    if (strategy === 'consolidation_breakout') {
+      metrics = evaluateV3Configuration(entry as ConsolidationBreakoutGridEntry, isData);
+    } else {
+      metrics = evaluateTrendPullbackConfiguration(entry as TrendPullbackGridEntry, isData);
+    }
     isResults.push({ entry, isMetrics: metrics });
   }
 
@@ -87,7 +131,12 @@ export function tuneParams(
   const bestIsMetrics = filtered[0].isMetrics;
 
   // Step 6: Evaluate best on OOS data
-  const bestOosMetrics = evaluateV3Configuration(bestEntry, oosData);
+  let bestOosMetrics: TuningPerformanceMetrics;
+  if (strategy === 'consolidation_breakout') {
+    bestOosMetrics = evaluateV3Configuration(bestEntry as ConsolidationBreakoutGridEntry, oosData);
+  } else {
+    bestOosMetrics = evaluateTrendPullbackConfiguration(bestEntry as TrendPullbackGridEntry, oosData);
+  }
 
   // Step 7: Return TuneResult
   return {
@@ -97,6 +146,27 @@ export function tuneParams(
     oosMetrics: bestOosMetrics,
     configurationsEvaluated: grid.length,
     configurationsPassed: filtered.length,
+  };
+}
+
+// ============================================================
+// tuneV3 — Tune both V3 strategies and return combined results
+// ============================================================
+
+/**
+ * Tune both consolidation_breakout and trend_pullback strategies
+ * on the same data and return combined results.
+ *
+ * Each strategy is tuned independently via tuneParams().
+ * Returns a V3TuneResult with results (or errors) for both strategies.
+ */
+export function tuneV3(data: HistoricalDataPoint[]): V3TuneResult {
+  const cbResult = tuneParams(data, 'consolidation_breakout', {});
+  const tpResult = tuneParams(data, 'trend_pullback', {});
+
+  return {
+    consolidation_breakout: cbResult,
+    trend_pullback: tpResult,
   };
 }
 
@@ -121,6 +191,15 @@ export function runBacktest(
     engine.reset();
     const backtestEngine = new BacktestEngine();
     return backtestEngine.runV2(data, engine, v3Params);
+  }
+
+  if (strategy === 'trend_pullback') {
+    const config = buildTrendPullbackGridConfig(params);
+    const tpParams: TrendPullbackParams = { config };
+    const engine = new TrendPullbackEngine();
+    engine.reset();
+    const backtestEngine = new BacktestEngine();
+    return backtestEngine.runV2(data, engine, tpParams);
   }
 
   throw new Error(`Unsupported strategy for runBacktest: ${strategy}`);
@@ -150,4 +229,134 @@ export function renderChart(
   });
   writeFileSync(chartFilePath, html, 'utf-8');
   return chartFilePath;
+}
+
+// ============================================================
+// backtestV3 — Run both V3 strategies and compute combined metrics
+// ============================================================
+
+/**
+ * Run BacktestEngine.runV2() with both ConsolidationBreakoutEngine and
+ * TrendPullbackEngine on the same data, then compute combined metrics.
+ *
+ * @param data - Historical data points to backtest on
+ * @param cbParams - Flat parameter record for consolidation_breakout
+ * @param tpParams - Flat parameter record for trend_pullback
+ * @returns V3BacktestResult with individual and combined results
+ */
+export function backtestV3(
+  data: HistoricalDataPoint[],
+  cbParams: Record<string, number>,
+  tpParams: Record<string, number>
+): V3BacktestResult {
+  const cbResult = runBacktest(data, 'consolidation_breakout', cbParams);
+  const tpResult = runBacktest(data, 'trend_pullback', tpParams);
+  const combined = computeCombinedMetrics(cbResult, tpResult, data);
+
+  return {
+    consolidation_breakout: cbResult,
+    trend_pullback: tpResult,
+    combined,
+  };
+}
+
+// ============================================================
+// computeCombinedMetrics — Compute combined performance metrics
+// ============================================================
+
+/**
+ * Compute combined performance metrics from two independent backtest results.
+ *
+ * - totalReturnPercent: sum of per-bar returns from both streams (combined equity curve)
+ * - numberOfTrades: sum of trades from both strategies
+ * - winRate: combined win rate across all trades
+ * - maxDrawdownPercent: max drawdown of the combined equity curve
+ * - sharpeRatio: Sharpe ratio of combined trade returns
+ * - profitFactor: total gross profits / total gross losses across all trades
+ * - perStrategy: individual PerformanceSummary for each strategy
+ */
+export function computeCombinedMetrics(
+  cbResult: BacktestResult,
+  tpResult: BacktestResult,
+  _data: HistoricalDataPoint[]
+): CombinedPerformanceMetrics {
+  const cbTrades = cbResult.performanceSummary.trades;
+  const tpTrades = tpResult.performanceSummary.trades;
+  const allTrades: Trade[] = [...cbTrades, ...tpTrades];
+
+  const numberOfTrades = allTrades.length;
+
+  // Win rate: combined across all trades
+  const wins = allTrades.filter(t => t.profitLossPercent > 0).length;
+  const winRate = numberOfTrades > 0 ? wins / numberOfTrades : 0;
+
+  // Total return: combined equity curve by multiplying cumulative returns from both streams
+  // Each strategy is treated as an independent capital allocation
+  let cbCumulative = 1;
+  for (const trade of cbTrades) {
+    cbCumulative *= 1 + trade.profitLossPercent / 100;
+  }
+  let tpCumulative = 1;
+  for (const trade of tpTrades) {
+    tpCumulative *= 1 + trade.profitLossPercent / 100;
+  }
+  // Combined return: average of both streams (equal capital allocation)
+  const totalReturnPercent = ((cbCumulative + tpCumulative) / 2 - 1) * 100;
+
+  // Max drawdown: computed from combined equity curve
+  // Sort all trades by buy signal timestamp to create a time-ordered combined equity curve
+  const sortedTrades = [...allTrades].sort((a, b) =>
+    a.buySignal.timestamp.localeCompare(b.buySignal.timestamp)
+  );
+
+  let maxDrawdownPercent = 0;
+  if (sortedTrades.length > 0) {
+    let cumulativeValue = 1;
+    let peak = 1;
+    for (const trade of sortedTrades) {
+      cumulativeValue *= 1 + trade.profitLossPercent / 100;
+      if (cumulativeValue > peak) {
+        peak = cumulativeValue;
+      }
+      const drawdown = ((peak - cumulativeValue) / peak) * 100;
+      if (drawdown > maxDrawdownPercent) {
+        maxDrawdownPercent = drawdown;
+      }
+    }
+  }
+
+  // Sharpe ratio: mean / stddev of per-trade returns across all trades
+  let sharpeRatio = 0;
+  if (numberOfTrades >= 2) {
+    const returns = allTrades.map(t => t.profitLossPercent);
+    const mean = returns.reduce((sum, r) => sum + r, 0) / returns.length;
+    const variance = returns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / returns.length;
+    const stddev = Math.sqrt(variance);
+    sharpeRatio = stddev !== 0 ? mean / stddev : 0;
+  }
+
+  // Profit factor: total gross profits / total gross losses
+  let grossProfits = 0;
+  let grossLosses = 0;
+  for (const trade of allTrades) {
+    if (trade.profitLossPercent > 0) {
+      grossProfits += trade.profitLossPercent;
+    } else {
+      grossLosses += Math.abs(trade.profitLossPercent);
+    }
+  }
+  const profitFactor = grossLosses > 0 ? grossProfits / grossLosses : (grossProfits > 0 ? Infinity : 0);
+
+  return {
+    totalReturnPercent,
+    numberOfTrades,
+    winRate,
+    maxDrawdownPercent,
+    sharpeRatio,
+    profitFactor,
+    perStrategy: {
+      consolidation_breakout: cbResult.performanceSummary,
+      trend_pullback: tpResult.performanceSummary,
+    },
+  };
 }

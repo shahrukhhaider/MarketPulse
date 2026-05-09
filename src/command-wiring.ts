@@ -17,9 +17,13 @@ import { MovingAverageCrossoverStrategy } from './strategies/moving-average.js';
 import { RSIThresholdStrategy } from './strategies/rsi-threshold.js';
 import { PriceBreakoutStrategy } from './strategies/price-breakout.js';
 import { CompositeStrategyEngine } from './strategies/composite-engine.js';
-import { getDefaultCompositeConfig, isV2Config, isConsolidationBreakoutConfig, type CompositeStrategyParams, type PhasedStrategyParams, type ConsolidationBreakoutParams } from './strategies/strategy-configs.js';
+import { getDefaultCompositeConfig, isV2Config, isConsolidationBreakoutConfig, isTrendPullbackConfig, type CompositeStrategyParams, type PhasedStrategyParams, type ConsolidationBreakoutParams, type TrendPullbackParams } from './strategies/strategy-configs.js';
 import { PhasedStrategyEngine } from './strategies/phased-engine.js';
 import { ConsolidationBreakoutEngine } from './strategies/consolidation-breakout-engine.js';
+import { TrendPullbackEngine } from './strategies/trend-pullback-engine.js';
+import { tuneV3, backtestV3 } from './pipeline-functions.js';
+import type { V3BacktestResult } from './pipeline-functions.js';
+import { loadStrategyProfile } from './profile-store.js';
 import { CachingDataProvider } from './caching-data-provider.js';
 import { TuningEngine } from './tuning-engine.js';
 import type { TuningInput, TunableStrategy, TimeHorizon, RiskProfile, BestRegion } from './tuning-engine.js';
@@ -353,6 +357,74 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         `Invalid strategy type '${opts['strategy']}'. Valid types: ${VALID_STRATEGY_TYPES.join(', ')}`);
     }
 
+    // --v3 path: run both consolidation_breakout and trend_pullback in parallel
+    const isV3Backtest = opts['v3'] !== undefined;
+    if (isV3Backtest) {
+      const period = (opts['period'] as HistoricalPeriod) || '5y';
+      const noCache = opts['no-cache'] !== undefined;
+
+      try {
+        let dataResult;
+        if (noCache) {
+          dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
+          if (dataResult.success) {
+            const entry: CacheEntry = {
+              ticker: normalizeTicker(ticker),
+              period,
+              interval: dataResult.data.interval,
+              fetchedAt: new Date().toISOString(),
+              dataPoints: dataResult.data.dataPoints,
+            };
+            cachingProvider.cacheStore.write(entry);
+          }
+        } else {
+          dataResult = await priceFeedClient.fetchHistoricalData(ticker, period);
+        }
+
+        if (!dataResult.success) {
+          const code = dataResult.error.includes(ErrorCodes.INVALID_TICKER)
+            ? ErrorCodes.INVALID_TICKER
+            : ErrorCodes.PRICE_FEED_UNAVAILABLE;
+          return errorResult('backtest', code, dataResult.error);
+        }
+
+        const dataPoints = dataResult.data.dataPoints;
+
+        // Load profiles for both strategies to get params
+        const cbProfile = loadStrategyProfile(ticker, 'consolidation_breakout', { allowStale: true, baseDir: dataDir });
+        const tpProfile = loadStrategyProfile(ticker, 'trend_pullback', { allowStale: true, baseDir: dataDir });
+
+        // Use profile params if available, otherwise use empty params (will use defaults from grid)
+        const cbParams: Record<string, number> = cbProfile.success ? cbProfile.data.params : {};
+        const tpParams: Record<string, number> = tpProfile.success ? tpProfile.data.params : {};
+
+        const v3Result: V3BacktestResult = backtestV3(dataPoints, cbParams, tpParams);
+
+        if (opts['chart'] !== undefined) {
+          // For now, generate a single-strategy chart with the CB result
+          // Combined chart will be added in task 10
+          const chartFilePath = getChartFilePath(dataDir, ticker);
+          const html = generateChartHtml({
+            backtestResult: v3Result.consolidation_breakout,
+            dataPoints,
+            strategyParams: v3Result.consolidation_breakout.params,
+          });
+          writeFileSync(chartFilePath, html, 'utf-8');
+          return successResult('backtest', {
+            ...v3Result,
+            chartFilePath,
+            chartUrl: `file://${nodePath.resolve(chartFilePath)}`,
+            v3: true,
+          });
+        }
+
+        return successResult('backtest', { ...v3Result, v3: true });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return errorResult('backtest', ErrorCodes.PRICE_FEED_UNAVAILABLE, message);
+      }
+    }
+
     // Resolve strategy instance
     const strategyInstance = getStrategyInstance(strategyType);
 
@@ -495,6 +567,70 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
       // V1 path: validate with existing strategy instance
       if (!strategyInstance) {
+        // Check if this is a trend_pullback config for standalone backtest (Requirement 9.8)
+        if (isTrendPullbackConfig((params as any).config ?? params)) {
+          const parsed = (params as any).config ?? params;
+          const tpEngine = new TrendPullbackEngine();
+          const tpParams: TrendPullbackParams = { config: parsed };
+          const validation = tpEngine.validateParams(tpParams);
+          if (!validation.valid) {
+            return errorResult('backtest', ErrorCodes.INVALID_PARAM_RANGE,
+              `${ErrorCodes.INVALID_PARAM_RANGE}: ${validation.error}`);
+          }
+
+          const period = (opts['period'] as HistoricalPeriod) || '1y';
+          const noCache = opts['no-cache'] !== undefined;
+
+          try {
+            let histResult;
+            if (noCache) {
+              histResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
+              if (histResult.success) {
+                const entry: CacheEntry = {
+                  ticker: normalizeTicker(ticker),
+                  period,
+                  interval: histResult.data.interval,
+                  fetchedAt: new Date().toISOString(),
+                  dataPoints: histResult.data.dataPoints,
+                };
+                cachingProvider.cacheStore.write(entry);
+              }
+            } else {
+              histResult = await priceFeedClient.fetchHistoricalData(ticker, period);
+            }
+
+            if (!histResult.success) {
+              const code = histResult.error.includes(ErrorCodes.INVALID_TICKER)
+                ? ErrorCodes.INVALID_TICKER
+                : histResult.error.includes(ErrorCodes.INVALID_PARAM_RANGE)
+                  ? ErrorCodes.INVALID_PARAM_RANGE
+                  : ErrorCodes.PRICE_FEED_UNAVAILABLE;
+              return errorResult('backtest', code, histResult.error);
+            }
+
+            tpParams.primaryDataPoints = histResult.data.dataPoints;
+            tpEngine.reset();
+            const engine = new BacktestEngine();
+            const backtestResult = engine.runV2(histResult.data.dataPoints, tpEngine, tpParams, period);
+
+            if (opts['chart'] !== undefined) {
+              const chartFilePath = getChartFilePath(dataDir, ticker);
+              const html = generateChartHtml({
+                backtestResult,
+                dataPoints: histResult.data.dataPoints,
+                strategyParams: tpParams,
+              });
+              writeFileSync(chartFilePath, html, 'utf-8');
+              return successResult('backtest', { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` });
+            }
+
+            return successResult('backtest', backtestResult);
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            return errorResult('backtest', ErrorCodes.PRICE_FEED_UNAVAILABLE, message);
+          }
+        }
+
         return errorResult('backtest', ErrorCodes.INVALID_PARAM_RANGE,
           `Strategy type '${strategyType}' does not support V1 backtest path`);
       }
@@ -875,11 +1011,11 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     const isV2 = opts['v2'] !== undefined;
 
     if (isV3) {
-      // V3 tune-and-chart path
+      // V3 tune-and-chart path: tune both strategies, backtest both, generate combined chart
       const period = '5y';
 
       try {
-        // Step 1: Run V3 tuning inline (same logic as tune --v3)
+        // Step 1: Fetch data
         let dataResult;
         if (noCache) {
           dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
@@ -893,53 +1029,21 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
         const dataPoints = dataResult.data.dataPoints;
 
-        // Split data into IS (70%) and OOS (30%) — replaces inline < 100 check
-        const splitResult = splitData(dataPoints);
-        if ('error' in splitResult) {
-          return errorResult('tune-and-chart', 'INSUFFICIENT_DATA', splitResult.error);
-        }
-        const { inSample: isData, outOfSample: oosData } = splitResult;
+        // Step 2: Tune both strategies using tuneV3
+        const v3TuneResult = tuneV3(dataPoints);
 
-        const grid = generateConsolidationBreakoutGrid();
+        // Extract best params from each strategy's tune result
+        const cbTuneResult = v3TuneResult.consolidation_breakout;
+        const tpTuneResult = v3TuneResult.trend_pullback;
 
-        // Evaluate each grid entry on IS data only
-        const isResults: Array<{
-          entry: typeof grid[0];
-          isMetrics: { totalReturnPercent: number; sharpeRatio: number; maxDrawdownPercent: number; winRate: number; tradeCount: number; profitFactor: number };
-        }> = [];
+        // Get params for backtesting (use tuned params if available, empty otherwise)
+        const cbBestParams: Record<string, number> = !('error' in cbTuneResult) ? cbTuneResult.bestParams : {};
+        const tpBestParams: Record<string, number> = !('error' in tpTuneResult) ? tpTuneResult.bestParams : {};
 
-        for (const entry of grid) {
-          const metrics = evaluateV3Configuration(entry, isData);
-          isResults.push({ entry, isMetrics: metrics });
-        }
+        // Step 3: Backtest both strategies with their best params
+        const v3BacktestResult: V3BacktestResult = backtestV3(dataPoints, cbBestParams, tpBestParams);
 
-        // Filter using IS metrics: drawdown ≤ 25%, profit factor ≥ 1.0, positive return, ≥ 3 trades
-        const filtered = isResults.filter(r =>
-          r.isMetrics.maxDrawdownPercent <= 25 &&
-          r.isMetrics.profitFactor >= 1.0 &&
-          r.isMetrics.totalReturnPercent > 0 &&
-          r.isMetrics.tradeCount >= 3
-        );
-
-        // Fallback: if strict filter yields nothing, relax to any config with trades
-        const candidates = filtered.length > 0
-          ? filtered
-          : isResults.filter(r => r.isMetrics.tradeCount > 0);
-
-        if (candidates.length === 0) {
-          return errorResult('tune-and-chart', 'NO_VIABLE_CONFIGS',
-            `No viable V3 configurations found for ${ticker} / ${strategy}`);
-        }
-
-        // Rank by IS total return descending
-        candidates.sort((a, b) => b.isMetrics.totalReturnPercent - a.isMetrics.totalReturnPercent);
-
-        // Best config: IS metrics from grid search, OOS metrics from validation
-        const bestEntry = candidates[0].entry;
-        const bestIsMetrics = candidates[0].isMetrics;
-        const bestOosMetrics = evaluateV3Configuration(bestEntry, oosData);
-        const bestParams = bestEntry.params;
-
+        // Step 4: Build tuning summary data
         const riskProfile = (opts['risk'] as RiskProfile) ?? 'low';
         const profile = `${horizon}_${riskProfile}`;
 
@@ -947,38 +1051,32 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           ticker,
           strategy,
           profile,
-          best_params: bestParams,
-          best_metrics: bestOosMetrics,
-          inSample: bestIsMetrics,
-          outOfSample: bestOosMetrics,
-          configurations_evaluated: grid.length,
-          configurations_passed_filter: candidates.length,
+          consolidation_breakout: cbTuneResult,
+          trend_pullback: tpTuneResult,
           computed_at: new Date().toISOString(),
           v3: true,
         };
 
-        // Build V3 config from the best params and run backtest
-        const v3Config = buildConsolidationBreakoutConfig(bestParams);
-        const v3Params: ConsolidationBreakoutParams = { config: v3Config, primaryDataPoints: dataPoints };
-
-        const v3Engine = new ConsolidationBreakoutEngine();
-        v3Engine.reset();
-        const btEngine2 = new BacktestEngine();
-        const backtestResult = btEngine2.runV2(dataPoints, v3Engine, v3Params, period);
-
-        // Generate chart
+        // Step 5: Generate chart (using CB result for now; combined chart in task 10)
         const chartFilePath = getChartFilePath(dataDir, ticker);
         const html = generateChartHtml({
-          backtestResult,
+          backtestResult: v3BacktestResult.consolidation_breakout,
           dataPoints,
-          strategyParams: v3Params,
+          strategyParams: v3BacktestResult.consolidation_breakout.params,
         });
         writeFileSync(chartFilePath, html, 'utf-8');
 
         return successResult('tune-and-chart', {
           tuning: tuningData,
-          best_params: bestParams,
-          backtest: { ...backtestResult, chartFilePath, chartUrl: `file://${nodePath.resolve(chartFilePath)}` },
+          best_params: {
+            consolidation_breakout: cbBestParams,
+            trend_pullback: tpBestParams,
+          },
+          backtest: {
+            ...v3BacktestResult,
+            chartFilePath,
+            chartUrl: `file://${nodePath.resolve(chartFilePath)}`,
+          },
         });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);

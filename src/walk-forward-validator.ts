@@ -1,10 +1,11 @@
 import type { HistoricalDataPoint } from './types.js';
-import type { GridEntry, ConsolidationBreakoutGridEntry } from './parameter-grid.js';
+import type { GridEntry, ConsolidationBreakoutGridEntry, TrendPullbackGridEntry } from './parameter-grid.js';
 import type { TunableStrategy, TuningPerformanceMetrics } from './tuning-engine.js';
 import { BacktestEngine, convertHistoricalData } from './backtest-engine.js';
 import { CompositeStrategyEngine } from './strategies/composite-engine.js';
 import { ConsolidationBreakoutEngine } from './strategies/consolidation-breakout-engine.js';
-import type { CompositeStrategyParams, ConsolidationBreakoutParams } from './strategies/strategy-configs.js';
+import { TrendPullbackEngine } from './strategies/trend-pullback-engine.js';
+import type { CompositeStrategyParams, ConsolidationBreakoutParams, TrendPullbackParams } from './strategies/strategy-configs.js';
 
 export type { TuningPerformanceMetrics } from './tuning-engine.js';
 
@@ -111,6 +112,55 @@ export function evaluateV3Configuration(
 
   const backtestEngine = new BacktestEngine();
   const result = backtestEngine.runV2(dataPoints, engine, v3Params);
+
+  const { performanceSummary } = result;
+  const trades = performanceSummary.trades;
+
+  // Compute profit factor from the trade list
+  let profitFactor: number;
+  if (trades.length === 0) {
+    profitFactor = 0;
+  } else {
+    let grossProfits = 0;
+    let grossLosses = 0;
+    for (const trade of trades) {
+      if (trade.profitLossPercent > 0) {
+        grossProfits += trade.profitLossPercent;
+      } else if (trade.profitLossPercent < 0) {
+        grossLosses += Math.abs(trade.profitLossPercent);
+      }
+    }
+    profitFactor = grossLosses === 0 ? Infinity : grossProfits / grossLosses;
+  }
+
+  return {
+    totalReturnPercent: performanceSummary.totalReturnPercent,
+    sharpeRatio: performanceSummary.sharpeRatio,
+    maxDrawdownPercent: performanceSummary.maxDrawdownPercent,
+    winRate: performanceSummary.winRate,
+    tradeCount: performanceSummary.numberOfTrades,
+    profitFactor,
+  };
+}
+
+/**
+ * Evaluate a single trend-pullback grid entry against
+ * an arbitrary slice of historical data.
+ *
+ * Creates a fresh TrendPullbackEngine, runs BacktestEngine.runV2(),
+ * and computes TuningPerformanceMetrics including profit factor.
+ */
+export function evaluateTrendPullbackConfiguration(
+  entry: TrendPullbackGridEntry,
+  dataPoints: HistoricalDataPoint[]
+): TuningPerformanceMetrics {
+  const engine = new TrendPullbackEngine();
+  engine.reset();
+
+  const tpParams: TrendPullbackParams = { config: entry.config };
+
+  const backtestEngine = new BacktestEngine();
+  const result = backtestEngine.runV2(dataPoints, engine, tpParams);
 
   const { performanceSummary } = result;
   const trades = performanceSummary.trades;

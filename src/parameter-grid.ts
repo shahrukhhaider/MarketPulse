@@ -1,4 +1,4 @@
-import type { StrategyConfiguration, PhasedStrategyConfiguration, ConsolidationBreakoutConfiguration } from './strategies/strategy-configs.js';
+import type { StrategyConfiguration, PhasedStrategyConfiguration, ConsolidationBreakoutConfiguration, TrendPullbackConfiguration } from './strategies/strategy-configs.js';
 import type { TimeHorizon, TunableStrategy } from './tuning-engine.js';
 
 export type { TimeHorizon, TunableStrategy } from './tuning-engine.js';
@@ -18,6 +18,11 @@ export interface V2GridEntry {
 export interface ConsolidationBreakoutGridEntry {
   params: Record<string, number>;
   config: ConsolidationBreakoutConfiguration;
+}
+
+export interface TrendPullbackGridEntry {
+  params: Record<string, number>;
+  config: TrendPullbackConfiguration;
 }
 
 /**
@@ -510,6 +515,121 @@ export function generateConsolidationBreakoutGrid(): ConsolidationBreakoutGridEn
       params[name] = values[i];
     });
     const config = buildConsolidationBreakoutConfig(params);
+    return { params, config };
+  });
+}
+
+/**
+ * Return the trend-pullback parameter space with 9 tunable parameters.
+ * Total combinations: 3 × 3 × 2 × 3 × 3 × 3 × 3 × 3 × 2 = 8,748
+ */
+export function getTrendPullbackParameterSpace(): ParameterSpace {
+  return {
+    pullback_proximity_pct: [2, 3, 5],
+    atr_contraction_threshold: [0.7, 0.8, 1.0],
+    volume_below_avg_multiplier: [0.8, 1.0],
+    trigger_volume_multiplier: [1.0, 1.2, 1.5],
+    overextension_pct: [5, 8, 12],
+    stop_atr_multiple: [1.5, 2.0, 2.5],
+    r_multiple: [2, 2.5, 3],
+    swing_lookback: [5, 10, 15],
+    // Active presets: 0=fixed baseline, 5=trailing ATR highest_close aggressive
+    exit_preset: [0, 5],
+  };
+}
+
+/**
+ * Resolve a trend-pullback exit preset index to a full trailing exit configuration.
+ *
+ * Active presets (included in grid):
+ *   0 — fixed: no trailing, baseline stop/target/trend failsafe
+ *   5 — trailing ATR×2.5 off highest_close, breakeven@0.75R, trail@1.5R, no profit cap
+ */
+export function resolveTrendPullbackExitPreset(preset: number): {
+  exitMode: 'fixed' | 'trailing';
+  trailingStop?: TrendPullbackConfiguration['trailingStop'];
+} {
+  switch (preset) {
+    case 0:
+      return { exitMode: 'fixed' };
+    case 5:
+      return {
+        exitMode: 'trailing',
+        trailingStop: {
+          trailingMethod: 'atr',
+          atrTrailMultiple: 2.5,
+          atrTrailReference: 'highest_close',
+          breakeven_threshold: 0.75,
+          trail_activation_threshold: 1.5,
+          remove_profit_target: true,
+        },
+      };
+    default:
+      return { exitMode: 'fixed' };
+  }
+}
+
+/**
+ * Map a flat parameter combination to a TrendPullbackConfiguration.
+ * Fixed values: require_sma20_above_sma50=false, require_sma50_slope_positive=false,
+ * max_pullback_staleness=10, stop_buffer_atr=0.3, trend_exit_sma_period=50.
+ */
+export function buildTrendPullbackGridConfig(
+  params: Record<string, number>
+): TrendPullbackConfiguration {
+  const preset = resolveTrendPullbackExitPreset(params.exit_preset ?? 0);
+
+  return {
+    name: `tp_pp${params.pullback_proximity_pct}_ac${params.atr_contraction_threshold}_vb${params.volume_below_avg_multiplier}_tv${params.trigger_volume_multiplier}_oe${params.overextension_pct}_sa${params.stop_atr_multiple}_rm${params.r_multiple}_sl${params.swing_lookback}_ep${params.exit_preset ?? 0}`,
+    direction: {
+      require_sma20_above_sma50: false,
+      require_sma50_slope_positive: false,
+    },
+    pullback: {
+      pullback_proximity_pct: params.pullback_proximity_pct,
+      atr_contraction_threshold: params.atr_contraction_threshold,
+      volume_below_avg_multiplier: params.volume_below_avg_multiplier,
+      swing_lookback: params.swing_lookback,
+      max_pullback_staleness: 10,
+    },
+    trigger: {
+      trigger_volume_multiplier: params.trigger_volume_multiplier,
+    },
+    overextension: {
+      overextension_pct: params.overextension_pct,
+    },
+    stopLoss: {
+      stop_atr_multiple: params.stop_atr_multiple,
+      stop_buffer_atr: 0.3,
+    },
+    profitTarget: {
+      r_multiple: params.r_multiple,
+    },
+    trendExit: {
+      trend_exit_sma_period: 50,
+    },
+    exitMode: preset.exitMode,
+    trailingStop: preset.trailingStop,
+  };
+}
+
+/**
+ * Generate the full trend-pullback parameter grid using Cartesian product.
+ * Total: 8,748 configurations.
+ */
+export function generateTrendPullbackGrid(): TrendPullbackGridEntry[] {
+  const space = getTrendPullbackParameterSpace();
+  const paramNames = Object.keys(space);
+  const paramArrays = paramNames.map(name => space[name]);
+
+  const combinations = cartesianProduct(paramArrays);
+
+  return combinations.map(values => {
+    const params: Record<string, number> = {};
+    paramNames.forEach((name, i) => {
+      params[name] = values[i];
+    });
+    const config = buildTrendPullbackGridConfig(params);
     return { params, config };
   });
 }

@@ -12,8 +12,8 @@ import { successResult, errorResult } from './command-router.js';
 import type { CommandHandler } from './command-router.js';
 import type { CachingDataProvider } from './caching-data-provider.js';
 import type { StrategyRegistry } from './strategy-registry.js';
-import { tuneParams } from './pipeline-functions.js';
-import type { TuneResult } from './pipeline-functions.js';
+import { tuneParams, tuneV3 } from './pipeline-functions.js';
+import type { TuneResult, V3TuneResult } from './pipeline-functions.js';
 import { saveStrategyProfile, computeExpiry } from './profile-store.js';
 import type { StrategyProfile, WalkForwardMetrics } from './profile-store.js';
 import type { TuningPerformanceMetrics } from './tuning-engine.js';
@@ -102,6 +102,12 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
     const strategyName = opts['strategy'];
     const shouldSave = opts['save'] !== undefined;
     const noCache = opts['no-cache'] !== undefined;
+    const isV3 = opts['v3'] !== undefined;
+
+    // V3 path: tune both strategies in parallel
+    if (isV3) {
+      return handleV3Tune(tickersArg, shouldSave, noCache, cachingProvider, dataDir);
+    }
 
     // Resolve strategy from registry
     const strategy = registry.resolve(strategyName);
@@ -246,5 +252,191 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
     };
 
     return successResult('tune', batchResult);
+  };
+}
+
+// ============================================================
+// V3 Tune Handler — Tunes both strategies in parallel
+// ============================================================
+
+async function handleV3Tune(
+  tickersArg: string,
+  shouldSave: boolean,
+  noCache: boolean,
+  cachingProvider: CachingDataProvider,
+  dataDir: string,
+) {
+  // Resolve ticker list
+  const tickers = resolveTickerList(tickersArg, dataDir);
+  if ('error' in tickers) {
+    return errorResult('tune', 'CONFIG_ERROR', tickers.error);
+  }
+
+  if (tickers.length === 0) {
+    return errorResult('tune', 'MISSING_PARAM', 'No tickers specified');
+  }
+
+  const summaries: TuneSummary[] = [];
+  let succeeded = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const ticker of tickers) {
+    try {
+      // Fetch 5y historical data
+      let dataResult;
+      if (noCache) {
+        dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, '5y');
+      } else {
+        dataResult = await cachingProvider.getHistoricalData(ticker, '5y');
+      }
+
+      if (!dataResult.success) {
+        failed += 2;
+        summaries.push({
+          ticker,
+          strategy: 'consolidation_breakout',
+          status: 'error',
+          profile_saved: false,
+          error_message: dataResult.error,
+        });
+        summaries.push({
+          ticker,
+          strategy: 'trend_pullback',
+          status: 'error',
+          profile_saved: false,
+          error_message: dataResult.error,
+        });
+        continue;
+      }
+
+      const dataPoints = dataResult.data.dataPoints;
+
+      // Run tuneV3 — tunes both strategies on the same data
+      const v3Result: V3TuneResult = tuneV3(dataPoints);
+
+      // Process consolidation_breakout result
+      const cbSummary = buildV3StrategySummary(
+        ticker, 'consolidation_breakout', v3Result.consolidation_breakout, shouldSave, dataDir
+      );
+      summaries.push(cbSummary);
+
+      // Process trend_pullback result
+      const tpSummary = buildV3StrategySummary(
+        ticker, 'trend_pullback', v3Result.trend_pullback, shouldSave, dataDir
+      );
+      summaries.push(tpSummary);
+
+      // Update counters based on individual strategy results
+      if (cbSummary.status === 'success') succeeded++;
+      else if (cbSummary.status === 'error') failed++;
+      else skipped++;
+
+      if (tpSummary.status === 'success') succeeded++;
+      else if (tpSummary.status === 'error') failed++;
+      else skipped++;
+
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      failed += 2;
+      summaries.push({
+        ticker,
+        strategy: 'consolidation_breakout',
+        status: 'error',
+        profile_saved: false,
+        error_message: message,
+      });
+      summaries.push({
+        ticker,
+        strategy: 'trend_pullback',
+        status: 'error',
+        profile_saved: false,
+        error_message: message,
+      });
+    }
+  }
+
+  const batchResult: TuneBatchResult = {
+    summaries,
+    total: tickers.length * 2,
+    succeeded,
+    failed,
+    skipped,
+  };
+
+  return successResult('tune', batchResult);
+}
+
+// ============================================================
+// buildV3StrategySummary — Build a TuneSummary from a single strategy's TuneResult
+// ============================================================
+
+function buildV3StrategySummary(
+  ticker: string,
+  strategyName: string,
+  result: TuneResult | { error: string },
+  shouldSave: boolean,
+  dataDir: string,
+): TuneSummary {
+  if ('error' in result) {
+    const errorMsg = result.error;
+    const isInsufficientData = errorMsg.toLowerCase().includes('insufficient data');
+    const isNoViable = errorMsg.toLowerCase().includes('no viable');
+
+    if (isInsufficientData) {
+      return {
+        ticker,
+        strategy: strategyName,
+        status: 'insufficient_data',
+        profile_saved: false,
+        error_message: errorMsg,
+      };
+    } else if (isNoViable) {
+      return {
+        ticker,
+        strategy: strategyName,
+        status: 'no_viable_configs',
+        profile_saved: false,
+        error_message: errorMsg,
+      };
+    } else {
+      return {
+        ticker,
+        strategy: strategyName,
+        status: 'error',
+        profile_saved: false,
+        error_message: errorMsg,
+      };
+    }
+  }
+
+  // Successful tune
+  let profileSaved = false;
+
+  if (shouldSave) {
+    const lastTunedAt = new Date().toISOString();
+    const validUntil = computeExpiry(lastTunedAt);
+
+    const profile: StrategyProfile = {
+      ticker,
+      strategy: strategyName,
+      params: result.bestParams,
+      walk_forward_metrics: toWalkForwardMetrics(result.oosMetrics),
+      last_tuned_at: lastTunedAt,
+      valid_until: validUntil,
+    };
+
+    const saveResult = saveStrategyProfile(profile, dataDir);
+    profileSaved = saveResult.success;
+  }
+
+  return {
+    ticker,
+    strategy: strategyName,
+    status: 'success',
+    in_sample: result.isMetrics,
+    out_of_sample: result.oosMetrics,
+    configurations_evaluated: result.configurationsEvaluated,
+    profile_saved: profileSaved,
   };
 }

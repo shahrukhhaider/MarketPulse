@@ -213,11 +213,65 @@ export interface ConsolidationBreakoutParams {
 }
 
 // ============================================================
+// V3 Trend Pullback Strategy Types
+// ============================================================
+
+export interface TrendPullbackConfiguration {
+  name: string;
+  direction: {
+    require_sma20_above_sma50: boolean;
+    require_sma50_slope_positive: boolean;
+  };
+  pullback: {
+    pullback_proximity_pct: number;
+    atr_contraction_threshold: number;
+    volume_below_avg_multiplier: number;
+    swing_lookback: number;
+    max_pullback_staleness: number;
+  };
+  trigger: {
+    trigger_volume_multiplier: number;
+  };
+  overextension: {
+    overextension_pct: number;
+  };
+  stopLoss: {
+    stop_atr_multiple: number;
+    stop_buffer_atr: number;
+  };
+  profitTarget: {
+    r_multiple: number;
+  };
+  trendExit: {
+    trend_exit_sma_period: number;
+  };
+  exitMode: 'fixed' | 'trailing';
+  trailingStop?: {
+    trailingMethod: 'sma20' | 'atr';
+    atrTrailMultiple?: number;
+    atrTrailReference?: 'close' | 'highest_close';
+    smaTrailBuffer?: number;
+    breakeven_threshold: number;
+    trail_activation_threshold: number;
+    remove_profit_target: boolean;
+  };
+}
+
+export interface TrendPullbackParams {
+  config: TrendPullbackConfiguration;
+  primaryDataPoints?: HistoricalDataPoint[];
+}
+
+// ============================================================
 // Configuration Detection Helpers
 // ============================================================
 
 export function isConsolidationBreakoutConfig(config: any): config is ConsolidationBreakoutConfiguration {
   return config && typeof config.consolidation === 'object';
+}
+
+export function isTrendPullbackConfig(config: any): config is TrendPullbackConfiguration {
+  return config && typeof config.pullback === 'object' && typeof config.trigger === 'object';
 }
 
 export function isV2Config(config: any): config is PhasedStrategyConfiguration {
