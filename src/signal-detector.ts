@@ -1,8 +1,9 @@
 import type { HistoricalDataPoint } from './types.js';
 import type { SignalOutput } from './strategy-registry.js';
-import type { ConsolidationBreakoutConfiguration } from './strategies/strategy-configs.js';
+import type { ConsolidationBreakoutConfiguration, TrendPullbackConfiguration } from './strategies/strategy-configs.js';
 import { ConsolidationBreakoutEngine } from './strategies/consolidation-breakout-engine.js';
-import { buildConsolidationBreakoutConfig } from './parameter-grid.js';
+import { TrendPullbackEngine } from './strategies/trend-pullback-engine.js';
+import { buildConsolidationBreakoutConfig, buildTrendPullbackGridConfig } from './parameter-grid.js';
 import { BreakoutContextAnalyzer } from './breakout-context.js';
 
 // ============================================================
@@ -33,6 +34,10 @@ export function detectSignal(
 ): SignalOutput {
   if (strategy === 'consolidation_breakout') {
     return detectConsolidationBreakoutSignal(data, params);
+  }
+
+  if (strategy === 'trend_pullback') {
+    return detectTrendPullbackSignal(data, params);
   }
 
   // Unknown strategy — return none
@@ -236,4 +241,146 @@ function computeActiveConfidence(riskPct: number, maxRiskPct: number): number {
   // Scale from 0.6 (at max risk) to 1.0 (at zero risk)
   const ratio = Math.min(riskPct / maxRiskPct, 1);
   return 0.6 + (1 - ratio) * 0.4;
+}
+
+// ============================================================
+// Trend Pullback Signal Detection
+// ============================================================
+
+/**
+ * Classify the current market state for trend pullback strategy.
+ *
+ * Classification logic:
+ *   active  — shouldEnter() returns a valid entry on the current bar
+ *   near    — direction confirmed AND pullback detected (waiting for trigger)
+ *   forming — direction confirmed but no pullback yet (uptrend, watching for dip)
+ *   none    — direction phase fails (no uptrend)
+ */
+function detectTrendPullbackSignal(
+  data: HistoricalDataPoint[],
+  params: Record<string, number>
+): SignalOutput {
+  const config: TrendPullbackConfiguration = buildTrendPullbackGridConfig(params);
+  const barIndex = data.length - 1;
+  const date = data.length > 0 ? data[barIndex].date : new Date().toISOString().slice(0, 10);
+
+  const noneOutput: SignalOutput = {
+    ticker: '',
+    strategy: 'trend_pullback',
+    signal: 'none',
+    date,
+    entry: 0,
+    stop: 0,
+    risk_pct: 0,
+    confidence: 0,
+    reason: [],
+  };
+
+  if (data.length < 51) {
+    noneOutput.reason = ['Insufficient data for signal detection'];
+    return noneOutput;
+  }
+
+  // Step 1: Check full entry (active signal)
+  const entryResult = TrendPullbackEngine.shouldEnter(data, barIndex, config);
+
+  if (entryResult) {
+    const riskPct = (entryResult.entryPrice - entryResult.stopLossPrice) / entryResult.entryPrice * 100;
+    return {
+      ticker: '',
+      strategy: 'trend_pullback',
+      signal: 'active',
+      date,
+      entry: entryResult.entryPrice,
+      stop: entryResult.stopLossPrice,
+      risk_pct: riskPct,
+      confidence: computeActiveConfidence(riskPct, 8), // 8% max risk threshold
+      reason: [
+        'Trend pullback entry confirmed',
+        `Entry: ${entryResult.entryPrice.toFixed(2)}`,
+        `Stop: ${entryResult.stopLossPrice.toFixed(2)}`,
+        `Target: ${entryResult.profitTargetPrice.toFixed(2)}`,
+        `Risk: ${riskPct.toFixed(2)}%`,
+        `R:R = 1:${config.profitTarget.r_multiple}`,
+      ],
+    };
+  }
+
+  // Step 2: Check direction phase
+  const directionOk = TrendPullbackEngine.detectDirection(data, barIndex, config.direction);
+
+  if (!directionOk) {
+    // Check if price is close to SMA(50) — could be forming soon
+    const closes = data.slice(0, barIndex + 1).map(d => d.close);
+    const sma50 = closes.length >= 50 ? closes.slice(-50).reduce((a, b) => a + b, 0) / 50 : undefined;
+    if (sma50 !== undefined) {
+      const currentClose = data[barIndex].close;
+      const distPct = ((currentClose - sma50) / sma50) * 100;
+      if (distPct > -3 && distPct < 0) {
+        noneOutput.reason = [
+          'No uptrend — price below SMA(50)',
+          `Price: ${currentClose.toFixed(2)}, SMA(50): ${sma50.toFixed(2)}`,
+          `Distance: ${distPct.toFixed(1)}% (approaching from below)`,
+        ];
+      } else {
+        noneOutput.reason = [
+          'No uptrend — price below SMA(50)',
+          `Price: ${currentClose.toFixed(2)}, SMA(50): ${sma50.toFixed(2)}`,
+          `Distance: ${distPct.toFixed(1)}%`,
+        ];
+      }
+    } else {
+      noneOutput.reason = ['No uptrend — insufficient data for SMA(50)'];
+    }
+    return noneOutput;
+  }
+
+  // Step 3: Direction confirmed — check for pullback
+  const pullbackResult = TrendPullbackEngine.detectPullback(data, barIndex, config.pullback);
+
+  if (pullbackResult.detected) {
+    // Pullback detected — near signal (waiting for trigger/volume expansion)
+    const currentClose = data[barIndex].close;
+    const closes20 = data.slice(0, barIndex + 1).map(d => d.close);
+    const sma20Val = closes20.length >= 20 ? closes20.slice(-20).reduce((a, b) => a + b, 0) / 20 : undefined;
+    return {
+      ticker: '',
+      strategy: 'trend_pullback',
+      signal: 'near',
+      date,
+      entry: currentClose,
+      stop: pullbackResult.swingLow,
+      risk_pct: pullbackResult.swingLow > 0 ? (currentClose - pullbackResult.swingLow) / currentClose * 100 : 0,
+      confidence: 0.6,
+      reason: [
+        'Uptrend confirmed, pullback detected — waiting for trigger',
+        `Price near SMA(20): ${sma20Val?.toFixed(2) ?? 'N/A'}`,
+        `Swing low: ${pullbackResult.swingLow.toFixed(2)}`,
+        'Need: close > SMA(10) with volume expansion',
+      ],
+    };
+  }
+
+  // Step 4: Direction confirmed, no pullback — forming (watching for dip to SMA20)
+  const currentClose = data[barIndex].close;
+  const allCloses = data.slice(0, barIndex + 1).map(d => d.close);
+  const sma20 = allCloses.length >= 20 ? allCloses.slice(-20).reduce((a, b) => a + b, 0) / 20 : undefined;
+  const sma50 = allCloses.length >= 50 ? allCloses.slice(-50).reduce((a, b) => a + b, 0) / 50 : undefined;
+  return {
+    ticker: '',
+    strategy: 'trend_pullback',
+    signal: 'forming',
+    date,
+    entry: 0,
+    stop: 0,
+    risk_pct: 0,
+    confidence: 0.3,
+    reason: [
+      'Uptrend confirmed — watching for pullback to SMA(20)',
+      `Price: ${currentClose.toFixed(2)}`,
+      `SMA(20): ${sma20?.toFixed(2) ?? 'N/A'}`,
+      `SMA(50): ${sma50?.toFixed(2) ?? 'N/A'}`,
+      `Distance to SMA(20): ${sma20 ? ((currentClose - sma20) / sma20 * 100).toFixed(1) : 'N/A'}%`,
+    ],
+  };
 }

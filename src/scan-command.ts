@@ -124,34 +124,6 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     // Process each ticker sequentially
     for (const ticker of tickers) {
       try {
-        // Load profile
-        const profileResult = loadStrategyProfile(ticker, strategyName, {
-          allowStale,
-          baseDir: dataDir,
-        });
-
-        if (!profileResult.success) {
-          if (profileResult.error.code === 'PROFILE_NOT_FOUND') {
-            warnings.push(
-              `[${ticker}] Profile not found. Run: npm run tune -- --tickers ${ticker} --strategy ${strategyName} --save`
-            );
-            continue;
-          }
-
-          if (profileResult.error.code === 'PROFILE_EXPIRED' && !allowStale) {
-            warnings.push(
-              `[${ticker}] Profile expired. Retune with: npm run tune -- --tickers ${ticker} --strategy ${strategyName} --save, or use --allow-stale`
-            );
-            continue;
-          }
-
-          // PROFILE_CORRUPT or other errors
-          warnings.push(`[${ticker}] ${profileResult.error.message}`);
-          continue;
-        }
-
-        const profile = profileResult.data;
-
         // Fetch latest data
         const dataResult = await cachingProvider.getHistoricalData(ticker, '1y');
 
@@ -162,13 +134,44 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
         const dataPoints = dataResult.data.dataPoints;
 
-        // Detect signal using profile params
-        const signal = detectSignal(dataPoints, profile.params, strategyName);
+        // Determine which strategies to scan
+        const strategiesToScan = strategyName === 'v3'
+          ? ['consolidation_breakout', 'trend_pullback']
+          : [strategyName];
 
-        // Set ticker on the output
-        signal.ticker = ticker;
+        for (const strat of strategiesToScan) {
+          // Load profile
+          const profileResult = loadStrategyProfile(ticker, strat, {
+            allowStale,
+            baseDir: dataDir,
+          });
 
-        signals.push(signal);
+          if (!profileResult.success) {
+            if (profileResult.error.code === 'PROFILE_NOT_FOUND') {
+              warnings.push(
+                `[${ticker}/${strat}] Profile not found. Run: npm run v3 -- --ticker ${ticker}`
+              );
+              continue;
+            }
+
+            if (profileResult.error.code === 'PROFILE_EXPIRED' && !allowStale) {
+              warnings.push(
+                `[${ticker}/${strat}] Profile expired. Retune with: npm run v3 -- --ticker ${ticker} --force, or use --allow-stale`
+              );
+              continue;
+            }
+
+            warnings.push(`[${ticker}/${strat}] ${profileResult.error.message}`);
+            continue;
+          }
+
+          const profile = profileResult.data;
+
+          // Detect signal using profile params
+          const signal = detectSignal(dataPoints, profile.params, strat);
+          signal.ticker = ticker;
+          signals.push(signal);
+        }
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
         warnings.push(`[${ticker}] Error: ${message}`);

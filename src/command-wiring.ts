@@ -22,14 +22,15 @@ import { PhasedStrategyEngine } from './strategies/phased-engine.js';
 import { ConsolidationBreakoutEngine } from './strategies/consolidation-breakout-engine.js';
 import { TrendPullbackEngine } from './strategies/trend-pullback-engine.js';
 import { tuneV3, backtestV3 } from './pipeline-functions.js';
-import type { V3BacktestResult } from './pipeline-functions.js';
-import { loadStrategyProfile } from './profile-store.js';
+import type { V3BacktestResult, V3TuneResult } from './pipeline-functions.js';
+import { loadStrategyProfile, saveStrategyProfile, computeExpiry } from './profile-store.js';
+import type { StrategyProfile } from './profile-store.js';
 import { CachingDataProvider } from './caching-data-provider.js';
 import { TuningEngine } from './tuning-engine.js';
 import type { TuningInput, TunableStrategy, TimeHorizon, RiskProfile, BestRegion } from './tuning-engine.js';
 import { normalizeTicker } from './history-cache-store.js';
 import type { CacheEntry } from './history-cache-store.js';
-import { generateChartHtml, getChartFilePath } from './chart-generator.js';
+import { generateChartHtml, generateCombinedChartHtml, getChartFilePath } from './chart-generator.js';
 import { writeFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { buildConfig, buildV2Config, generateV2Grid, generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig } from './parameter-grid.js';
@@ -399,15 +400,16 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         const tpParams: Record<string, number> = tpProfile.success ? tpProfile.data.params : {};
 
         const v3Result: V3BacktestResult = backtestV3(dataPoints, cbParams, tpParams);
+        v3Result.consolidation_breakout.ticker = ticker;
+        v3Result.trend_pullback.ticker = ticker;
 
         if (opts['chart'] !== undefined) {
-          // For now, generate a single-strategy chart with the CB result
-          // Combined chart will be added in task 10
           const chartFilePath = getChartFilePath(dataDir, ticker);
-          const html = generateChartHtml({
-            backtestResult: v3Result.consolidation_breakout,
+          const html = generateCombinedChartHtml({
+            cbResult: v3Result.consolidation_breakout,
+            tpResult: v3Result.trend_pullback,
             dataPoints,
-            strategyParams: v3Result.consolidation_breakout.params,
+            combinedMetrics: v3Result.combined,
           });
           writeFileSync(chartFilePath, html, 'utf-8');
           return successResult('backtest', {
@@ -1013,6 +1015,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     if (isV3) {
       // V3 tune-and-chart path: tune both strategies, backtest both, generate combined chart
       const period = '5y';
+      const forceTune = opts['force'] !== undefined;
 
       try {
         // Step 1: Fetch data
@@ -1029,19 +1032,40 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
         const dataPoints = dataResult.data.dataPoints;
 
-        // Step 2: Tune both strategies using tuneV3
-        const v3TuneResult = tuneV3(dataPoints);
+        // Step 2: Check for fresh profiles — skip tuning if both exist and are valid
+        let cbBestParams: Record<string, number> = {};
+        let tpBestParams: Record<string, number> = {};
+        let cbTuneResult: V3TuneResult['consolidation_breakout'] = { error: 'skipped' };
+        let tpTuneResult: V3TuneResult['trend_pullback'] = { error: 'skipped' };
+        let tuningSkipped = false;
 
-        // Extract best params from each strategy's tune result
-        const cbTuneResult = v3TuneResult.consolidation_breakout;
-        const tpTuneResult = v3TuneResult.trend_pullback;
+        if (!forceTune) {
+          const cbProfile = loadStrategyProfile(ticker, 'consolidation_breakout', { baseDir: dataDir });
+          const tpProfile = loadStrategyProfile(ticker, 'trend_pullback', { baseDir: dataDir });
 
-        // Get params for backtesting (use tuned params if available, empty otherwise)
-        const cbBestParams: Record<string, number> = !('error' in cbTuneResult) ? cbTuneResult.bestParams : {};
-        const tpBestParams: Record<string, number> = !('error' in tpTuneResult) ? tpTuneResult.bestParams : {};
+          if (cbProfile.success && tpProfile.success) {
+            // Both profiles are fresh — skip tuning
+            cbBestParams = cbProfile.data.params;
+            tpBestParams = tpProfile.data.params;
+            tuningSkipped = true;
+          }
+        }
+
+        if (!tuningSkipped) {
+          // Run full tuning
+          const v3TuneResult = tuneV3(dataPoints);
+
+          cbTuneResult = v3TuneResult.consolidation_breakout;
+          tpTuneResult = v3TuneResult.trend_pullback;
+
+          cbBestParams = !('error' in cbTuneResult) ? cbTuneResult.bestParams : {};
+          tpBestParams = !('error' in tpTuneResult) ? tpTuneResult.bestParams : {};
+        }
 
         // Step 3: Backtest both strategies with their best params
         const v3BacktestResult: V3BacktestResult = backtestV3(dataPoints, cbBestParams, tpBestParams);
+        v3BacktestResult.consolidation_breakout.ticker = ticker;
+        v3BacktestResult.trend_pullback.ticker = ticker;
 
         // Step 4: Build tuning summary data
         const riskProfile = (opts['risk'] as RiskProfile) ?? 'low';
@@ -1051,20 +1075,71 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           ticker,
           strategy,
           profile,
-          consolidation_breakout: cbTuneResult,
-          trend_pullback: tpTuneResult,
+          tuning_skipped: tuningSkipped,
+          consolidation_breakout: tuningSkipped ? 'used_cached_profile' : cbTuneResult,
+          trend_pullback: tuningSkipped ? 'used_cached_profile' : tpTuneResult,
           computed_at: new Date().toISOString(),
           v3: true,
         };
 
-        // Step 5: Generate chart (using CB result for now; combined chart in task 10)
+        // Step 5: Generate combined chart
         const chartFilePath = getChartFilePath(dataDir, ticker);
-        const html = generateChartHtml({
-          backtestResult: v3BacktestResult.consolidation_breakout,
+        const html = generateCombinedChartHtml({
+          cbResult: v3BacktestResult.consolidation_breakout,
+          tpResult: v3BacktestResult.trend_pullback,
           dataPoints,
-          strategyParams: v3BacktestResult.consolidation_breakout.params,
+          combinedMetrics: v3BacktestResult.combined,
         });
         writeFileSync(chartFilePath, html, 'utf-8');
+
+        // Step 6: Save profiles if --save is specified and tuning was actually performed
+        let profileSaved = false;
+        if (opts['save'] !== undefined && !tuningSkipped) {
+          const lastTunedAt = new Date().toISOString();
+          const validUntil = computeExpiry(lastTunedAt);
+
+          if (Object.keys(cbBestParams).length > 0) {
+            const cbOos = !('error' in cbTuneResult) ? cbTuneResult.oosMetrics : null;
+            const cbProfile: StrategyProfile = {
+              ticker,
+              strategy: 'consolidation_breakout',
+              params: cbBestParams,
+              walk_forward_metrics: {
+                return: cbOos ? cbOos.totalReturnPercent : 0,
+                benchmark: 0,
+                win_rate: cbOos ? cbOos.winRate : 0,
+                trades: cbOos ? cbOos.tradeCount : 0,
+                max_drawdown: cbOos ? cbOos.maxDrawdownPercent : 0,
+                sharpe: cbOos ? cbOos.sharpeRatio : 0,
+              },
+              last_tuned_at: lastTunedAt,
+              valid_until: validUntil,
+            };
+            saveStrategyProfile(cbProfile, dataDir);
+          }
+
+          if (Object.keys(tpBestParams).length > 0) {
+            const tpOos = !('error' in tpTuneResult) ? tpTuneResult.oosMetrics : null;
+            const tpProfile: StrategyProfile = {
+              ticker,
+              strategy: 'trend_pullback',
+              params: tpBestParams,
+              walk_forward_metrics: {
+                return: tpOos ? tpOos.totalReturnPercent : 0,
+                benchmark: 0,
+                win_rate: tpOos ? tpOos.winRate : 0,
+                trades: tpOos ? tpOos.tradeCount : 0,
+                max_drawdown: tpOos ? tpOos.maxDrawdownPercent : 0,
+                sharpe: tpOos ? tpOos.sharpeRatio : 0,
+              },
+              last_tuned_at: lastTunedAt,
+              valid_until: validUntil,
+            };
+            saveStrategyProfile(tpProfile, dataDir);
+          }
+
+          profileSaved = true;
+        }
 
         return successResult('tune-and-chart', {
           tuning: tuningData,
@@ -1072,6 +1147,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
             consolidation_breakout: cbBestParams,
             trend_pullback: tpBestParams,
           },
+          profile_saved: profileSaved,
           backtest: {
             ...v3BacktestResult,
             chartFilePath,
@@ -1325,6 +1401,18 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   router.register('scan', ['tickers', 'strategy'], scanHandler);
   router.register('chart', ['ticker', 'strategy'], chartHandler);
   router.register('scan-chart', ['ticker', 'strategy'], scanChartHandler);
+
+  // --- v3: shorthand for tune-and-chart --v3 --save (only requires --ticker) ---
+  router.register('v3', ['ticker'], async (opts) => {
+    opts['strategy'] = 'v3';
+    opts['v3'] = '';
+    opts['save'] = '';
+    const tuneAndChartDef = router.getHandler('tune-and-chart');
+    if (!tuneAndChartDef) {
+      return errorResult('v3', 'INTERNAL_ERROR', 'tune-and-chart handler not found');
+    }
+    return tuneAndChartDef(opts);
+  });
 
   return {
     router,

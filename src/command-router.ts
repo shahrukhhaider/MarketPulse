@@ -77,6 +77,13 @@ export class CommandRouter {
   }
 
   /**
+   * Get a registered command handler by name.
+   */
+  getHandler(name: string): CommandHandler | undefined {
+    return this.commands.get(name)?.handler;
+  }
+
+  /**
    * Parse raw CLI args (typically process.argv.slice(2)) into a ParsedCommand.
    * Expected format: <command> [--key value ...] [--booleanFlag]
    * Boolean flags (--flag with no following value or followed by another --flag) get value 'true'.

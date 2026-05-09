@@ -369,6 +369,10 @@ header p { color: #a0a0b0; margin-top: 4px; }
 .trade-pl.profit { color: #26a69a; }
 .trade-pl.loss { color: #ef5350; }
 .trade-card.highlighted { border-left-color: #ffffff; background: #1a2a5e; }
+.zoom-controls { display: flex; gap: 8px; margin-bottom: 12px; }
+.zoom-btn { background: #0f3460; border: 1px solid #2a2a4e; color: #e0e0e0; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; transition: background 0.2s; }
+.zoom-btn:hover { background: #1a4080; }
+.zoom-btn.active { background: #1a6040; border-color: #26a69a; }
 </style>
 </head>
 <body>
@@ -376,6 +380,14 @@ header p { color: #a0a0b0; margin-top: 4px; }
   <h1>${escapeHtml(backtestResult.ticker)} — ${escapeHtml(backtestResult.strategyType)}</h1>
   <p>Period: ${escapeHtml(backtestResult.period)} | Data points: ${backtestResult.dataPointsEvaluated}</p>
 </header>
+
+<div class="zoom-controls">
+  <button class="zoom-btn" data-range="1m">1M</button>
+  <button class="zoom-btn" data-range="3m">3M</button>
+  <button class="zoom-btn" data-range="6m">6M</button>
+  <button class="zoom-btn" data-range="1y">1Y</button>
+  <button class="zoom-btn active" data-range="all">All</button>
+</div>
 
 <div id="chart-container"></div>
 
@@ -421,6 +433,27 @@ ${tradeDetailHtml}
   volumeSeries.setData(volumeData);
 
   chart.timeScale().fitContent();
+
+  // Zoom controls
+  var zoomButtons = document.querySelectorAll('.zoom-btn');
+  zoomButtons.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var range = btn.getAttribute('data-range');
+      var now = chartData[chartData.length - 1].time;
+      var from;
+      if (range === 'all') {
+        chart.timeScale().fitContent();
+        return;
+      }
+      var d = new Date(now);
+      if (range === '1m') d.setMonth(d.getMonth() - 1);
+      else if (range === '3m') d.setMonth(d.getMonth() - 3);
+      else if (range === '6m') d.setMonth(d.getMonth() - 6);
+      else if (range === '1y') d.setFullYear(d.getFullYear() - 1);
+      from = d.toISOString().split('T')[0];
+      chart.timeScale().setVisibleRange({ from: from, to: now });
+    });
+  });
 
   window.addEventListener('resize', function() {
     chart.applyOptions({ width: container.clientWidth });
@@ -484,7 +517,7 @@ export function generateCombinedChartHtml(input: CombinedChartInput): string {
   const candlestickData = buildCandlestickData(dataPoints);
   const volumeData = buildVolumeData(dataPoints);
   const markers = buildCombinedMarkers(cbResult, tpResult);
-  const combinedMetricsHtml = renderCombinedMetricsSection(combinedMetrics);
+  const combinedMetricsHtml = renderCombinedMetricsSection(combinedMetrics, dataPoints);
   const perStrategyHtml = renderPerStrategyBreakdown(combinedMetrics);
   const legendHtml = renderStrategyLegend();
 
@@ -546,11 +579,20 @@ function renderStrategyLegend(): string {
 /**
  * Render the combined performance metrics section HTML.
  */
-function renderCombinedMetricsSection(metrics: CombinedPerformanceMetrics): string {
+function renderCombinedMetricsSection(metrics: CombinedPerformanceMetrics, dataPoints: HistoricalDataPoint[]): string {
+  // Compute benchmark (buy-and-hold) return from first to last close
+  let benchmarkReturnPercent = 0;
+  if (dataPoints.length >= 2) {
+    const firstPrice = dataPoints[0].close;
+    const lastPrice = dataPoints[dataPoints.length - 1].close;
+    benchmarkReturnPercent = ((lastPrice - firstPrice) / firstPrice) * 100;
+  }
+
   return `<section id="combined-metrics-section">
   <h2>Combined Performance Metrics</h2>
   <div class="metrics-grid">
     <div class="metric"><span class="metric-label">Total Return</span><span class="metric-value">${formatMetric(metrics.totalReturnPercent)}%</span></div>
+    <div class="metric"><span class="metric-label">Benchmark Return</span><span class="metric-value">${formatMetric(benchmarkReturnPercent)}%</span></div>
     <div class="metric"><span class="metric-label">Trades</span><span class="metric-value">${formatMetric(metrics.numberOfTrades)}</span></div>
     <div class="metric"><span class="metric-label">Win Rate</span><span class="metric-value">${formatMetric(metrics.winRate)}</span></div>
     <div class="metric"><span class="metric-label">Max Drawdown</span><span class="metric-value">${formatMetric(metrics.maxDrawdownPercent)}%</span></div>
@@ -640,6 +682,10 @@ header p { color: #a0a0b0; margin-top: 4px; }
 .strategy-block h3 { font-size: 1rem; margin-bottom: 12px; color: #ffffff; }
 .strategy-block .metrics-grid { gap: 8px; }
 .strategy-block .metric { background: #1a1a2e; }
+.zoom-controls { display: flex; gap: 8px; margin-bottom: 12px; }
+.zoom-btn { background: #0f3460; border: 1px solid #2a2a4e; color: #e0e0e0; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; transition: background 0.2s; }
+.zoom-btn:hover { background: #1a4080; }
+.zoom-btn.active { background: #1a6040; border-color: #26a69a; }
 </style>
 </head>
 <body>
@@ -647,6 +693,14 @@ header p { color: #a0a0b0; margin-top: 4px; }
   <h1>${escapeHtml(ticker)} — Combined V3 Strategy Suite</h1>
   <p>Period: ${escapeHtml(period)} | Data points: ${dataPointCount} | Strategies: Consolidation Breakout + Trend Pullback</p>
 </header>
+
+<div class="zoom-controls">
+  <button class="zoom-btn" data-range="1m">1M</button>
+  <button class="zoom-btn" data-range="3m">3M</button>
+  <button class="zoom-btn" data-range="6m">6M</button>
+  <button class="zoom-btn" data-range="1y">1Y</button>
+  <button class="zoom-btn active" data-range="all">All</button>
+</div>
 
 <div id="chart-container"></div>
 
@@ -694,6 +748,27 @@ ${perStrategyHtml}
   volumeSeries.setData(volumeData);
 
   chart.timeScale().fitContent();
+
+  // Zoom controls
+  var zoomButtons = document.querySelectorAll('.zoom-btn');
+  zoomButtons.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var range = btn.getAttribute('data-range');
+      var now = chartData[chartData.length - 1].time;
+      var from;
+      if (range === 'all') {
+        chart.timeScale().fitContent();
+        return;
+      }
+      var d = new Date(now);
+      if (range === '1m') d.setMonth(d.getMonth() - 1);
+      else if (range === '3m') d.setMonth(d.getMonth() - 3);
+      else if (range === '6m') d.setMonth(d.getMonth() - 6);
+      else if (range === '1y') d.setFullYear(d.getFullYear() - 1);
+      from = d.toISOString().split('T')[0];
+      chart.timeScale().setVisibleRange({ from: from, to: now });
+    });
+  });
 
   window.addEventListener('resize', function() {
     chart.applyOptions({ width: container.clientWidth });
