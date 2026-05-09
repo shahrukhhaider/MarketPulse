@@ -3,6 +3,7 @@ import type { SignalOutput } from './strategy-registry.js';
 import type { ConsolidationBreakoutConfiguration } from './strategies/strategy-configs.js';
 import { ConsolidationBreakoutEngine } from './strategies/consolidation-breakout-engine.js';
 import { buildConsolidationBreakoutConfig } from './parameter-grid.js';
+import { BreakoutContextAnalyzer } from './breakout-context.js';
 
 // ============================================================
 // Signal State Type
@@ -55,6 +56,14 @@ export function detectSignal(
 
 /**
  * Internal: detect signal for consolidation_breakout strategy.
+ *
+ * When `context_awareness_enabled === 1` in params, the context-aware
+ * classification pipeline is used (seven-state: none, forming, near,
+ * active, pressure, active_late, extended).
+ *
+ * When `context_awareness_enabled` is absent or 0, the existing
+ * four-state classification (none, forming, near, active) is used
+ * unchanged for backward compatibility.
  */
 function detectConsolidationBreakoutSignal(
   data: HistoricalDataPoint[],
@@ -82,6 +91,42 @@ function detectConsolidationBreakoutSignal(
     return noneOutput;
   }
 
+  // Run the existing four-state classification to get the base signal output
+  const baseSignalOutput = detectBaseSignal(data, barIndex, date, config, noneOutput);
+
+  // When context awareness is enabled, enhance with context-aware classification
+  if (params['context_awareness_enabled'] === 1) {
+    const contextResult = BreakoutContextAnalyzer.analyze(data, barIndex, config, baseSignalOutput);
+
+    return {
+      ticker: '',
+      strategy: 'consolidation_breakout',
+      signal: contextResult.signal,
+      date,
+      entry: baseSignalOutput.entry,
+      stop: baseSignalOutput.stop,
+      risk_pct: baseSignalOutput.risk_pct,
+      confidence: contextResult.confidence,
+      reason: contextResult.reason,
+      contextMetrics: contextResult.metrics,
+    };
+  }
+
+  // When disabled or absent: use existing four-state logic unchanged
+  return baseSignalOutput;
+}
+
+/**
+ * Internal: existing four-state classification logic (none, forming, near, active).
+ * Extracted to allow the context-aware path to reuse the base signal output.
+ */
+function detectBaseSignal(
+  data: HistoricalDataPoint[],
+  barIndex: number,
+  date: string,
+  config: ConsolidationBreakoutConfiguration,
+  noneOutput: SignalOutput
+): SignalOutput {
   // ---- Step 1: Check if shouldEnter() produces a full entry ----
   const entryResult = ConsolidationBreakoutEngine.shouldEnter(data, barIndex, config);
 

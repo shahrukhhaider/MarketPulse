@@ -36,7 +36,7 @@ export interface ConsolidationZone {
 }
 
 export interface SignalScanResult {
-  signalState: 'none' | 'forming' | 'near' | 'active';
+  signalState: 'none' | 'forming' | 'near' | 'active' | 'pressure' | 'active_late' | 'extended';
   confidence: number;
   date: string;                          // date of latest data point
   consolidationZones: ConsolidationZone[];
@@ -46,6 +46,12 @@ export interface SignalScanResult {
   riskPct: number | null;               // risk percentage when active, null otherwise
   reason: string[];                      // reason array from SignalOutput
   currentPrice: number;                  // latest close price
+  // Context awareness fields (populated when context_awareness_enabled is set)
+  near_count_5d?: number;
+  near_count_10d?: number;
+  bars_since_breakout?: number | null;
+  distance_to_breakout_pct?: number | null;
+  structure_valid?: boolean;
 }
 
 // ============================================================
@@ -182,6 +188,15 @@ export function createScanChartHandler(deps: ScanChartCommandDeps): CommandHandl
         reason: signalOutput.reason,
         currentPrice: lastDataPoint.close,
       };
+
+      // Populate context metrics when available
+      if (signalOutput.contextMetrics) {
+        scanResult.near_count_5d = signalOutput.contextMetrics.near_count_5d;
+        scanResult.near_count_10d = signalOutput.contextMetrics.near_count_10d;
+        scanResult.bars_since_breakout = signalOutput.contextMetrics.bars_since_breakout;
+        scanResult.distance_to_breakout_pct = signalOutput.contextMetrics.distance_to_breakout_pct;
+        scanResult.structure_valid = signalOutput.contextMetrics.structure_valid;
+      }
 
       // ---- Generate chart HTML and write to disk ----
       const chartFilePath = getScanChartFilePath(dataDir, ticker.toUpperCase());

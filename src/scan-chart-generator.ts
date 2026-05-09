@@ -101,6 +101,10 @@ function getSignalStateColor(state: SignalScanResult['signalState']): string {
     case 'near': return '#FFA726';
     case 'forming': return '#4285F4';
     case 'none': return '#9E9E9E';
+    // New context-aware states — colors will be refined in task 8.2
+    case 'pressure': return '#FF7043';
+    case 'active_late': return '#66BB6A';
+    case 'extended': return '#AB47BC';
   }
 }
 
@@ -186,6 +190,35 @@ function buildSignalSummaryPanelHtml(
     <span class="summary-value" data-field="distance-pct">${distancePct.toFixed(2)}%</span>
   </div>`;
     }
+  }
+
+  // Context-aware metrics: shown when context awareness is enabled (metrics are populated)
+  if (scanResult.near_count_5d !== undefined) {
+    panelHtml += `
+  <div class="summary-row">
+    <span class="summary-label">Near Count (5d/10d)</span>
+    <span class="summary-value" data-field="near-count">${scanResult.near_count_5d}/${scanResult.near_count_10d ?? 0}</span>
+  </div>
+  <div class="summary-row">
+    <span class="summary-label">Bars Since Breakout</span>
+    <span class="summary-value" data-field="bars-since-breakout">${scanResult.bars_since_breakout !== null && scanResult.bars_since_breakout !== undefined ? scanResult.bars_since_breakout : 'N/A'}</span>
+  </div>
+  <div class="summary-row">
+    <span class="summary-label">Distance to Breakout %</span>
+    <span class="summary-value" data-field="distance-to-breakout-pct">${scanResult.distance_to_breakout_pct !== null && scanResult.distance_to_breakout_pct !== undefined ? scanResult.distance_to_breakout_pct.toFixed(2) + '%' : 'N/A'}</span>
+  </div>
+  <div class="summary-row">
+    <span class="summary-label">Structure Valid</span>
+    <span class="summary-value" data-field="structure-valid">${scanResult.structure_valid ? 'yes' : 'no'}</span>
+  </div>
+  <div class="summary-row">
+    <span class="summary-label">Breakout Level</span>
+    <span class="summary-value" data-field="context-breakout-level">${scanResult.breakoutLevel !== null ? scanResult.breakoutLevel : 'N/A'}</span>
+  </div>
+  <div class="summary-row">
+    <span class="summary-label">Current Price</span>
+    <span class="summary-value" data-field="context-current-price">${scanResult.currentPrice}</span>
+  </div>`;
   }
 
   panelHtml += `

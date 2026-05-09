@@ -34,9 +34,12 @@ export interface ScanCommandDeps {
 
 const SIGNAL_PRIORITY: Record<string, number> = {
   active: 0,
-  near: 1,
-  forming: 2,
-  none: 3,
+  active_late: 1,
+  extended: 2,
+  pressure: 3,
+  near: 4,
+  forming: 5,
+  none: 6,
 };
 
 // ============================================================
@@ -44,14 +47,20 @@ const SIGNAL_PRIORITY: Record<string, number> = {
 // ============================================================
 
 /**
- * Sort SignalOutput array by signal priority: active > near > forming > none.
+ * Sort SignalOutput array by signal priority:
+ * active > active_late > extended > pressure > near > forming > none.
+ * When two signals share the same priority, sorts by confidence descending.
  * Returns a new sorted array (does not mutate the input).
  */
 export function sortBySignalPriority(signals: SignalOutput[]): SignalOutput[] {
   return [...signals].sort((a, b) => {
-    const priorityA = SIGNAL_PRIORITY[a.signal] ?? 3;
-    const priorityB = SIGNAL_PRIORITY[b.signal] ?? 3;
-    return priorityA - priorityB;
+    const priorityA = SIGNAL_PRIORITY[a.signal] ?? 6;
+    const priorityB = SIGNAL_PRIORITY[b.signal] ?? 6;
+    if (priorityA !== priorityB) {
+      return priorityA - priorityB;
+    }
+    // Secondary sort: higher confidence first
+    return b.confidence - a.confidence;
   });
 }
 
