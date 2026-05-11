@@ -14,6 +14,7 @@ import type {
   ConsolidationBreakoutConfiguration,
 } from './strategy-configs.js';
 import { range_pct, atr_ratio, atr, sma, sma_slope, highestHigh, swingLow, avgVolume, returnNd } from '../indicators.js';
+import type { IndicatorCache } from '../indicator-cache.js';
 
 // ============================================================
 // Result interfaces for standalone detection functions
@@ -97,7 +98,8 @@ export class ConsolidationBreakoutEngine implements Strategy {
   static detectConsolidation(
     dataPoints: HistoricalDataPoint[],
     barIndex: number,
-    config: ConsolidationConfig
+    config: ConsolidationConfig,
+    cache?: IndicatorCache
   ): ConsolidationResult {
     const notDetected: ConsolidationResult = {
       detected: false,
@@ -116,7 +118,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
     }
 
     // 1. Compute range_pct over the consolidation window
-    const rangePct = range_pct(slice, config.consolidation_window);
+    const rangePct = cache ? cache.getRangePct(config.consolidation_window, barIndex) : range_pct(slice, config.consolidation_window);
     if (rangePct === undefined) return notDetected;
 
     // range_pct returns a ratio (e.g. 0.04 for 4%), config uses percentage (e.g. 4)
@@ -125,13 +127,13 @@ export class ConsolidationBreakoutEngine implements Strategy {
     if (rangePctPercent > config.max_range_pct) return notDetected;
 
     // 2. Compute atr_ratio(5, 20)
-    const atrRat = atr_ratio(slice, 5, 20);
+    const atrRat = cache ? cache.getAtrRatio(5, 20, barIndex) : atr_ratio(slice, 5, 20);
     if (atrRat === undefined) return notDetected;
     if (atrRat >= config.atr_ratio_threshold) return notDetected;
 
     // 3. Check close >= SMA(50)
     const closes = slice.map(d => d.close);
-    const sma50 = sma(closes, 50);
+    const sma50 = cache ? cache.getSma(50, barIndex) : sma(closes, 50);
     if (sma50 === undefined) return notDetected;
 
     const currentClose = slice[slice.length - 1].close;
@@ -139,7 +141,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
 
     // 4. Optional SMA proximity check
     if (config.sma_proximity_pct !== undefined) {
-      const sma20 = sma(closes, 20);
+      const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
       if (sma20 === undefined || sma20 === 0) return notDetected;
 
       const proximity = Math.abs(currentClose - sma20) / sma20;
@@ -148,8 +150,8 @@ export class ConsolidationBreakoutEngine implements Strategy {
     }
 
     // All conditions pass — compute consolidation high and low over the window
-    const consolidationHighVal = highestHigh(slice, config.consolidation_window);
-    const consolidationLowVal = swingLow(slice, config.consolidation_window);
+    const consolidationHighVal = cache ? cache.getHighestHigh(config.consolidation_window, barIndex) : highestHigh(slice, config.consolidation_window);
+    const consolidationLowVal = cache ? cache.getSwingLow(config.consolidation_window, barIndex) : swingLow(slice, config.consolidation_window);
 
     if (consolidationHighVal === undefined || consolidationLowVal === undefined) {
       return notDetected;
@@ -177,7 +179,8 @@ export class ConsolidationBreakoutEngine implements Strategy {
     dataPoints: HistoricalDataPoint[],
     barIndex: number,
     consolidationHigh: number,
-    config: BreakoutConfig
+    config: BreakoutConfig,
+    cache?: IndicatorCache
   ): boolean {
     // Slice data up to and including barIndex
     const slice = dataPoints.slice(0, barIndex + 1);
@@ -195,7 +198,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
     }
 
     // 2. Check volume > avgVolume(20) × volume_multiplier
-    const avg20Vol = avgVolume(slice, 20);
+    const avg20Vol = cache ? cache.getAvgVolume(20, barIndex) : avgVolume(slice, 20);
     if (avg20Vol === undefined) {
       return false;
     }
@@ -234,7 +237,8 @@ export class ConsolidationBreakoutEngine implements Strategy {
   static shouldEnter(
     dataPoints: HistoricalDataPoint[],
     barIndex: number,
-    config: ConsolidationBreakoutConfiguration
+    config: ConsolidationBreakoutConfiguration,
+    cache?: IndicatorCache
   ): EntryResult | null {
     const slice = dataPoints.slice(0, barIndex + 1);
 
@@ -245,7 +249,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
     const currentClose = slice[slice.length - 1].close;
 
     // ---- Step 1: Direction check ----
-    const sma50 = sma(closes, 50);
+    const sma50 = cache ? cache.getSma(50, barIndex) : sma(closes, 50);
     if (sma50 === undefined) return null;
 
     // close > SMA(50) — always required
@@ -253,14 +257,14 @@ export class ConsolidationBreakoutEngine implements Strategy {
 
     // Optional: SMA(20) >= SMA(50)
     if (config.direction.require_sma20_above_sma50) {
-      const sma20 = sma(closes, 20);
+      const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
       if (sma20 === undefined) return null;
       if (sma20 < sma50) return null;
     }
 
     // Optional: SMA(50) slope positive — current SMA(50) > previous bar's SMA(50)
     if (config.direction.require_sma50_slope_positive) {
-      const slope = sma_slope(closes, 50);
+      const slope = cache ? cache.getSmaSlope(50, barIndex) : sma_slope(closes, 50);
       if (slope === undefined || slope === false) return null;
     }
 
@@ -279,7 +283,8 @@ export class ConsolidationBreakoutEngine implements Strategy {
           max_range_pct: config.consolidation.max_range_pct,
           atr_ratio_threshold: config.consolidation.atr_ratio_threshold,
           sma_proximity_pct: config.consolidation.sma_proximity_pct,
-        }
+        },
+        cache
       );
       if (result.detected) {
         consolidation = result;
@@ -297,13 +302,14 @@ export class ConsolidationBreakoutEngine implements Strategy {
       {
         volume_multiplier: config.breakout.volume_multiplier,
         return_20d_threshold: config.breakout.return_20d_threshold,
-      }
+      },
+      cache
     );
 
     if (!breakoutDetected) return null;
 
     // ---- Step 4: Overextension filter ----
-    const sma20 = sma(closes, 20);
+    const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
     if (sma20 === undefined || sma20 === 0) return null;
     if (sma50 === 0) return null;
 
@@ -319,12 +325,12 @@ export class ConsolidationBreakoutEngine implements Strategy {
     // ---- Step 5: Compute stop-loss ----
     const entryPrice = currentClose;
 
-    const atr14 = atr(slice, 14);
+    const atr14 = cache ? cache.getAtr(14, barIndex) : atr(slice, 14);
     if (atr14 === undefined) return null;
 
     const atrStop = entryPrice - config.stopLoss.atr_multiple * atr14;
 
-    const swingLowVal = swingLow(slice, config.stopLoss.swing_lookback);
+    const swingLowVal = cache ? cache.getSwingLow(config.stopLoss.swing_lookback, barIndex) : swingLow(slice, config.stopLoss.swing_lookback);
     const structureStop = swingLowVal !== undefined
       ? swingLowVal - config.stopLoss.buffer * atr14
       : -Infinity;
@@ -370,17 +376,18 @@ export class ConsolidationBreakoutEngine implements Strategy {
       atrTrailMultiple?: number;
       atrTrailReference?: 'close' | 'highest_close';
     },
-    highestCloseSinceEntry: number
+    highestCloseSinceEntry: number,
+    cache?: IndicatorCache
   ): number | undefined {
     const slice = dataPoints.slice(0, barIndex + 1);
 
     // ATR(14) is required for all methods
-    const atr14 = atr(slice, 14);
+    const atr14 = cache ? cache.getAtr(14, barIndex) : atr(slice, 14);
     if (atr14 === undefined) return undefined;
 
     if (method === 'sma20') {
       const closes = slice.map(d => d.close);
-      const sma20 = sma(closes, 20);
+      const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
       if (sma20 === undefined) return undefined;
 
       const buffer = config.smaTrailBuffer ?? 0;
@@ -557,7 +564,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
       };
     }
 
-    const { config } = params;
+    const { config, cache: paramCache } = params;
     const ticker = (params as any).ticker ?? '';
     const currentBar = dataPoints[this.currentBarIndex];
     this.currentBarIndex++;
@@ -604,7 +611,8 @@ export class ConsolidationBreakoutEngine implements Strategy {
               atrTrailMultiple: ts.atrTrailMultiple,
               atrTrailReference: ts.atrTrailReference,
             },
-            this.highestCloseSinceEntry
+            this.highestCloseSinceEntry,
+            paramCache
           );
           if (computedStop !== undefined) {
             this.effectiveStopLoss = Math.max(this.effectiveStopLoss, computedStop);
@@ -671,7 +679,8 @@ export class ConsolidationBreakoutEngine implements Strategy {
         // Priority 3: Trend failsafe
         const slice = dataPoints.slice(0, this.currentBarIndex);
         const closes = slice.map(d => d.close);
-        const trendSma = sma(closes, config.trendExit.trend_exit_sma_period);
+        const trendSmaBarIndex = this.currentBarIndex - 1;
+        const trendSma = paramCache ? paramCache.getSma(config.trendExit.trend_exit_sma_period, trendSmaBarIndex) ?? sma(closes, config.trendExit.trend_exit_sma_period) : sma(closes, config.trendExit.trend_exit_sma_period);
         if (trendSma !== undefined && currentBar.close < trendSma) {
           this.positionOpen = false;
           const signal: V2Signal = {
@@ -764,7 +773,8 @@ export class ConsolidationBreakoutEngine implements Strategy {
       // Priority 3: Trend failsafe — bar.close < SMA(trend_exit_sma_period)
       const slice = dataPoints.slice(0, this.currentBarIndex);
       const closes = slice.map(d => d.close);
-      const trendSma = sma(closes, config.trendExit.trend_exit_sma_period);
+      const trendSmaBarIndex = this.currentBarIndex - 1;
+      const trendSma = paramCache ? paramCache.getSma(config.trendExit.trend_exit_sma_period, trendSmaBarIndex) ?? sma(closes, config.trendExit.trend_exit_sma_period) : sma(closes, config.trendExit.trend_exit_sma_period);
       if (trendSma !== undefined && currentBar.close < trendSma) {
         this.positionOpen = false;
         const rValue = this.entryPrice - this.stopLossPrice;
@@ -803,7 +813,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
 
     // Position not open — check for entry
     const barIndex = this.currentBarIndex - 1; // currentBarIndex was already incremented
-    const entryResult = ConsolidationBreakoutEngine.shouldEnter(dataPoints, barIndex, config);
+    const entryResult = ConsolidationBreakoutEngine.shouldEnter(dataPoints, barIndex, config, paramCache);
 
     if (entryResult) {
       this.positionOpen = true;

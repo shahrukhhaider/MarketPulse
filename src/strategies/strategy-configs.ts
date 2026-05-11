@@ -1,5 +1,6 @@
 import type { FilterCondition } from './filter-evaluator.js';
 import type { HistoricalDataPoint, StrategyType } from '../types.js';
+import type { IndicatorCache } from '../indicator-cache.js';
 
 // ============================================================
 // Exit Rule Types
@@ -210,6 +211,7 @@ export interface ConsolidationBreakoutConfiguration {
 export interface ConsolidationBreakoutParams {
   config: ConsolidationBreakoutConfiguration;
   primaryDataPoints?: HistoricalDataPoint[];
+  cache?: IndicatorCache;
 }
 
 // ============================================================
@@ -260,6 +262,7 @@ export interface TrendPullbackConfiguration {
 export interface TrendPullbackParams {
   config: TrendPullbackConfiguration;
   primaryDataPoints?: HistoricalDataPoint[];
+  cache?: IndicatorCache;
 }
 
 // ============================================================

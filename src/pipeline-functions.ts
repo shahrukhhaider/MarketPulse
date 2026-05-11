@@ -9,6 +9,7 @@ import { TrendPullbackEngine } from './strategies/trend-pullback-engine.js';
 import type { ConsolidationBreakoutParams, TrendPullbackParams } from './strategies/strategy-configs.js';
 import { generateChartHtml, getChartFilePath } from './chart-generator.js';
 import { writeFileSync } from 'node:fs';
+import { IndicatorCache, getDefaultCacheConfig } from './indicator-cache.js';
 
 // ============================================================
 // TuneResult Interface
@@ -86,6 +87,9 @@ export function tuneParams(
   }
   const { inSample: isData, outOfSample: oosData } = splitResult;
 
+  // Build indicator cache for in-sample data
+  const isCache = new IndicatorCache(isData, getDefaultCacheConfig());
+
   // Step 2: Generate grid entries
   let grid: ConsolidationBreakoutGridEntry[] | TrendPullbackGridEntry[];
   if (strategy === 'consolidation_breakout') {
@@ -105,9 +109,9 @@ export function tuneParams(
   for (const entry of grid) {
     let metrics: TuningPerformanceMetrics;
     if (strategy === 'consolidation_breakout') {
-      metrics = evaluateV3Configuration(entry as ConsolidationBreakoutGridEntry, isData);
+      metrics = evaluateV3Configuration(entry as ConsolidationBreakoutGridEntry, isData, isCache);
     } else {
-      metrics = evaluateTrendPullbackConfiguration(entry as TrendPullbackGridEntry, isData);
+      metrics = evaluateTrendPullbackConfiguration(entry as TrendPullbackGridEntry, isData, isCache);
     }
     isResults.push({ entry, isMetrics: metrics });
   }
@@ -131,11 +135,12 @@ export function tuneParams(
   const bestIsMetrics = filtered[0].isMetrics;
 
   // Step 6: Evaluate best on OOS data
+  const oosCache = new IndicatorCache(oosData, getDefaultCacheConfig());
   let bestOosMetrics: TuningPerformanceMetrics;
   if (strategy === 'consolidation_breakout') {
-    bestOosMetrics = evaluateV3Configuration(bestEntry as ConsolidationBreakoutGridEntry, oosData);
+    bestOosMetrics = evaluateV3Configuration(bestEntry as ConsolidationBreakoutGridEntry, oosData, oosCache);
   } else {
-    bestOosMetrics = evaluateTrendPullbackConfiguration(bestEntry as TrendPullbackGridEntry, oosData);
+    bestOosMetrics = evaluateTrendPullbackConfiguration(bestEntry as TrendPullbackGridEntry, oosData, oosCache);
   }
 
   // Step 7: Return TuneResult

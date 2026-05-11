@@ -6,6 +6,7 @@ import { CompositeStrategyEngine } from './strategies/composite-engine.js';
 import { ConsolidationBreakoutEngine } from './strategies/consolidation-breakout-engine.js';
 import { TrendPullbackEngine } from './strategies/trend-pullback-engine.js';
 import type { CompositeStrategyParams, ConsolidationBreakoutParams, TrendPullbackParams } from './strategies/strategy-configs.js';
+import type { IndicatorCache } from './indicator-cache.js';
 
 export type { TuningPerformanceMetrics } from './tuning-engine.js';
 
@@ -103,12 +104,13 @@ export function evaluateConfiguration(
  */
 export function evaluateV3Configuration(
   entry: ConsolidationBreakoutGridEntry,
-  dataPoints: HistoricalDataPoint[]
+  dataPoints: HistoricalDataPoint[],
+  cache?: IndicatorCache
 ): TuningPerformanceMetrics {
   const engine = new ConsolidationBreakoutEngine();
   engine.reset();
 
-  const v3Params: ConsolidationBreakoutParams = { config: entry.config };
+  const v3Params: ConsolidationBreakoutParams = { config: entry.config, cache };
 
   const backtestEngine = new BacktestEngine();
   const result = backtestEngine.runV2(dataPoints, engine, v3Params);
@@ -152,12 +154,13 @@ export function evaluateV3Configuration(
  */
 export function evaluateTrendPullbackConfiguration(
   entry: TrendPullbackGridEntry,
-  dataPoints: HistoricalDataPoint[]
+  dataPoints: HistoricalDataPoint[],
+  cache?: IndicatorCache
 ): TuningPerformanceMetrics {
   const engine = new TrendPullbackEngine();
   engine.reset();
 
-  const tpParams: TrendPullbackParams = { config: entry.config };
+  const tpParams: TrendPullbackParams = { config: entry.config, cache };
 
   const backtestEngine = new BacktestEngine();
   const result = backtestEngine.runV2(dataPoints, engine, tpParams);

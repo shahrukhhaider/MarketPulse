@@ -11,6 +11,7 @@ import type {
   TrendPullbackParams,
 } from './strategy-configs.js';
 import { sma, sma_slope, atr, atr_ratio, avgVolume, swingLow } from '../indicators.js';
+import type { IndicatorCache } from '../indicator-cache.js';
 
 // ============================================================
 // Result interfaces for standalone detection functions
@@ -124,7 +125,8 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
   static detectDirection(
     dataPoints: HistoricalDataPoint[],
     barIndex: number,
-    config: DirectionConfig
+    config: DirectionConfig,
+    cache?: IndicatorCache
   ): boolean {
     const slice = dataPoints.slice(0, barIndex + 1);
 
@@ -135,20 +137,20 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
     const currentClose = closes[closes.length - 1];
 
     // 1. close > SMA(50) — always required
-    const sma50 = sma(closes, 50);
+    const sma50 = cache ? cache.getSma(50, barIndex) : sma(closes, 50);
     if (sma50 === undefined) return false;
     if (currentClose <= sma50) return false;
 
     // 2. Optional: SMA(20) >= SMA(50)
     if (config.require_sma20_above_sma50) {
-      const sma20 = sma(closes, 20);
+      const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
       if (sma20 === undefined) return false;
       if (sma20 < sma50) return false;
     }
 
     // 3. Optional: SMA(50) slope positive
     if (config.require_sma50_slope_positive) {
-      const slope = sma_slope(closes, 50);
+      const slope = cache ? cache.getSmaSlope(50, barIndex) : sma_slope(closes, 50);
       if (slope === undefined || slope === false) return false;
     }
 
@@ -169,7 +171,8 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
   static detectPullback(
     dataPoints: HistoricalDataPoint[],
     barIndex: number,
-    config: SetupConfig
+    config: SetupConfig,
+    cache?: IndicatorCache
   ): PullbackResult {
     const notDetected: PullbackResult = {
       detected: false,
@@ -187,25 +190,25 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
     const currentClose = closes[closes.length - 1];
 
     // 1. Check close within pullback_proximity_pct of SMA(20)
-    const sma20 = sma(closes, 20);
+    const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
     if (sma20 === undefined || sma20 === 0) return notDetected;
 
     const distancePct = Math.abs(currentClose - sma20) / sma20 * 100;
     if (distancePct > config.pullback_proximity_pct) return notDetected;
 
     // 2. Check ATR(5)/ATR(20) < atr_contraction_threshold
-    const atrRat = atr_ratio(slice, 5, 20);
+    const atrRat = cache ? cache.getAtrRatio(5, 20, barIndex) : atr_ratio(slice, 5, 20);
     if (atrRat === undefined) return notDetected;
     if (atrRat >= config.atr_contraction_threshold) return notDetected;
 
     // 3. Check volume < avgVolume(20) × volume_below_avg_multiplier
     const currentVolume = slice[slice.length - 1].volume;
-    const avg20Vol = avgVolume(slice, 20);
+    const avg20Vol = cache ? cache.getAvgVolume(20, barIndex) : avgVolume(slice, 20);
     if (avg20Vol === undefined) return notDetected;
     if (currentVolume >= avg20Vol * config.volume_below_avg_multiplier) return notDetected;
 
     // All conditions pass — compute swing low over swing_lookback period
-    const swingLowVal = swingLow(slice, config.swing_lookback);
+    const swingLowVal = cache ? cache.getSwingLow(config.swing_lookback, barIndex) : swingLow(slice, config.swing_lookback);
     if (swingLowVal === undefined) return notDetected;
 
     return {
@@ -227,7 +230,8 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
   static detectTrigger(
     dataPoints: HistoricalDataPoint[],
     barIndex: number,
-    config: TriggerConfig
+    config: TriggerConfig,
+    cache?: IndicatorCache
   ): boolean {
     const slice = dataPoints.slice(0, barIndex + 1);
 
@@ -238,13 +242,13 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
     const currentClose = closes[closes.length - 1];
 
     // 1. Check close > SMA(10)
-    const sma10 = sma(closes, 10);
+    const sma10 = cache ? cache.getSma(10, barIndex) : sma(closes, 10);
     if (sma10 === undefined) return false;
     if (currentClose <= sma10) return false;
 
     // 2. Check volume > avgVolume(20) × trigger_volume_multiplier
     const currentVolume = slice[slice.length - 1].volume;
-    const avg20Vol = avgVolume(slice, 20);
+    const avg20Vol = cache ? cache.getAvgVolume(20, barIndex) : avgVolume(slice, 20);
     if (avg20Vol === undefined) return false;
     if (currentVolume <= avg20Vol * config.trigger_volume_multiplier) return false;
 
@@ -264,7 +268,8 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
   static shouldEnter(
     dataPoints: HistoricalDataPoint[],
     barIndex: number,
-    config: TrendPullbackConfiguration
+    config: TrendPullbackConfiguration,
+    cache?: IndicatorCache
   ): EntryResult | null {
     const slice = dataPoints.slice(0, barIndex + 1);
 
@@ -278,7 +283,8 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
     const directionPassed = TrendPullbackEngine.detectDirection(
       dataPoints,
       barIndex,
-      config.direction
+      config.direction,
+      cache
     );
     if (!directionPassed) return null;
 
@@ -296,7 +302,8 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
           volume_below_avg_multiplier: config.pullback.volume_below_avg_multiplier,
           swing_lookback: config.pullback.swing_lookback,
           max_pullback_staleness: config.pullback.max_pullback_staleness,
-        }
+        },
+        cache
       );
       if (result.detected) {
         pullback = result;
@@ -310,13 +317,14 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
     const triggerPassed = TrendPullbackEngine.detectTrigger(
       dataPoints,
       barIndex,
-      config.trigger
+      config.trigger,
+      cache
     );
     if (!triggerPassed) return null;
 
     // ---- Step 4: Overextension filter ----
-    const sma20 = sma(closes, 20);
-    const sma50 = sma(closes, 50);
+    const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
+    const sma50 = cache ? cache.getSma(50, barIndex) : sma(closes, 50);
     if (sma20 === undefined || sma20 === 0) return null;
     if (sma50 === undefined || sma50 === 0) return null;
 
@@ -332,7 +340,7 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
     // ---- Step 5: Compute stop-loss ----
     const entryPrice = currentClose;
 
-    const atr14 = atr(slice, 14);
+    const atr14 = cache ? cache.getAtr(14, barIndex) : atr(slice, 14);
     if (atr14 === undefined) return null;
 
     // ATR-based stop
@@ -377,17 +385,18 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
       atrTrailMultiple?: number;
       atrTrailReference?: 'close' | 'highest_close';
     },
-    highestCloseSinceEntry: number
+    highestCloseSinceEntry: number,
+    cache?: IndicatorCache
   ): number | undefined {
     const slice = dataPoints.slice(0, barIndex + 1);
 
     // ATR(14) is required for all methods
-    const atr14 = atr(slice, 14);
+    const atr14 = cache ? cache.getAtr(14, barIndex) : atr(slice, 14);
     if (atr14 === undefined) return undefined;
 
     if (method === 'sma20') {
       const closes = slice.map(d => d.close);
-      const sma20 = sma(closes, 20);
+      const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
       if (sma20 === undefined) return undefined;
 
       const buffer = config.smaTrailBuffer ?? 0;
@@ -492,7 +501,7 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
       };
     }
 
-    const { config } = params;
+    const { config, cache: paramCache } = params;
     const ticker = (params as any).ticker ?? '';
     const currentBar = dataPoints[this.currentBarIndex];
     this.currentBarIndex++;
@@ -629,7 +638,8 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
             atrTrailMultiple: ts.atrTrailMultiple,
             atrTrailReference: ts.atrTrailReference,
           },
-          this.highestCloseSinceEntry
+          this.highestCloseSinceEntry,
+          paramCache
         );
         if (computedStop !== undefined) {
           this.effectiveStopLoss = Math.max(this.effectiveStopLoss, computedStop);
@@ -736,7 +746,7 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
 
     // Position not open — check for entry
     const barIndex = this.currentBarIndex - 1;
-    const entryResult = TrendPullbackEngine.shouldEnter(dataPoints, barIndex, config);
+    const entryResult = TrendPullbackEngine.shouldEnter(dataPoints, barIndex, config, paramCache);
 
     if (entryResult) {
       this.positionOpen = true;

@@ -449,6 +449,100 @@ node dist/src/cli.js tune --ticker NVDA --strategy consolidation_breakout --v3
 
 V3 uses 5 years of data and searches 4,374+ parameter combinations. The tuner selects the config with the highest total return (minimum 3 trades required). Tunable parameters: `consolidation_window`, `max_range_pct`, `atr_ratio_threshold`, `volume_multiplier`, `overextension_pct`, `atr_multiple`, `swing_lookback`, `max_risk_pct`, `r_multiple`.
 
+### V3 Pipeline (recommended)
+
+The V3 pipeline is the primary workflow for strategy optimization. It tunes both strategies and produces a combined backtest chart in one command:
+
+```bash
+# Single ticker — tune, backtest, chart
+node dist/src/cli.js v3 --ticker NVDA
+
+# Multiple tickers in parallel
+node dist/src/cli.js v3 --ticker NVDA,AAPL,AMD,TSLA --concurrency 8
+
+# All top 100 tickers (weekly batch)
+node dist/src/cli.js v3 --ticker top100 --concurrency 16
+```
+
+After running, find results at:
+```bash
+ls -lt stock-price-tracker/.stock-tracker/NVDA_backtest_*.html | head -1
+```
+
+### Daily Scan (after tuning)
+
+Once profiles are saved (via `v3`), run a daily scan to detect current signals:
+
+```bash
+# Scan a single ticker for both strategies
+node dist/src/cli.js scan --tickers NVDA --strategy v3
+
+# Scan multiple tickers
+node dist/src/cli.js scan --tickers NVDA,AAPL,AMD --strategy v3
+
+# Scan all top 100
+node dist/src/cli.js scan --tickers top100 --strategy v3 --concurrency 16
+
+# Allow stale profiles (expired but still usable)
+node dist/src/cli.js scan --tickers NVDA --strategy v3 --allow-stale
+```
+
+**npm shortcut:**
+```bash
+npm run scan -- --tickers NVDA --strategy v3
+```
+
+The scan loads saved profiles from `.stock-tracker/profiles/` and runs signal detection on the latest 1-year data. Signals are sorted by priority: `active` > `active_late` > `extended` > `pressure` > `near` > `forming` > `none`.
+
+**Output includes:**
+- `signals[]` — array of signal results per ticker/strategy with `signal` state, `confidence`, `reason[]`
+- `warnings[]` — any tickers that couldn't be scanned (missing profile, expired, data error)
+
+### Scan Chart (visual signal overlay)
+
+Generate a focused chart showing signal detection overlaid on recent price action:
+
+```bash
+# Generate scan chart for a ticker
+node dist/src/cli.js scan-chart --ticker NVDA --strategy consolidation_breakout
+
+# Or for trend pullback
+node dist/src/cli.js scan-chart --ticker NVDA --strategy trend_pullback
+```
+
+**npm shortcut:**
+```bash
+npm run scan-chart -- --ticker NVDA --strategy consolidation_breakout
+```
+
+The scan chart shows ~1 year of price data with consolidation zones, breakout levels, entry/stop prices, and the current signal state. Output saved to `.stock-tracker/{TICKER}_scan_{timestamp}.html`.
+
+### Full Workflow: Tune → Backtest → Scan
+
+The complete weekly-tune / daily-scan pipeline:
+
+```bash
+# Step 1: Weekly — Tune and backtest (saves profiles)
+node dist/src/cli.js v3 --ticker NVDA
+
+# Step 2: Daily — Scan for current signals using saved profiles
+node dist/src/cli.js scan --tickers NVDA --strategy v3
+
+# Step 3: Optional — Generate visual scan chart for actionable signals
+node dist/src/cli.js scan-chart --ticker NVDA --strategy consolidation_breakout
+```
+
+For batch operations (cron jobs):
+```bash
+# Weekly tune (Sunday night)
+node dist/src/cli.js v3 --ticker top100 --concurrency 16
+
+# Daily scan (market open)
+node dist/src/cli.js scan --tickers top100 --strategy v3 --concurrency 16
+```
+
+See `scripts/crontab.txt` for recommended cron schedules.
+
 ### Compare strategies for a ticker
 
 ```bash
@@ -456,6 +550,140 @@ node dist/src/cli.js tune-and-chart --ticker NVDA --strategy momentum_continuati
 node dist/src/cli.js tune-and-chart --ticker NVDA --strategy breakout_volume --horizon short_term
 node dist/src/cli.js tune-and-chart --ticker NVDA --strategy consolidation_breakout --v3
 ```
+
+---
+
+### 13. v3 (V3 Pipeline — Tune + Backtest + Chart)
+
+The primary command for running the full V3 strategy pipeline: tunes both `consolidation_breakout` and `trend_pullback` strategies, backtests with the best params, saves profiles, and generates a combined HTML chart.
+
+```bash
+node dist/src/cli.js v3 --ticker <SYMBOL_OR_LIST> [--concurrency <N>] [--no-cache]
+```
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `--ticker` | Yes | Single ticker (e.g. `NVDA`), comma-separated list (e.g. `NVDA,AAPL,AMD`), or `top100` to load from `data/top100.json` |
+| `--concurrency` | No | Number of parallel workers for multi-ticker (1–64, default: 8) |
+| `--no-cache` | No | Bypass the historical data cache and fetch fresh data |
+
+**npm shortcut:**
+```bash
+npm run v3 -- --ticker NVDA
+```
+
+**Natural language triggers:** "run v3 for NVDA", "tune and backtest NVDA", "run the full pipeline for AAPL", "v3 top100"
+
+**What it does (single ticker):**
+1. Fetches 5 years of historical daily data
+2. Splits into 70% in-sample / 30% out-of-sample
+3. Runs grid search tuning for both strategies (~8,748 configs each)
+4. Evaluates best config on OOS data
+5. Saves optimized profiles to `.stock-tracker/profiles/`
+6. Runs full backtest on the complete 5y dataset with tuned params
+7. Generates a combined HTML chart at `.stock-tracker/{TICKER}_backtest_{timestamp}.html`
+
+**What it does (multi-ticker):**
+- Spawns parallel worker processes (up to `--concurrency`)
+- Each worker runs the full single-ticker pipeline independently
+- Returns batch results with per-ticker summaries
+
+**Examples:**
+```bash
+# Single ticker
+node dist/src/cli.js v3 --ticker NVDA
+
+# Multiple tickers
+node dist/src/cli.js v3 --ticker NVDA,AAPL,AMD,TSLA
+
+# All top 100 tickers with 16 workers
+node dist/src/cli.js v3 --ticker top100 --concurrency 16
+
+# Force fresh data (bypass cache)
+node dist/src/cli.js v3 --ticker NVDA --no-cache
+```
+
+**Output structure:**
+```json
+{
+  "success": true,
+  "command": "v3",
+  "data": {
+    "tune": {
+      "consolidation_breakout": { "status": "success", "in_sample": {...}, "out_of_sample": {...} },
+      "trend_pullback": { "status": "success", "in_sample": {...}, "out_of_sample": {...} }
+    },
+    "backtest": {
+      "consolidation_breakout": { "performance": {...}, "trades": [...] },
+      "trend_pullback": { "performance": {...}, "trades": [...] },
+      "combined": { "totalReturnPercent": ..., "winRate": ..., ... }
+    },
+    "chartFilePath": ".stock-tracker/NVDA_backtest_1778469340088.html",
+    "chartUrl": "file:///path/to/NVDA_backtest_1778469340088.html"
+  }
+}
+```
+
+---
+
+## Finding and Comparing Backtest Results
+
+### Locating result files
+
+All backtest charts are saved as HTML files in `.stock-tracker/`:
+
+```bash
+# List all backtest results for a ticker, sorted by date (newest first)
+ls -lt stock-price-tracker/.stock-tracker/{TICKER}_backtest_*.html
+
+# Example for NVDA
+ls -lt stock-price-tracker/.stock-tracker/NVDA_backtest_*.html
+```
+
+File naming: `{TICKER}_backtest_{unix_timestamp_ms}.html`
+
+### Extracting performance metrics from HTML files
+
+The HTML files contain performance metrics in the header section. Extract them with:
+
+```bash
+head -100 stock-price-tracker/.stock-tracker/NVDA_backtest_1778469340088.html | grep -i 'return\|win\|trade\|sharpe\|drawdown'
+```
+
+This outputs metrics for both strategies:
+- First block = consolidation_breakout (Total Return, Benchmark Return, Trades, Win Rate, Max Drawdown, Sharpe Ratio)
+- Second block = trend_pullback (Total Return, Trades, Win Rate, Max Drawdown, Sharpe Ratio)
+
+### Comparing two backtest runs
+
+To verify that two runs produce identical results (e.g., after a code change):
+
+```bash
+# Byte-level comparison (empty output = identical)
+diff stock-price-tracker/.stock-tracker/NVDA_backtest_<NEW>.html stock-price-tracker/.stock-tracker/NVDA_backtest_<OLD>.html
+
+# Quick metric comparison
+head -100 stock-price-tracker/.stock-tracker/NVDA_backtest_<NEW>.html | grep -i 'return\|win\|trade\|sharpe\|drawdown'
+head -100 stock-price-tracker/.stock-tracker/NVDA_backtest_<OLD>.html | grep -i 'return\|win\|trade\|sharpe\|drawdown'
+```
+
+If `diff` returns no output, the files are byte-for-byte identical — confirming behavioral equivalence.
+
+### Viewing charts
+
+Open the HTML file directly in a browser:
+
+```bash
+open stock-price-tracker/.stock-tracker/NVDA_backtest_1778469340088.html
+```
+
+The chart shows:
+- Price history with buy/sell markers for both strategies
+- Equity curve
+- Performance metrics summary
+- Individual trade details
+
+---
 
 ## Data Directory
 
@@ -468,6 +696,7 @@ All persistent data is stored in `.stock-tracker/` relative to `STOCK_TRACKER_HO
 | `signals-{pid}.json` | Session-scoped signal file (one per monitor process) |
 | `monitor.pid` | PID of the active background process |
 | `history-cache/` | Cached historical data (24h TTL) |
+| `profiles/` | Saved strategy profiles from tuning (JSON, one per ticker+strategy) |
 | `{TICKER}_backtest_{timestamp}.html` | Backtest chart visualizations |
 | `{TICKER}_{strategy}_{horizon}_{risk}.json` | Tuning result cache |
 
