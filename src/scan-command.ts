@@ -18,6 +18,7 @@ import type { CachingDataProvider } from './caching-data-provider.js';
 import { loadStrategyProfile } from './profile-store.js';
 import { detectSignal } from './signal-detector.js';
 import type { SignalOutput } from './strategy-registry.js';
+import { parallelScan } from './parallel-scan.js';
 
 // ============================================================
 // Dependencies
@@ -118,6 +119,30 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       return errorResult('scan', 'MISSING_PARAM', 'No tickers specified');
     }
 
+    // Parse concurrency from opts (set by command-wiring.ts)
+    const concurrency = opts['_concurrency'] ? parseInt(opts['_concurrency'], 10) : 8;
+
+    // Multi-ticker path: use parallelScan when multiple tickers and concurrency > 1
+    if (tickers.length > 1 && concurrency > 1) {
+      const result = await parallelScan({
+        tickers,
+        concurrency,
+        strategyName,
+        allowStale,
+        cachingProvider,
+        dataDir,
+      });
+
+      return successResult('scan', {
+        signals: result.signals,
+        warnings: result.warnings,
+        total: result.total,
+        scanned: result.scanned,
+        skipped: result.skipped,
+      });
+    }
+
+    // Sequential path: single ticker or concurrency === 1
     const signals: SignalOutput[] = [];
     const warnings: string[] = [];
 

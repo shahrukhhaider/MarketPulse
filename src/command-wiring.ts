@@ -31,7 +31,7 @@ import type { TuningInput, TunableStrategy, TimeHorizon, RiskProfile, BestRegion
 import { normalizeTicker } from './history-cache-store.js';
 import type { CacheEntry } from './history-cache-store.js';
 import { generateChartHtml, generateCombinedChartHtml, getChartFilePath } from './chart-generator.js';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { buildConfig, buildV2Config, generateV2Grid, generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig } from './parameter-grid.js';
 import { evaluateV3Configuration, splitData } from './walk-forward-validator.js';
@@ -41,6 +41,7 @@ import { createTuneHandler } from './tune-command.js';
 import { createScanHandler } from './scan-command.js';
 import { createChartHandler } from './chart-command.js';
 import { createScanChartHandler } from './scan-chart-command.js';
+import { parallelTune } from './parallel-tune.js';
 
 export interface WiringOptions {
   dataDir?: string;
@@ -49,6 +50,67 @@ export interface WiringOptions {
   yahooFinanceClient?: YahooFinanceClient;
   providerName?: string;
   noCache?: boolean;
+}
+
+// ============================================================
+// Concurrency Flag Parsing
+// ============================================================
+
+/**
+ * Parse and validate the --concurrency CLI flag.
+ * Returns the parsed integer value, or undefined if not specified.
+ * Emits a warning to stderr if the value is out of range.
+ *
+ * Valid range: 1–64 (integers only).
+ * - Values < 1 are rejected → returns default (8)
+ * - Values > 64 are rejected → returns 64
+ * - Non-integer or non-numeric values → returns default (8)
+ */
+export function parseConcurrency(opts: Record<string, string>): number {
+  const DEFAULT_CONCURRENCY = 8;
+  const MAX_CONCURRENCY = 64;
+  const MIN_CONCURRENCY = 1;
+
+  const raw = opts['concurrency'];
+  if (raw === undefined) {
+    return DEFAULT_CONCURRENCY;
+  }
+
+  const parsed = Number(raw);
+
+  // Non-numeric or NaN
+  if (!Number.isFinite(parsed)) {
+    process.stderr.write(
+      `Warning: Invalid --concurrency value '${raw}'. Using default (${DEFAULT_CONCURRENCY}).\n`,
+    );
+    return DEFAULT_CONCURRENCY;
+  }
+
+  // Non-integer
+  if (!Number.isInteger(parsed)) {
+    process.stderr.write(
+      `Warning: --concurrency must be an integer. Got '${raw}', using default (${DEFAULT_CONCURRENCY}).\n`,
+    );
+    return DEFAULT_CONCURRENCY;
+  }
+
+  // Below minimum
+  if (parsed < MIN_CONCURRENCY) {
+    process.stderr.write(
+      `Warning: --concurrency must be at least ${MIN_CONCURRENCY}. Got ${parsed}, using default (${DEFAULT_CONCURRENCY}).\n`,
+    );
+    return DEFAULT_CONCURRENCY;
+  }
+
+  // Above maximum
+  if (parsed > MAX_CONCURRENCY) {
+    process.stderr.write(
+      `Warning: --concurrency cannot exceed ${MAX_CONCURRENCY}. Got ${parsed}, capping at ${MAX_CONCURRENCY}.\n`,
+    );
+    return MAX_CONCURRENCY;
+  }
+
+  return parsed;
 }
 
 export interface WiredRouter {
@@ -1397,16 +1459,90 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   const chartHandler = createChartHandler({ cachingProvider, registry: strategyRegistry, dataDir });
   const scanChartHandler = createScanChartHandler({ cachingProvider, dataDir });
 
-  router.register('tune-pipeline', ['tickers', 'strategy'], tuneHandler);
-  router.register('scan', ['tickers', 'strategy'], scanHandler);
+  router.register('tune-pipeline', ['tickers', 'strategy'], async (opts) => {
+    // Parse and validate --concurrency flag
+    const concurrency = parseConcurrency(opts);
+    const tickersArg = opts['tickers'];
+    const shouldSave = opts['save'] !== undefined;
+    const noCache = opts['no-cache'] !== undefined;
+
+    // Resolve ticker list to determine if we should use parallel execution
+    const tickers = resolveV3TickerList(tickersArg, dataDir);
+    if ('error' in tickers) {
+      return errorResult('tune-pipeline', 'CONFIG_ERROR', tickers.error);
+    }
+
+    if (tickers.length === 0) {
+      return errorResult('tune-pipeline', 'MISSING_PARAM', 'No tickers specified');
+    }
+
+    // Multi-ticker path: use parallelTune for parallel execution
+    if (tickers.length > 1) {
+      const batchResult = await parallelTune({
+        tickers,
+        concurrency,
+        shouldSave,
+        noCache,
+        runBacktest: false,
+        cachingProvider,
+        dataDir,
+      });
+
+      return successResult('tune-pipeline', batchResult);
+    }
+
+    // Single ticker path: fall through to sequential handler
+    opts['_concurrency'] = String(concurrency);
+    return tuneHandler(opts);
+  });
+  router.register('scan', ['tickers', 'strategy'], async (opts) => {
+    // Parse and validate --concurrency flag
+    const concurrency = parseConcurrency(opts);
+    opts['_concurrency'] = String(concurrency);
+    return scanHandler(opts);
+  });
   router.register('chart', ['ticker', 'strategy'], chartHandler);
   router.register('scan-chart', ['ticker', 'strategy'], scanChartHandler);
 
   // --- v3: shorthand for tune-and-chart --v3 --save (only requires --ticker) ---
+  // Supports: single ticker, comma-separated tickers, or --ticker top100
+  // Multi-ticker → parallelTune(); single ticker → existing tune-and-chart handler
   router.register('v3', ['ticker'], async (opts) => {
+    // Parse --concurrency flag
+    const concurrency = parseConcurrency(opts);
+    const tickerArg = opts['ticker'];
+
+    // Resolve ticker list: 'top100' loads from data/top100.json, comma-separated splits
+    const tickers = resolveV3TickerList(tickerArg, dataDir);
+    if ('error' in tickers) {
+      return errorResult('v3', 'CONFIG_ERROR', tickers.error);
+    }
+
+    if (tickers.length === 0) {
+      return errorResult('v3', 'MISSING_PARAM', 'No tickers specified');
+    }
+
+    // Multi-ticker path: use parallelTune
+    if (tickers.length > 1) {
+      const batchResult = await parallelTune({
+        tickers,
+        concurrency,
+        shouldSave: true,
+        noCache: opts['no-cache'] !== undefined,
+        runBacktest: true,
+        cachingProvider,
+        dataDir,
+      });
+
+      return successResult('v3', batchResult);
+    }
+
+    // Single ticker path: run on main thread via existing tune-and-chart handler
+    opts['ticker'] = tickers[0];
     opts['strategy'] = 'v3';
     opts['v3'] = '';
     opts['save'] = '';
+    opts['concurrency'] = String(concurrency);
     const tuneAndChartDef = router.getHandler('tune-and-chart');
     if (!tuneAndChartDef) {
       return errorResult('v3', 'INTERNAL_ERROR', 'tune-and-chart handler not found');
@@ -1426,6 +1562,43 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     cachingProvider,
     strategyRegistry,
   };
+}
+
+// ============================================================
+// V3 Ticker List Resolution
+// ============================================================
+
+/**
+ * Resolve the --ticker argument for the v3 command.
+ * Supports: single ticker, comma-separated list, or 'top100' keyword.
+ */
+function resolveV3TickerList(tickerArg: string, dataDir: string): string[] | { error: string } {
+  if (tickerArg.toLowerCase() === 'top100') {
+    try {
+      // Look for top100.json in the data/ directory relative to CWD (project root)
+      // Fallback: also check relative to dataDir
+      let top100Path = path.join(process.cwd(), 'data', 'top100.json');
+      try {
+        readFileSync(top100Path, 'utf-8');
+      } catch {
+        // Fallback to dataDir-relative path (for compatibility with tune-command)
+        top100Path = path.join(dataDir, 'data', 'top100.json');
+      }
+      const content = readFileSync(top100Path, 'utf-8');
+      const parsed = JSON.parse(content) as { tickers?: string[] };
+      if (!Array.isArray(parsed.tickers) || parsed.tickers.length === 0) {
+        return { error: `top100.json at ${top100Path} is missing or has empty 'tickers' array` };
+      }
+      return parsed.tickers.map((t: string) => t.toUpperCase());
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { error: `Failed to load top100.json: ${message}` };
+    }
+  }
+
+  // Comma-separated or single ticker
+  const tickers = tickerArg.split(',').map(t => t.trim().toUpperCase()).filter(t => t.length > 0);
+  return tickers;
 }
 
 function getStrategyInstance(strategyType: StrategyType) {

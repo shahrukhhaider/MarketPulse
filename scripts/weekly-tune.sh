@@ -1,13 +1,12 @@
 #!/bin/bash
 # Weekly V3 tune — runs Sunday 9:00 AM ET
-# Tunes both strategies for top 10 tickers, saves profiles
+# Tunes all top100 tickers in parallel using built-in worker pool
 
 set -e
 
 PROJECT_DIR="/Users/haidex/Documents/projects/liveTrack/stock-price-tracker"
 NODE="/Users/haidex/.nvm/versions/node/v20.20.2/bin/node"
 LOG_DIR="$PROJECT_DIR/.stock-tracker/logs"
-TICKERS="HOOD SOFI ZETA IREN UNH KTOS ACHR UUUU GRAB NOW"
 
 mkdir -p "$LOG_DIR"
 
@@ -18,9 +17,12 @@ echo "[$(date)] Running weekly V3 tune..." >> "$LOG_DIR/cron.log"
 
 cd "$PROJECT_DIR"
 
-for TICKER in $TICKERS; do
-  echo "[$(date)] Tuning $TICKER..." >> "$LOG_FILE"
-  $NODE dist/src/cli.js v3 --ticker "$TICKER" >> "$LOG_FILE" 2>&1 || echo "[$(date)] $TICKER failed" >> "$LOG_FILE"
-done
-
-echo "[$(date)] Weekly tune complete. Log: $LOG_FILE" >> "$LOG_DIR/cron.log"
+# Run parallel tune-pipeline with top100 tickers and 8 concurrent workers
+# Single invocation replaces the sequential per-ticker loop
+if $NODE dist/src/cli.js tune-pipeline --tickers top100 --strategy v3 --concurrency 8 --save >> "$LOG_FILE" 2>&1; then
+  echo "[$(date)] Weekly tune complete. Log: $LOG_FILE" >> "$LOG_DIR/cron.log"
+else
+  EXIT_CODE=$?
+  echo "[$(date)] Weekly tune FAILED (exit code $EXIT_CODE). Log: $LOG_FILE" >> "$LOG_DIR/cron.log"
+  exit $EXIT_CODE
+fi
