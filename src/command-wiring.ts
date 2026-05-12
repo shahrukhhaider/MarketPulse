@@ -42,6 +42,7 @@ import { createScanHandler } from './scan-command.js';
 import { createChartHandler } from './chart-command.js';
 import { createScanChartHandler } from './scan-chart-command.js';
 import { parallelTune } from './parallel-tune.js';
+import { createJournalStatusHandler, createJournalRecordHandler, createJournalUpdateHandler } from './journal-command.js';
 
 export interface WiringOptions {
   dataDir?: string;
@@ -1448,6 +1449,15 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     }
     return tuneAndChartDef(opts);
   });
+
+  // --- Journal commands: status, record, update ---
+  const journalStatusHandler = createJournalStatusHandler({ dataDir, cachingProvider });
+  const journalRecordHandler = createJournalRecordHandler({ dataDir, cachingProvider });
+  const journalUpdateHandler = createJournalUpdateHandler({ dataDir, cachingProvider });
+
+  router.register('journal-status', [], journalStatusHandler);
+  router.register('journal-record', [], journalRecordHandler);
+  router.register('journal-update', [], journalUpdateHandler);
 
   return {
     router,

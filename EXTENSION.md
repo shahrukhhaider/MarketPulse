@@ -157,3 +157,170 @@ For a production-grade channel experience, replace the MeshClaw dependency with 
 - Hosted on Lambda + API Gateway for high availability
 - DynamoDB for per-user state
 - No dependency on any individual's host
+
+---
+
+# Extension Plan: Multi-Layer Trading Pipeline
+
+## Goal
+
+Evolve the stock-price-tracker from a flat scan-and-signal system into a layered pipeline where each layer filters, enriches, and ranks trade opportunities. The layers build incrementally — each can be developed and tested independently.
+
+## Pipeline Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                                                                     │
+│  Layer 1: Market / Trend Regime (FILTER)                           │
+│  ─────────────────────────────────────                             │
+│  SuperTrend state (bullish/bearish per ticker)                     │
+│  Market regime (SPY/QQQ broad direction)                           │
+│  Volatility regime (ATR expansion/contraction)                     │
+│  Trend strength (how established)                                  │
+│                                                                     │
+│  Output: regime_state per ticker → pass/block to Layer 2           │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  Layer 2: Opportunity Discovery (DETECT)                  [EXISTS]  │
+│  ─────────────────────────────────────────                         │
+│  Consolidation breakout (existing)                                 │
+│  Trend pullback (existing)                                         │
+│  Momentum continuation (future)                                    │
+│  Breakout volume (future)                                          │
+│                                                                     │
+│  Output: raw signals (active/near/forming) per ticker+strategy     │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  Layer 3: Trade Setup / Ranking / Confidence (RANK)      [PARTIAL]  │
+│  ──────────────────────────────────────────────                    │
+│  Strategy score (from tuning OOS metrics)                          │
+│  Regime alignment (Layer 1 agrees with Layer 2 direction)          │
+│  Signal overlap (multiple strategies fire on same ticker)          │
+│  Risk/reward ratio                                                 │
+│  Confidence score (existing, from weight presets)                   │
+│                                                                     │
+│  Output: ranked list of trade setups with composite score          │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  Layer 4: Trade Monitoring (TRACK)                       [PARTIAL]  │
+│  ─────────────────────────────────────                             │
+│  Signal Journal (just built — records + tracks outcomes)           │
+│  Hold / watch / reduce / exit alerts                               │
+│  Position aging (days open, R-multiple progress)                   │
+│  Webull paper trading integration (future)                         │
+│                                                                     │
+│  Output: portfolio state, P&L, alerts                              │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Current State
+
+| Layer | Status | What Exists |
+|-------|--------|-------------|
+| 1 — Regime | **Not started** | SuperTrend PineScript reference (`scripts/super-trend.txt`) |
+| 2 — Discovery | **Complete** | consolidation_breakout + trend_pullback engines, scan command |
+| 3 — Ranking | **Partial** | Confidence score (weight presets), R:R in signal output |
+| 4 — Monitoring | **Partial** | Signal Journal (records + tracks), scan-summary (terminal view) |
+
+## Layer 1: SuperTrend Regime — Design Notes
+
+### Core Algorithm (from PineScript reference)
+
+```
+ATR = True ATR over N periods (default: 26)
+Multiplier = 3.7
+
+Upper Band = source - (Multiplier × ATR)
+Lower Band = source + (Multiplier × ATR)
+
+Trend = 1 (bullish) when close crosses above Lower Band
+Trend = -1 (bearish) when close drops below Upper Band
+
+Bands ratchet: Upper only moves up, Lower only moves down
+```
+
+### Implementation Plan
+
+1. **`src/supertrend.ts`** — Pure function: `computeSuperTrend(data, period, multiplier) → { trend: 1|-1, upperBand, lowerBand }[]`
+2. **`src/regime-detector.ts`** — Wraps SuperTrend + market-level checks:
+   - Per-ticker regime: SuperTrend(ticker, 26, 3.7)
+   - Market regime: SuperTrend(SPY, 26, 3.7)
+   - Volatility regime: ATR(14) vs ATR(50) ratio
+   - Output: `{ ticker, regime: 'bullish'|'bearish'|'neutral', market_regime, vol_regime }`
+3. **Integration with scan**: Add `--regime-filter` flag that skips tickers where regime is bearish
+4. **Journal comparison**: Track win rate with/without regime filter to measure improvement
+
+### Parameters (from PineScript)
+
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| ATR Period | 26 | Lookback for volatility measurement |
+| Multiplier | 3.7 | Band distance from price (higher = fewer signals, stronger trends) |
+| Source | Low | Price source for band calculation |
+| Fast ATR Period | 10 | Optional early exit (tighter bands) |
+| Fast Multiplier | 1.5 | Optional early exit sensitivity |
+
+### Incremental Build Order
+
+1. Implement `computeSuperTrend()` as a pure indicator function
+2. Add to `IndicatorCache` for pre-computation during tuning
+3. Create `regime-detector.ts` that runs SuperTrend on each ticker + SPY
+4. Add `--regime-filter` to scan command (only show signals where regime = bullish)
+5. Add regime state to scan-summary output (show regime badge per ticker)
+6. Track journal win rate split by regime alignment
+7. (Future) Tune SuperTrend parameters per ticker like existing strategies
+
+## Layer 3: Ranking — Design Notes
+
+### Composite Score Formula (future)
+
+```
+composite_score = (
+  w1 × confidence_score +        // existing (0–1)
+  w2 × regime_alignment +        // 1 if regime bullish, 0 if bearish
+  w3 × signal_overlap +          // 1 if both strategies fire, 0.5 if one
+  w4 × rr_ratio_normalized +     // R:R / max_R:R across signals
+  w5 × oos_sharpe_normalized     // OOS Sharpe from tuning profile
+)
+```
+
+### Integration
+
+- Ranking happens after Layer 2 produces raw signals
+- Only signals that pass Layer 1 regime filter reach the ranker
+- Top N signals (by composite score) are presented to the user
+- Journal tracks composite score at entry time for later analysis
+
+## Layer 4: Monitoring Enhancements — Design Notes
+
+### Alert Types (future)
+
+| Alert | Trigger | Action |
+|-------|---------|--------|
+| HOLD | Position progressing normally | No action |
+| WATCH | Price approaching stop or extended | Tighten attention |
+| REDUCE | Hit partial target (e.g., 1R profit) | Consider taking partial |
+| EXIT | Stop hit, target hit, or expired | Close position |
+
+### Integration with Journal
+
+The signal journal already tracks open/won/lost/expired. Future alerts would:
+- Compute current R-multiple for open positions daily
+- Emit WATCH when R < -0.5 (approaching stop)
+- Emit REDUCE when R > 1.0 (partial profit available)
+- These appear in the `journal:status` output
+
+## Build Sequence (Recommended)
+
+1. ✅ Signal Journal (Layer 4 — just completed)
+2. 🔜 SuperTrend indicator (`src/supertrend.ts`)
+3. 🔜 Regime detector + scan filter
+4. 🔜 Journal win-rate split by regime (measure improvement)
+5. 📋 Signal overlap detection (Layer 3)
+6. 📋 Composite ranking score (Layer 3)
+7. 📋 Position alerts (Layer 4 enhancement)
+8. 📋 Webull execution (Layer 4 — when account ready)

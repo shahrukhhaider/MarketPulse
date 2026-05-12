@@ -1,0 +1,166 @@
+//@version=6
+strategy('Super Duper Trend', overlay = true, precision = 2, initial_capital = 25000, default_qty_type = strategy.fixed, default_qty_value = 10)
+
+// Investment sizing
+investment = input.int(150, title = 'Amount worth of the trade')
+var int trade_qty = na
+var string tradeCommand = ''
+var string thingToTrade = ''
+isCrypto = syminfo.type == 'crypto'
+thingToTrade := isCrypto ? syminfo.basecurrency + syminfo.currency : syminfo.ticker
+
+// ================= User Inputs =================
+Periods = input.int(26, title = 'SuperTrend ATR Period')
+Multiplier = input.float(3.7, title = 'SuperTrend ATR Multiplier', step = 0.1)
+changeATR = input.bool(true, title = 'Use True ATR Calculation?')
+
+// Early Exit: Fast SuperTrend
+useFastSuperTrend = input.bool(false, title = 'Enable Fast SuperTrend Early Exit?')
+FastATRPeriods = input.int(10, title = 'Fast SuperTrend ATR Period')
+FastMultiplier = input.float(1.5, title = 'Fast SuperTrend Multiplier')
+
+// Trailing Stop Exit
+useTrailingStop = input.bool(false, title = 'Enable ATR Trailing Stop?')
+TrailingMultiplier = input.float(1.5, title = 'ATR Trailing Multiplier')
+
+// EMA Exit
+useEMAExit = input.bool(false, title = 'Enable EMA Exit?')
+emaLength = input.int(21, title = 'EMA Exit Length')
+
+// Stop Loss / Take Profit
+useFixedStops = input.bool(false, title = 'Enable Fixed Stop Loss/Take Profit?')
+stopLossPerc = input.float(1.0, title = 'Stop Loss %', step = 0.1) / 100
+takeProfitPerc = input.float(2.0, title = 'Take Profit %', step = 0.1) / 100
+
+// ================= SuperTrend Core =================
+src = input.source(low, title = 'SuperTrend Source')
+atr = changeATR ? ta.atr(Periods) : ta.sma(ta.tr, Periods)
+
+up = src - Multiplier * atr
+up1 = nz(up[1], up)
+up := close[1] > up1 ? math.max(up, up1) : up
+
+dn = src + Multiplier * atr
+dn1 = nz(dn[1], dn)
+dn := close[1] < dn1 ? math.min(dn, dn1) : dn
+
+var trend = 1
+trend := nz(trend[1], 1)
+trend := trend == -1 and close > dn1 ? 1 : trend == 1 and close < up1 ? -1 : trend
+
+buySignal = trend == 1 and trend[1] == -1
+sellSignal = trend == -1 and trend[1] == 1
+
+// ================= Fast SuperTrend Early Exit =================
+fastAtr = changeATR ? ta.atr(FastATRPeriods) : ta.sma(ta.tr, FastATRPeriods)
+fastUp = src - FastMultiplier * fastAtr
+fastUp1 = nz(fastUp[1], fastUp)
+fastUp := close[1] > fastUp1 ? math.max(fastUp, fastUp1) : fastUp
+
+fastDn = src + FastMultiplier * fastAtr
+fastDn1 = nz(fastDn[1], fastDn)
+fastDn := close[1] < fastDn1 ? math.min(fastDn, fastDn1) : fastDn
+
+var fastTrend = 1
+fastTrend := nz(fastTrend[1], 1)
+fastTrend := fastTrend == -1 and close > fastDn1 ? 1 : fastTrend == 1 and close < fastUp1 ? -1 : fastTrend
+
+earlyExit = useFastSuperTrend and trend == 1 and fastTrend == -1
+
+// ================= ATR Trailing Stop =================
+atrTrail = ta.atr(Periods)
+trailStop = close - atrTrail * TrailingMultiplier
+var float trailPrice = na
+trailPrice := nz(trailPrice[1], trailStop)
+trailPrice := close > trailPrice[1] ? math.max(trailStop, trailPrice[1]) : trailPrice[1]
+
+trailExit = useTrailingStop and trend == 1 and close < trailPrice
+
+// ================= EMA Exit =================
+exitEma = ta.ema(close, emaLength)
+emaExit = useEMAExit and trend == 1 and close < exitEma
+
+// ================= 1% Drop Early Exit =================
+var float entryPrice = na
+entryPrice := if buySignal
+    close
+else
+    nz(entryPrice[1])
+
+onePercentDropRaw = strategy.position_size > 0 and close < entryPrice * 0.99
+var bool onePercentDropShown = false
+
+// Reset the warning flag when a new position is opened or position size becomes 0
+if strategy.position_size == 0
+    onePercentDropShown := false
+    onePercentDropShown
+
+onePercentDrop = onePercentDropRaw and not onePercentDropShown
+
+if onePercentDrop
+    onePercentDropShown := true
+    onePercentDropShown
+
+plotshape(onePercentDrop, title = '1% Drop Warning', text = '⚠️ -1%', location = location.abovebar, style = shape.labeldown, size = size.tiny, color = color.fuchsia, textcolor = color.white)
+
+
+// ================= Strategy Entries and Exits =================
+if buySignal
+    trade_qty := math.floor(investment / close)
+    if trade_qty == 0
+        trade_qty := 1
+        trade_qty
+    tradeCommand := 's=' + thingToTrade + ' q=' + str.tostring(trade_qty) + ' t=market b=buy d=0'
+    strategy.entry('Long', strategy.long, stop = useFixedStops ? close * (1 - stopLossPerc) : na, limit = useFixedStops ? close * (1 + takeProfitPerc) : na, alert_message = tradeCommand)
+
+if sellSignal
+    tradeCommand := 's=' + thingToTrade + ' t=market c=position'
+    strategy.close('Long', comment = 'SuperTrend Exit', alert_message = tradeCommand)
+
+if earlyExit
+    tradeCommand := 's=' + thingToTrade + ' t=market c=position'
+    strategy.close('Long', comment = 'Fast SuperTrend Early Exit')
+
+if trailExit
+    tradeCommand := 's=' + thingToTrade + ' t=market c=position'
+    strategy.close('Long', comment = 'ATR Trailing Stop Exit', alert_message = tradeCommand)
+
+if emaExit
+    tradeCommand := 's=' + thingToTrade + ' t=market c=position'
+    strategy.close('Long', comment = 'EMA Exit', alert_message = tradeCommand)
+
+// ================= Plotting =================
+// Main SuperTrend
+upPlot = plot(trend == 1 ? up : na, title = 'Up Trend', style = plot.style_linebr, linewidth = 2, color = color.green)
+dnPlot = plot(trend == 1 ? na : dn, title = 'Down Trend', style = plot.style_linebr, linewidth = 2, color = color.red)
+
+// Fast SuperTrend
+plot(useFastSuperTrend and fastTrend == 1 ? fastUp : na, title = 'Fast Up Trend', color = color.aqua, linewidth = 1, style = plot.style_linebr)
+plot(useFastSuperTrend and fastTrend == -1 ? fastDn : na, title = 'Fast Down Trend', color = color.orange, linewidth = 1, style = plot.style_linebr)
+
+// Trailing Stop
+plot(useTrailingStop ? trailPrice : na, title = 'ATR Trailing Stop', color = color.purple, linewidth = 1)
+
+// EMA Exit
+plot(useEMAExit ? exitEma : na, title = 'EMA Exit', color = color.blue, linewidth = 1)
+
+
+// Signals
+plotshape(buySignal, title = 'Buy Signal', text = 'Buy', location = location.belowbar, style = shape.labelup, size = size.tiny, color = color.green, textcolor = color.white)
+plotshape(sellSignal, title = 'Sell Signal', text = 'Sell', location = location.abovebar, style = shape.labeldown, size = size.large, color = color.red, textcolor = color.white)
+
+fastExitSignal = earlyExit and not earlyExit[1] and strategy.position_size > 0
+
+
+plotshape(fastExitSignal, title = 'Fast SuperTrend Exit', text = 'Exit', location = location.abovebar, style = shape.labeldown, size = size.tiny, color = color.orange, textcolor = color.white)
+
+plotshape(trailExit, title = 'ATR Trailing Exit', text = 'Exit', location = location.abovebar, style = shape.labeldown, size = size.tiny, color = color.purple, textcolor = color.white)
+
+// Alerts (only applies to indicators)
+alertcondition(buySignal, title = 'SuperTrend Buy', message = 'SuperTrend Buy!')
+alertcondition(sellSignal, title = 'SuperTrend Sell', message = 'SuperTrend Sell!')
+alertcondition(fastExitSignal, title = 'Fast SuperTrend Exit', message = 'Fast SuperTrend Early Exit!')
+alertcondition(trailExit, title = 'ATR Trailing Stop Exit', message = 'ATR Trailing Stop Exit!')
+alertcondition(emaExit, title = 'EMA Exit', message = 'EMA Exit Signal!')
+alertcondition(onePercentDrop, title = '1% Drop Warning', message = 'Warning: Price dropped 1% below entry.')
+

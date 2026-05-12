@@ -31,8 +31,22 @@ async function main(): Promise<void> {
     args.splice(summaryIndex, 1); // Remove flag before passing to router
   }
 
+  // Check for --log <path> flag (save JSON to file)
+  const logIndex = args.indexOf('--log');
+  let logPath: string | null = null;
+  if (logIndex !== -1 && logIndex + 1 < args.length) {
+    logPath = args[logIndex + 1];
+    args.splice(logIndex, 2); // Remove --log and its value
+  }
+
   const parsed = router.parse(args);
   const result = await router.dispatch(parsed);
+
+  // Save JSON to log file if --log was specified
+  if (logPath) {
+    const jsonOutput = router.formatOutput(result);
+    fs.writeFileSync(logPath, jsonOutput + '\n', 'utf-8');
+  }
 
   // If --summary was requested and this is a successful scan, use the formatter
   if (wantSummary && result.success && parsed.command === 'scan' && result.data) {

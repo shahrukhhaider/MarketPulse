@@ -18,10 +18,7 @@ echo "[$(date)] Running daily V3 scan..." >> "$LOG_DIR/cron.log"
 
 cd "$PROJECT_DIR"
 
-# Save JSON to log file
-$NODE dist/src/cli.js scan --tickers "$TICKERS" --strategy v3 --allow-stale > "$LOG_FILE" 2>> "$LOG_DIR/cron.log"
-
-# Print terminal summary
-$NODE dist/src/cli.js scan --tickers "$TICKERS" --strategy v3 --allow-stale --summary 2>/dev/null
+# Run scan once with --summary flag: prints terminal summary to stdout, saves JSON to log
+$NODE dist/src/cli.js scan --tickers "$TICKERS" --strategy v3 --allow-stale --summary --log "$LOG_FILE" 2>> "$LOG_DIR/cron.log"
 
 echo "[$(date)] Scan complete. Results: $LOG_FILE" >> "$LOG_DIR/cron.log"

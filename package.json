@@ -19,7 +19,14 @@
     "scan": "node dist/src/cli.js scan",
     "scan-summary": "node dist/src/cli.js scan --summary",
     "chart": "node dist/src/cli.js chart",
-    "scan-chart": "node dist/src/cli.js scan-chart"
+    "scan-chart": "node dist/src/cli.js scan-chart",
+    "paper:status": "python3 scripts/webull-trade.py status",
+    "paper:update": "python3 scripts/webull-trade.py update",
+    "paper:close": "python3 scripts/webull-trade.py close",
+    "journal:status": "node dist/src/cli.js journal-status",
+    "journal:record": "node dist/src/cli.js journal-record",
+    "journal:update": "node dist/src/cli.js journal-update",
+    "pipeline": "./scripts/daily-pipeline.sh"
   },
   "dependencies": {
     "yahoo-finance2": "^3.14.0"
