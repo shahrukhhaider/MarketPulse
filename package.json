@@ -17,6 +17,7 @@
     "tune": "node dist/src/cli.js tune-pipeline",
     "v3": "node dist/src/cli.js v3",
     "scan": "node dist/src/cli.js scan",
+    "scan-summary": "node dist/src/cli.js scan --summary",
     "chart": "node dist/src/cli.js chart",
     "scan-chart": "node dist/src/cli.js scan-chart"
   },

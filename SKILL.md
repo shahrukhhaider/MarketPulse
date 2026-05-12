@@ -485,12 +485,28 @@ node dist/src/cli.js scan --tickers top100 --strategy v3 --concurrency 16
 
 # Allow stale profiles (expired but still usable)
 node dist/src/cli.js scan --tickers NVDA --strategy v3 --allow-stale
+
+# Terminal summary (colored, grouped by signal priority)
+node dist/src/cli.js scan --tickers NVDA,AAPL,AMD --strategy v3 --allow-stale --summary
 ```
 
-**npm shortcut:**
+**npm shortcuts:**
 ```bash
+# JSON output
 npm run scan -- --tickers NVDA --strategy v3
+
+# Terminal summary (recommended for daily use)
+npm run scan-summary -- --tickers NVDA,AAPL,GOOGL,AMZN --strategy v3 --allow-stale
 ```
+
+**The `--summary` flag** formats output as a colored terminal report grouped by signal priority:
+- 🟢 **ACTIVE** — Entry confirmed (shows entry, stop, target, risk, R:R)
+- 🟡 **NEAR** — Waiting for trigger (shows what's needed)
+- 🔵 **FORMING (breakout)** — Consolidation building (shows breakout level and distance)
+- 🔵 **FORMING (pullback)** — Uptrend watch (sorted by distance to SMA(20))
+- ⚪ **NO SETUP** — Below SMA(50), no actionable signal
+
+Without `--summary`, output is raw JSON (useful for logging and programmatic use).
 
 The scan loads saved profiles from `.stock-tracker/profiles/` and runs signal detection on the latest 1-year data. Signals are sorted by priority: `active` > `active_late` > `extended` > `pressure` > `near` > `forming` > `none`.
 
@@ -537,9 +553,14 @@ For batch operations (cron jobs):
 # Weekly tune (Sunday night)
 node dist/src/cli.js v3 --ticker top100 --concurrency 16
 
-# Daily scan (market open)
-node dist/src/cli.js scan --tickers top100 --strategy v3 --concurrency 16
+# Daily scan (market open) — saves JSON log + prints terminal summary
+./scripts/daily-scan.sh
 ```
+
+The `daily-scan.sh` script:
+1. Saves full JSON results to `.stock-tracker/logs/scan_{timestamp}.json`
+2. Prints a colored terminal summary to stdout
+3. Logs timing info to `.stock-tracker/logs/cron.log`
 
 See `scripts/crontab.txt` for recommended cron schedules.
 

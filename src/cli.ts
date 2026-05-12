@@ -3,6 +3,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createWiredRouter } from './command-wiring.js';
+import { formatScanSummary } from './scan-formatter.js';
 
 /**
  * CLI entry point for the stock-price-tracker tool.
@@ -22,8 +23,25 @@ async function main(): Promise<void> {
 
   // Parse CLI args (skip node and script path)
   const args = process.argv.slice(2);
-  const output = await router.execute(args);
 
+  // Check for --summary flag (presentation layer for scan command)
+  const summaryIndex = args.indexOf('--summary');
+  const wantSummary = summaryIndex !== -1;
+  if (wantSummary) {
+    args.splice(summaryIndex, 1); // Remove flag before passing to router
+  }
+
+  const parsed = router.parse(args);
+  const result = await router.dispatch(parsed);
+
+  // If --summary was requested and this is a successful scan, use the formatter
+  if (wantSummary && result.success && parsed.command === 'scan' && result.data) {
+    const summary = formatScanSummary(result.data);
+    process.stdout.write(summary + '\n');
+    process.exit(0);
+  }
+
+  const output = router.formatOutput(result);
   process.stdout.write(output + '\n');
   process.exit(0);
 }
