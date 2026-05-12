@@ -33,10 +33,14 @@ function createMockYahooClient(): YahooFinanceClient {
       if (!knownTickers.has(upper)) {
         throw new Error(`Symbol not found: ${upper}`);
       }
+      // Use recent dates so they fall within any period-based date range
+      const today = new Date();
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
       return {
         quotes: [
-          { date: new Date('2024-01-15'), open: 100, high: 105, low: 99, close: 103, volume: 1000000 },
-          { date: new Date('2024-01-16'), open: 103, high: 108, low: 101, close: 107, volume: 1200000 },
+          { date: yesterday, open: 100, high: 105, low: 99, close: 103, volume: 1000000 },
+          { date: today, open: 103, high: 108, low: 101, close: 107, volume: 1200000 },
         ],
       };
     },

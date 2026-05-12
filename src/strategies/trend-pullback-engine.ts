@@ -12,6 +12,7 @@ import type {
 } from './strategy-configs.js';
 import { sma, sma_slope, atr, atr_ratio, avgVolume, swingLow } from '../indicators.js';
 import type { IndicatorCache } from '../indicator-cache.js';
+import { computeConfidenceScore, DEFAULT_WEIGHTS } from '../confidence-score.js';
 
 // ============================================================
 // Result interfaces for standalone detection functions
@@ -45,6 +46,7 @@ export interface EntryResult {
   stopLossPrice: number;
   profitTargetPrice: number;
   rValue: number;
+  confidenceScore: number;
 }
 
 // ============================================================
@@ -255,6 +257,8 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
     return true;
   }
 
+
+
   /**
    * Orchestrate all entry checks in order:
    * 1. Direction check
@@ -359,11 +363,18 @@ export class TrendPullbackEngine implements V2CompatibleEngine {
     // ---- Step 7: Compute profit target ----
     const profitTargetPrice = entryPrice + config.profitTarget.r_multiple * rValue;
 
+    // ---- Step 8: Compute confidence score ----
+    const weights = config.confidenceWeights ?? DEFAULT_WEIGHTS;
+    const confidenceScore = cache
+      ? computeConfidenceScore(barIndex, cache, weights)
+      : 0.5;
+
     return {
       entryPrice,
       stopLossPrice,
       profitTargetPrice,
       rValue,
+      confidenceScore,
     };
   }
 

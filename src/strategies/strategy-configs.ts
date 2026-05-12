@@ -1,6 +1,7 @@
 import type { FilterCondition } from './filter-evaluator.js';
 import type { HistoricalDataPoint, StrategyType } from '../types.js';
 import type { IndicatorCache } from '../indicator-cache.js';
+import type { ConfidenceWeightsConfig } from '../confidence-score.js';
 
 // ============================================================
 // Exit Rule Types
@@ -156,6 +157,8 @@ export const BREAKOUT_VOLUME_CONFIG: StrategyConfiguration = {
   riskRule: { type: 'atr_multiple', atrPeriod: 14, multiple: 5.0 },
 };
 
+
+
 // ============================================================
 // V3 Consolidation Breakout Strategy Types
 // ============================================================
@@ -206,6 +209,8 @@ export interface ConsolidationBreakoutConfiguration {
     trailActivationThreshold: number;    // R-multiples, >= breakevenThreshold, default 2.0
     removeProfitTarget: boolean;         // default false
   };
+
+  confidenceWeights?: ConfidenceWeightsConfig;
 }
 
 export interface ConsolidationBreakoutParams {
@@ -257,6 +262,8 @@ export interface TrendPullbackConfiguration {
     trail_activation_threshold: number;
     remove_profit_target: boolean;
   };
+
+  confidenceWeights?: ConfidenceWeightsConfig;
 }
 
 export interface TrendPullbackParams {

@@ -10,7 +10,7 @@
 // ============================================================
 
 import { join } from 'node:path';
-import type { CachingDataProvider } from './caching-data-provider.js';
+import type { HistoricalDataCache } from './historical-data-cache.js';
 import type { SignalOutput } from './strategy-registry.js';
 import { detectSignal } from './signal-detector.js';
 import { loadStrategyProfile } from './profile-store.js';
@@ -30,7 +30,7 @@ export interface ParallelScanOptions {
   concurrency: number;
   strategyName: string;
   allowStale: boolean;
-  cachingProvider: CachingDataProvider;
+  cachingProvider: HistoricalDataCache;
   dataDir: string;
 }
 

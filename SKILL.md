@@ -698,6 +698,7 @@ All persistent data is stored in `.stock-tracker/` relative to `STOCK_TRACKER_HO
 | `history-cache/` | Cached historical data (24h TTL) |
 | `profiles/` | Saved strategy profiles from tuning (JSON, one per ticker+strategy) |
 | `{TICKER}_backtest_{timestamp}.html` | Backtest chart visualizations |
+| `{TICKER}_scan_{timestamp}.html` | Scan chart visualizations (signal overlay on recent price) |
 | `{TICKER}_{strategy}_{horizon}_{risk}.json` | Tuning result cache |
 
 ## Error Handling

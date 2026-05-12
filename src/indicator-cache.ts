@@ -1,5 +1,5 @@
 import type { HistoricalDataPoint } from './types.js';
-import { sma, atr, atr_ratio, avgVolume, swingLow, sma_slope, range_pct, highestHigh } from './indicators.js';
+import { sma, atr, atr_ratio, avgVolume, swingLow, sma_slope, range_pct, highestHigh, rsi, macd, adx, obvSlope } from './indicators.js';
 
 export interface IndicatorCacheConfig {
   smaPeriods: number[];
@@ -10,6 +10,10 @@ export interface IndicatorCacheConfig {
   smaSlopePeriods: number[];
   rangePctWindows: number[];
   highestHighLookbacks: number[];
+  rsiPeriods: number[];           // e.g. [14]
+  macdEnabled: boolean;           // true to pre-compute MACD series
+  adxPeriods: number[];           // e.g. [14]
+  obvSlopeLookbacks: number[];    // e.g. [10]
 }
 
 export class IndicatorCache {
@@ -21,6 +25,12 @@ export class IndicatorCache {
   private readonly smaSlopeMap: Map<number, (boolean | undefined)[]>;
   private readonly rangePctMap: Map<number, (number | undefined)[]>;
   private readonly highestHighMap: Map<number, (number | undefined)[]>;
+  private readonly rsiMap: Map<number, (number | undefined)[]>;
+  private readonly macdLineMap: (number | undefined)[];
+  private readonly macdSignalMap: (number | undefined)[];
+  private readonly macdHistogramMap: (number | undefined)[];
+  private readonly adxMap: Map<number, (number | undefined)[]>;
+  private readonly obvSlopeMap: Map<number, (boolean | undefined)[]>;
 
   constructor(data: HistoricalDataPoint[], config: IndicatorCacheConfig) {
     const len = data.length;
@@ -64,6 +74,25 @@ export class IndicatorCache {
     this.highestHighMap = new Map();
     for (const lookback of config.highestHighLookbacks) {
       this.highestHighMap.set(lookback, new Array(len));
+    }
+
+    this.rsiMap = new Map();
+    for (const period of config.rsiPeriods) {
+      this.rsiMap.set(period, new Array(len));
+    }
+
+    this.macdLineMap = new Array(len);
+    this.macdSignalMap = new Array(len);
+    this.macdHistogramMap = new Array(len);
+
+    this.adxMap = new Map();
+    for (const period of config.adxPeriods) {
+      this.adxMap.set(period, new Array(len));
+    }
+
+    this.obvSlopeMap = new Map();
+    for (const lookback of config.obvSlopeLookbacks) {
+      this.obvSlopeMap.set(lookback, new Array(len));
     }
 
     // Pre-compute all indicator series
@@ -115,6 +144,33 @@ export class IndicatorCache {
       for (const lookback of config.highestHighLookbacks) {
         this.highestHighMap.get(lookback)![i] = highestHigh(dataSlice, lookback);
       }
+
+      // RSI
+      for (const period of config.rsiPeriods) {
+        this.rsiMap.get(period)![i] = rsi(closes, period);
+      }
+
+      // MACD
+      if (config.macdEnabled) {
+        const macdResult = macd(closes);
+        this.macdLineMap[i] = macdResult?.macdLine;
+        this.macdSignalMap[i] = macdResult?.signalLine;
+        this.macdHistogramMap[i] = macdResult?.histogram;
+      } else {
+        this.macdLineMap[i] = undefined;
+        this.macdSignalMap[i] = undefined;
+        this.macdHistogramMap[i] = undefined;
+      }
+
+      // ADX
+      for (const period of config.adxPeriods) {
+        this.adxMap.get(period)![i] = adx(dataSlice, period);
+      }
+
+      // OBV Slope
+      for (const lookback of config.obvSlopeLookbacks) {
+        this.obvSlopeMap.get(lookback)![i] = obvSlope(dataSlice, lookback);
+      }
     }
   }
 
@@ -165,6 +221,33 @@ export class IndicatorCache {
     if (!series || barIndex < 0 || barIndex >= series.length) return undefined;
     return series[barIndex];
   }
+
+  getRsi(period: number, barIndex: number): number | undefined {
+    const series = this.rsiMap.get(period);
+    if (!series || barIndex < 0 || barIndex >= series.length) return undefined;
+    return series[barIndex];
+  }
+
+  getMacd(barIndex: number): { macdLine: number; signalLine: number; histogram: number } | undefined {
+    if (barIndex < 0 || barIndex >= this.macdLineMap.length) return undefined;
+    const macdLine = this.macdLineMap[barIndex];
+    const signalLine = this.macdSignalMap[barIndex];
+    const histogram = this.macdHistogramMap[barIndex];
+    if (macdLine === undefined || signalLine === undefined || histogram === undefined) return undefined;
+    return { macdLine, signalLine, histogram };
+  }
+
+  getAdx(period: number, barIndex: number): number | undefined {
+    const series = this.adxMap.get(period);
+    if (!series || barIndex < 0 || barIndex >= series.length) return undefined;
+    return series[barIndex];
+  }
+
+  getObvSlope(lookback: number, barIndex: number): boolean | undefined {
+    const series = this.obvSlopeMap.get(lookback);
+    if (!series || barIndex < 0 || barIndex >= series.length) return undefined;
+    return series[barIndex];
+  }
 }
 
 export function getDefaultCacheConfig(): IndicatorCacheConfig {
@@ -177,5 +260,9 @@ export function getDefaultCacheConfig(): IndicatorCacheConfig {
     smaSlopePeriods: [50],
     rangePctWindows: [5, 10, 15],
     highestHighLookbacks: [5, 10, 15, 20],
+    rsiPeriods: [14],
+    macdEnabled: true,
+    adxPeriods: [14],
+    obvSlopeLookbacks: [10],
   };
 }

@@ -25,15 +25,15 @@ import { tuneV3, backtestV3 } from './pipeline-functions.js';
 import type { V3BacktestResult, V3TuneResult } from './pipeline-functions.js';
 import { loadStrategyProfile, saveStrategyProfile, computeExpiry } from './profile-store.js';
 import type { StrategyProfile } from './profile-store.js';
-import { CachingDataProvider } from './caching-data-provider.js';
+import { HistoricalDataCache } from './historical-data-cache.js';
 import { TuningEngine } from './tuning-engine.js';
 import type { TuningInput, TunableStrategy, TimeHorizon, RiskProfile, BestRegion } from './tuning-engine.js';
-import { normalizeTicker } from './history-cache-store.js';
-import type { CacheEntry } from './history-cache-store.js';
+
 import { generateChartHtml, generateCombinedChartHtml, getChartFilePath } from './chart-generator.js';
 import { writeFileSync, readFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { buildConfig, buildV2Config, generateV2Grid, generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig } from './parameter-grid.js';
+import type { ConsolidationBreakoutGridEntry } from './parameter-grid.js';
 import { evaluateV3Configuration, splitData } from './walk-forward-validator.js';
 import { StrategyRegistry } from './strategy-registry.js';
 import { ConsolidationBreakoutStrategy } from './strategies/consolidation-breakout-strategy.js';
@@ -122,7 +122,7 @@ export interface WiredRouter {
   strategyManager: StrategyManager;
   processManager: ProcessManager;
   registry: DataProviderRegistry;
-  cachingProvider: CachingDataProvider;
+  cachingProvider: HistoricalDataCache;
   strategyRegistry: StrategyRegistry;
 }
 
@@ -151,10 +151,9 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   // Resolve active provider: use requested provider or fall back to yahoo
   const activeProvider = (options.providerName ? registry.get(options.providerName) : undefined) ?? registry.get('yahoo')!;
 
-  // Wrap the active provider in CachingDataProvider
-  const cachingProvider = new CachingDataProvider(activeProvider, {
+  // Wrap the active provider in HistoricalDataCache
+  const cachingProvider = new HistoricalDataCache(activeProvider, {
     cacheDir: path.join(dataDir, 'history-cache'),
-    ttlMs: undefined, // use default 24h
     noCache: options.noCache,
   });
 
@@ -360,26 +359,9 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     const ticker = opts['ticker'];
     const period = (opts['period'] as HistoricalPeriod) || undefined;
     const interval = (opts['interval'] as HistoricalInterval) || undefined;
-    const noCache = opts['no-cache'] !== undefined;
 
     let result;
-    if (noCache) {
-      // Bypass cache: call inner provider directly, then write through to cache
-      result = await cachingProvider.innerProvider.getHistoricalData(ticker, period, interval);
-      if (result.success) {
-        const effectivePeriod: HistoricalPeriod = period ?? '1y';
-        const entry: CacheEntry = {
-          ticker: normalizeTicker(ticker),
-          period: effectivePeriod,
-          interval: result.data.interval,
-          fetchedAt: new Date().toISOString(),
-          dataPoints: result.data.dataPoints,
-        };
-        cachingProvider.cacheStore.write(entry);
-      }
-    } else {
-      result = await priceFeedClient.fetchHistoricalData(ticker, period, interval);
-    }
+    result = await priceFeedClient.fetchHistoricalData(ticker, period, interval);
 
     if (!result.success) {
       const code = result.error.includes(ErrorCodes.INVALID_TICKER)
@@ -428,21 +410,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
       try {
         let dataResult;
-        if (noCache) {
-          dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
-          if (dataResult.success) {
-            const entry: CacheEntry = {
-              ticker: normalizeTicker(ticker),
-              period,
-              interval: dataResult.data.interval,
-              fetchedAt: new Date().toISOString(),
-              dataPoints: dataResult.data.dataPoints,
-            };
-            cachingProvider.cacheStore.write(entry);
-          }
-        } else {
-          dataResult = await priceFeedClient.fetchHistoricalData(ticker, period);
-        }
+        dataResult = await cachingProvider.getHistoricalData(ticker, period);
 
         if (!dataResult.success) {
           const code = dataResult.error.includes(ErrorCodes.INVALID_TICKER)
@@ -518,21 +486,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
         try {
           let histResult;
-          if (noCache) {
-            histResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
-            if (histResult.success) {
-              const entry: CacheEntry = {
-                ticker: normalizeTicker(ticker),
-                period,
-                interval: histResult.data.interval,
-                fetchedAt: new Date().toISOString(),
-                dataPoints: histResult.data.dataPoints,
-              };
-              cachingProvider.cacheStore.write(entry);
-            }
-          } else {
-            histResult = await priceFeedClient.fetchHistoricalData(ticker, period);
-          }
+          histResult = await cachingProvider.getHistoricalData(ticker, period);
 
           if (!histResult.success) {
             const code = histResult.error.includes(ErrorCodes.INVALID_TICKER)
@@ -582,21 +536,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
         try {
           let histResult;
-          if (noCache) {
-            histResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
-            if (histResult.success) {
-              const entry: CacheEntry = {
-                ticker: normalizeTicker(ticker),
-                period,
-                interval: histResult.data.interval,
-                fetchedAt: new Date().toISOString(),
-                dataPoints: histResult.data.dataPoints,
-              };
-              cachingProvider.cacheStore.write(entry);
-            }
-          } else {
-            histResult = await priceFeedClient.fetchHistoricalData(ticker, period);
-          }
+          histResult = await cachingProvider.getHistoricalData(ticker, period);
 
           if (!histResult.success) {
             const code = histResult.error.includes(ErrorCodes.INVALID_TICKER)
@@ -647,21 +587,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
           try {
             let histResult;
-            if (noCache) {
-              histResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
-              if (histResult.success) {
-                const entry: CacheEntry = {
-                  ticker: normalizeTicker(ticker),
-                  period,
-                  interval: histResult.data.interval,
-                  fetchedAt: new Date().toISOString(),
-                  dataPoints: histResult.data.dataPoints,
-                };
-                cachingProvider.cacheStore.write(entry);
-              }
-            } else {
-              histResult = await priceFeedClient.fetchHistoricalData(ticker, period);
-            }
+            histResult = await cachingProvider.getHistoricalData(ticker, period);
 
             if (!histResult.success) {
               const code = histResult.error.includes(ErrorCodes.INVALID_TICKER)
@@ -714,22 +640,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     // Fetch historical data (V1 path)
     try {
       let histResult;
-      if (noCache) {
-        // Bypass cache: call inner provider directly, then write through to cache
-        histResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
-        if (histResult.success) {
-          const entry: CacheEntry = {
-            ticker: normalizeTicker(ticker),
-            period,
-            interval: histResult.data.interval,
-            fetchedAt: new Date().toISOString(),
-            dataPoints: histResult.data.dataPoints,
-          };
-          cachingProvider.cacheStore.write(entry);
-        }
-      } else {
-        histResult = await priceFeedClient.fetchHistoricalData(ticker, period);
-      }
+      histResult = await cachingProvider.getHistoricalData(ticker, period);
 
       if (!histResult.success) {
         const code = histResult.error.includes(ErrorCodes.INVALID_TICKER)
@@ -814,11 +725,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
       try {
         let dataResult;
-        if (noCache) {
-          dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
-        } else {
-          dataResult = await priceFeedClient.fetchHistoricalData(ticker, period);
-        }
+        dataResult = await cachingProvider.getHistoricalData(ticker, period);
 
         if (!dataResult.success) {
           return errorResult('tune', 'DATA_PROVIDER_ERROR', dataResult.error);
@@ -835,29 +742,33 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
         const grid = generateConsolidationBreakoutGrid();
 
-        // Evaluate each grid entry on IS data only
-        const isResults: Array<{
-          entry: typeof grid[0];
+        // Evaluate each grid entry on IS data only, filtering inline to save memory
+        type GridMetricsEntry = {
+          entry: ConsolidationBreakoutGridEntry;
           isMetrics: { totalReturnPercent: number; sharpeRatio: number; maxDrawdownPercent: number; winRate: number; tradeCount: number; profitFactor: number };
-        }> = [];
+        };
+        const filtered: GridMetricsEntry[] = [];
+        const fallback: GridMetricsEntry[] = [];
+        let configurationsEvaluated = 0;
 
         for (const entry of grid) {
+          configurationsEvaluated++;
           const metrics = evaluateV3Configuration(entry, isData);
-          isResults.push({ entry, isMetrics: metrics });
+
+          if (
+            metrics.maxDrawdownPercent <= 25 &&
+            metrics.profitFactor >= 1.0 &&
+            metrics.totalReturnPercent > 0 &&
+            metrics.tradeCount >= 3
+          ) {
+            filtered.push({ entry, isMetrics: metrics });
+          } else if (metrics.tradeCount > 0) {
+            fallback.push({ entry, isMetrics: metrics });
+          }
         }
 
-        // Filter using IS metrics: drawdown ≤ 25%, profit factor ≥ 1.0, positive return, ≥ 3 trades
-        const filtered = isResults.filter(r =>
-          r.isMetrics.maxDrawdownPercent <= 25 &&
-          r.isMetrics.profitFactor >= 1.0 &&
-          r.isMetrics.totalReturnPercent > 0 &&
-          r.isMetrics.tradeCount >= 3
-        );
-
-        // Fallback: if strict filter yields nothing, relax to any config with trades
-        const candidates = filtered.length > 0
-          ? filtered
-          : isResults.filter(r => r.isMetrics.tradeCount > 0);
+        // Use strict filter results, or fallback to any config with trades
+        const candidates = filtered.length > 0 ? filtered : fallback;
 
         if (candidates.length === 0) {
           return errorResult('tune', 'NO_VIABLE_CONFIGS',
@@ -905,7 +816,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           summary_metrics: summaryMetrics,
           inSample: bestIsMetrics,
           outOfSample: bestOosMetrics,
-          configurations_evaluated: grid.length,
+          configurations_evaluated: configurationsEvaluated,
           configurations_passed_filter: candidates.length,
           computed_at: new Date().toISOString(),
           v3: true,
@@ -924,11 +835,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
       try {
         let dataResult;
-        if (noCache) {
-          dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
-        } else {
-          dataResult = await priceFeedClient.fetchHistoricalData(ticker, period);
-        }
+        dataResult = await cachingProvider.getHistoricalData(ticker, period);
 
         if (!dataResult.success) {
           return errorResult('tune', 'DATA_PROVIDER_ERROR', dataResult.error);
@@ -1082,11 +989,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
       try {
         // Step 1: Fetch data
         let dataResult;
-        if (noCache) {
-          dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
-        } else {
-          dataResult = await priceFeedClient.fetchHistoricalData(ticker, period);
-        }
+        dataResult = await cachingProvider.getHistoricalData(ticker, period);
 
         if (!dataResult.success) {
           return errorResult('tune-and-chart', 'DATA_PROVIDER_ERROR', dataResult.error);
@@ -1229,11 +1132,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
       try {
         // Step 1: Run V2 tuning inline (same logic as tune --v2)
         let dataResult;
-        if (noCache) {
-          dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, period);
-        } else {
-          dataResult = await priceFeedClient.fetchHistoricalData(ticker, period);
-        }
+        dataResult = await cachingProvider.getHistoricalData(ticker, period);
 
         if (!dataResult.success) {
           return errorResult('tune-and-chart', 'DATA_PROVIDER_ERROR', dataResult.error);

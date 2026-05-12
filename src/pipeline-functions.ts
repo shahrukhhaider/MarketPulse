@@ -90,39 +90,45 @@ export function tuneParams(
   // Build indicator cache for in-sample data
   const isCache = new IndicatorCache(isData, getDefaultCacheConfig());
 
-  // Step 2: Generate grid entries
-  let grid: ConsolidationBreakoutGridEntry[] | TrendPullbackGridEntry[];
-  if (strategy === 'consolidation_breakout') {
-    grid = generateConsolidationBreakoutGrid();
-  } else if (strategy === 'trend_pullback') {
-    grid = generateTrendPullbackGrid();
-  } else {
-    return { error: `Unsupported strategy for tuneParams: ${strategy}` };
-  }
-
-  // Step 3: Evaluate each entry on IS data
-  const isResults: Array<{
+  // Step 2 & 3: Generate grid entries lazily and evaluate each on IS data.
+  // Only keep entries that pass the filter to avoid storing millions of results.
+  const filtered: Array<{
     entry: ConsolidationBreakoutGridEntry | TrendPullbackGridEntry;
     isMetrics: TuningPerformanceMetrics;
   }> = [];
 
+  let configurationsEvaluated = 0;
+
+  const grid: Iterable<ConsolidationBreakoutGridEntry | TrendPullbackGridEntry> =
+    strategy === 'consolidation_breakout'
+      ? generateConsolidationBreakoutGrid()
+      : strategy === 'trend_pullback'
+        ? generateTrendPullbackGrid()
+        : [];
+
+  if (strategy !== 'consolidation_breakout' && strategy !== 'trend_pullback') {
+    return { error: `Unsupported strategy for tuneParams: ${strategy}` };
+  }
+
   for (const entry of grid) {
+    configurationsEvaluated++;
     let metrics: TuningPerformanceMetrics;
     if (strategy === 'consolidation_breakout') {
       metrics = evaluateV3Configuration(entry as ConsolidationBreakoutGridEntry, isData, isCache);
     } else {
       metrics = evaluateTrendPullbackConfiguration(entry as TrendPullbackGridEntry, isData, isCache);
     }
-    isResults.push({ entry, isMetrics: metrics });
-  }
 
-  // Step 4: Filter by IS metrics
-  const filtered = isResults.filter(r =>
-    r.isMetrics.maxDrawdownPercent <= 25 &&
-    r.isMetrics.profitFactor >= 1.0 &&
-    r.isMetrics.totalReturnPercent > 0 &&
-    r.isMetrics.tradeCount >= 3
-  );
+    // Step 4: Filter inline — only keep entries that pass IS metrics thresholds
+    if (
+      metrics.maxDrawdownPercent <= 25 &&
+      metrics.profitFactor >= 1.0 &&
+      metrics.totalReturnPercent > 0 &&
+      metrics.tradeCount >= 3
+    ) {
+      filtered.push({ entry, isMetrics: metrics });
+    }
+  }
 
   if (filtered.length === 0) {
     return { error: `No viable configurations found for strategy '${strategy}'` };
@@ -149,7 +155,7 @@ export function tuneParams(
     bestEntry,
     isMetrics: bestIsMetrics,
     oosMetrics: bestOosMetrics,
-    configurationsEvaluated: grid.length,
+    configurationsEvaluated,
     configurationsPassed: filtered.length,
   };
 }

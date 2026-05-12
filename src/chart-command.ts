@@ -9,7 +9,7 @@
 
 import { successResult, errorResult } from './command-router.js';
 import type { CommandHandler } from './command-router.js';
-import type { CachingDataProvider } from './caching-data-provider.js';
+import type { HistoricalDataCache } from './historical-data-cache.js';
 import type { StrategyRegistry } from './strategy-registry.js';
 import { loadStrategyProfile } from './profile-store.js';
 import { tuneParams, runBacktest, renderChart } from './pipeline-functions.js';
@@ -20,7 +20,7 @@ import type { TuneResult } from './pipeline-functions.js';
 // ============================================================
 
 export interface ChartCommandDeps {
-  cachingProvider: CachingDataProvider;
+  cachingProvider: HistoricalDataCache;
   registry: StrategyRegistry;
   dataDir: string;
 }

@@ -15,6 +15,7 @@ import type {
 } from './strategy-configs.js';
 import { range_pct, atr_ratio, atr, sma, sma_slope, highestHigh, swingLow, avgVolume, returnNd } from '../indicators.js';
 import type { IndicatorCache } from '../indicator-cache.js';
+import { computeConfidenceScore, DEFAULT_WEIGHTS } from '../confidence-score.js';
 
 // ============================================================
 // Result interfaces for standalone detection functions
@@ -44,6 +45,7 @@ export interface EntryResult {
   stopLossPrice: number;
   profitTargetPrice: number;
   rValue: number;
+  confidenceScore: number;
 }
 
 // ============================================================
@@ -222,6 +224,8 @@ export class ConsolidationBreakoutEngine implements Strategy {
     return true;
   }
 
+
+
   /**
    * Orchestrate all entry checks in order:
    * 1. Direction check
@@ -349,12 +353,19 @@ export class ConsolidationBreakoutEngine implements Strategy {
     // ---- Step 8: Compute profit target ----
     const profitTargetPrice = entryPrice + config.profitTarget.r_multiple * rValue;
 
-    // ---- Step 9: Return EntryResult ----
+    // ---- Step 9: Compute confidence score ----
+    const weights = config.confidenceWeights ?? DEFAULT_WEIGHTS;
+    const confidenceScore = cache
+      ? computeConfidenceScore(barIndex, cache, weights)
+      : 0.5;
+
+    // ---- Step 10: Return EntryResult ----
     return {
       entryPrice,
       stopLossPrice,
       profitTargetPrice,
       rValue,
+      confidenceScore,
     };
   }
 

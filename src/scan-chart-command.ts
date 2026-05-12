@@ -12,7 +12,7 @@
 
 import { successResult, errorResult } from './command-router.js';
 import type { CommandHandler } from './command-router.js';
-import type { CachingDataProvider } from './caching-data-provider.js';
+import type { HistoricalDataCache } from './historical-data-cache.js';
 import { loadStrategyProfile } from './profile-store.js';
 import { detectSignal } from './signal-detector.js';
 import { ConsolidationBreakoutEngine } from './strategies/consolidation-breakout-engine.js';
@@ -59,7 +59,7 @@ export interface SignalScanResult {
 // ============================================================
 
 export interface ScanChartCommandDeps {
-  cachingProvider: CachingDataProvider;
+  cachingProvider: HistoricalDataCache;
   dataDir: string;
 }
 

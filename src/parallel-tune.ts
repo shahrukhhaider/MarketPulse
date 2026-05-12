@@ -10,7 +10,7 @@
 // ============================================================
 
 import { join } from 'node:path';
-import type { CachingDataProvider } from './caching-data-provider.js';
+import type { HistoricalDataCache } from './historical-data-cache.js';
 import type { TuneSummary, TuneBatchResult } from './tune-command.js';
 import type { V3TuneResult, TuneResult } from './pipeline-functions.js';
 import { tuneV3, backtestV3, renderChart } from './pipeline-functions.js';
@@ -34,7 +34,7 @@ export interface ParallelTuneOptions {
   noCache: boolean;
   /** Whether to run backtest + chart after tuning (v3 command behavior) */
   runBacktest: boolean;
-  cachingProvider: CachingDataProvider;
+  cachingProvider: HistoricalDataCache;
   dataDir: string;
 }
 
@@ -203,11 +203,7 @@ async function tuneSingleTicker(options: ParallelTuneOptions): Promise<TuneBatch
   try {
     // Fetch data on main thread
     let dataResult;
-    if (options.noCache) {
-      dataResult = await options.cachingProvider.innerProvider.getHistoricalData(ticker, '5y');
-    } else {
-      dataResult = await options.cachingProvider.getHistoricalData(ticker, '5y');
-    }
+    dataResult = await options.cachingProvider.getHistoricalData(ticker, '5y');
 
     if (!dataResult.success) {
       return {

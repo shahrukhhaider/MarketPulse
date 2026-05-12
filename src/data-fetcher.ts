@@ -1,4 +1,4 @@
-import type { CachingDataProvider } from './caching-data-provider.js';
+import type { HistoricalDataCache } from './historical-data-cache.js';
 import type { HistoricalDataPoint } from './types.js';
 
 // ============================================================
@@ -62,7 +62,7 @@ class Semaphore {
 
 async function fetchSingleTicker(
   ticker: string,
-  provider: CachingDataProvider,
+  provider: HistoricalDataCache,
 ): Promise<FetchResult> {
   try {
     const result = await provider.getHistoricalData(ticker);
@@ -99,7 +99,7 @@ async function fetchSingleTicker(
  */
 export async function fetchAllHistoricalData(
   tickers: string[],
-  provider: CachingDataProvider,
+  provider: HistoricalDataCache,
   options?: DataFetcherOptions,
 ): Promise<FetchResult[]> {
   const maxConcurrent = options?.maxConcurrent ?? 5;
@@ -136,7 +136,7 @@ export async function fetchAllHistoricalData(
  */
 export async function* fetchHistoricalDataStream(
   tickers: string[],
-  provider: CachingDataProvider,
+  provider: HistoricalDataCache,
   options?: DataFetcherOptions,
 ): AsyncGenerator<FetchResult> {
   const maxConcurrent = options?.maxConcurrent ?? 5;

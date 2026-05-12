@@ -153,6 +153,65 @@ export class YahooFinanceAdapter implements DataProvider {
     }
   }
 
+  /**
+   * Fetch historical data for a specific date range using explicit start/end dates.
+   * Calls chart() with period1/period2 instead of a relative period string.
+   */
+  async getHistoricalDataByDateRange(
+    ticker: string,
+    startDate: string,   // ISO date "YYYY-MM-DD"
+    endDate: string,     // ISO date "YYYY-MM-DD"
+    interval: HistoricalInterval = '1d'
+  ): Promise<Result<HistoricalResult>> {
+    const normalized = ticker.toUpperCase();
+    const period1 = new Date(startDate);
+    // Add 1 day to endDate to make it inclusive (chart API uses exclusive end)
+    const endDateObj = new Date(endDate);
+    endDateObj.setDate(endDateObj.getDate() + 1);
+    const period2 = endDateObj;
+
+    try {
+      const response = await this.yahooFinance.chart(normalized, {
+        period1,
+        period2,
+        interval,
+      });
+
+      if (!response || !response.quotes || !Array.isArray(response.quotes) || response.quotes.length === 0) {
+        return {
+          success: true,
+          data: { ticker: normalized, interval, dataPoints: [] },
+        };
+      }
+
+      const dataPoints: HistoricalDataPoint[] = response.quotes
+        .filter((q: any) =>
+          q.date != null &&
+          q.open != null &&
+          q.high != null &&
+          q.low != null &&
+          q.close != null &&
+          q.volume != null
+        )
+        .map((q: any) => ({
+          date: toISODateString(q.date),
+          open: q.open,
+          high: q.high,
+          low: q.low,
+          close: q.close,
+          volume: q.volume,
+        }))
+        .sort((a: HistoricalDataPoint, b: HistoricalDataPoint) => a.date.localeCompare(b.date));
+
+      return {
+        success: true,
+        data: { ticker: normalized, interval, dataPoints },
+      };
+    } catch (err: unknown) {
+      return classifyError(err);
+    }
+  }
+
   async validateTicker(ticker: string): Promise<Result<boolean>> {
     const normalized = ticker.toUpperCase();
 

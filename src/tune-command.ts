@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { successResult, errorResult } from './command-router.js';
 import type { CommandHandler } from './command-router.js';
-import type { CachingDataProvider } from './caching-data-provider.js';
+import type { HistoricalDataCache } from './historical-data-cache.js';
 import type { StrategyRegistry } from './strategy-registry.js';
 import { tuneParams, tuneV3 } from './pipeline-functions.js';
 import type { TuneResult, V3TuneResult } from './pipeline-functions.js';
@@ -23,7 +23,7 @@ import type { TuningPerformanceMetrics } from './tuning-engine.js';
 // ============================================================
 
 export interface TuneCommandDeps {
-  cachingProvider: CachingDataProvider;
+  cachingProvider: HistoricalDataCache;
   registry: StrategyRegistry;
   dataDir: string;
 }
@@ -139,11 +139,7 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
       try {
         // Fetch 5y historical data
         let dataResult;
-        if (noCache) {
-          dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, '5y');
-        } else {
-          dataResult = await cachingProvider.getHistoricalData(ticker, '5y');
-        }
+        dataResult = await cachingProvider.getHistoricalData(ticker, '5y');
 
         if (!dataResult.success) {
           failed++;
@@ -263,7 +259,7 @@ async function handleV3Tune(
   tickersArg: string,
   shouldSave: boolean,
   noCache: boolean,
-  cachingProvider: CachingDataProvider,
+  cachingProvider: HistoricalDataCache,
   dataDir: string,
 ) {
   // Resolve ticker list
@@ -285,11 +281,7 @@ async function handleV3Tune(
     try {
       // Fetch 5y historical data
       let dataResult;
-      if (noCache) {
-        dataResult = await cachingProvider.innerProvider.getHistoricalData(ticker, '5y');
-      } else {
-        dataResult = await cachingProvider.getHistoricalData(ticker, '5y');
-      }
+      dataResult = await cachingProvider.getHistoricalData(ticker, '5y');
 
       if (!dataResult.success) {
         failed += 2;

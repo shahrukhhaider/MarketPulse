@@ -1,5 +1,6 @@
 import type { StrategyConfiguration, PhasedStrategyConfiguration, ConsolidationBreakoutConfiguration, TrendPullbackConfiguration } from './strategies/strategy-configs.js';
 import type { TimeHorizon, TunableStrategy } from './tuning-engine.js';
+import { resolveWeightPreset } from './confidence-score.js';
 
 export type { TimeHorizon, TunableStrategy } from './tuning-engine.js';
 
@@ -167,22 +168,38 @@ export function generateGrid(
 
 /**
  * Compute the Cartesian product of an array of number arrays.
+ * Uses a generator to avoid materializing all combinations in memory at once.
+ */
+function* cartesianProductGen(arrays: number[][]): Generator<number[]> {
+  if (arrays.length === 0) {
+    yield [];
+    return;
+  }
+
+  const lengths = arrays.map(a => a.length);
+  const totalCombinations = lengths.reduce((acc, len) => acc * len, 1);
+  const indices = new Array(arrays.length).fill(0);
+
+  for (let i = 0; i < totalCombinations; i++) {
+    // Build current combination from indices
+    const combination = indices.map((idx, dim) => arrays[dim][idx]);
+    yield combination;
+
+    // Increment indices (odometer-style)
+    for (let dim = arrays.length - 1; dim >= 0; dim--) {
+      indices[dim]++;
+      if (indices[dim] < lengths[dim]) break;
+      indices[dim] = 0;
+    }
+  }
+}
+
+/**
+ * Materialize the Cartesian product into an array.
+ * Use only for small grids (V1/V2) where the full array fits in memory.
  */
 function cartesianProduct(arrays: number[][]): number[][] {
-  if (arrays.length === 0) return [[]];
-
-  return arrays.reduce<number[][]>(
-    (acc, arr) => {
-      const result: number[][] = [];
-      for (const existing of acc) {
-        for (const value of arr) {
-          result.push([...existing, value]);
-        }
-      }
-      return result;
-    },
-    [[]]
-  );
+  return [...cartesianProductGen(arrays)];
 }
 
 /**
@@ -444,8 +461,9 @@ export function getConsolidationBreakoutParameterSpace(): ParameterSpace {
     max_risk_pct: [3, 5, 8],
     r_multiple: [2, 2.5, 3],
     // Active presets: 0=fixed baseline, 5=trailing ATR highest_close aggressive
-    // To expand: add preset indices from resolveExitPreset (1-4, 6-7)
     exit_preset: [0, 5],
+    // Weight preset for confidence score (0=equal, 1=rsi_heavy, 2=trend_heavy, 3=momentum_heavy)
+    weight_preset: [0, 1, 2, 3],
   };
 }
 
@@ -495,33 +513,35 @@ export function buildConsolidationBreakoutConfig(
     },
     exitMode: preset.exitMode,
     trailingStop: preset.trailingStop,
+    confidenceWeights: resolveWeightPreset(params.weight_preset ?? 0),
   };
 }
 
 /**
  * Generate the full consolidation-breakout parameter grid using Cartesian product.
- * Uses exit presets to keep the grid manageable (~35K entries instead of ~3.7M).
+ * Uses exit presets and weight presets to keep the grid manageable.
+ *
+ * Returns a generator to avoid materializing all entries in memory at once.
+ * Consumers iterate with for...of and only keep what they need.
  */
-export function generateConsolidationBreakoutGrid(): ConsolidationBreakoutGridEntry[] {
+export function* generateConsolidationBreakoutGrid(): Generator<ConsolidationBreakoutGridEntry> {
   const space = getConsolidationBreakoutParameterSpace();
   const paramNames = Object.keys(space);
   const paramArrays = paramNames.map(name => space[name]);
 
-  const combinations = cartesianProduct(paramArrays);
-
-  return combinations.map(values => {
+  for (const values of cartesianProductGen(paramArrays)) {
     const params: Record<string, number> = {};
     paramNames.forEach((name, i) => {
       params[name] = values[i];
     });
+
     const config = buildConsolidationBreakoutConfig(params);
-    return { params, config };
-  });
+    yield { params, config };
+  }
 }
 
 /**
- * Return the trend-pullback parameter space with 9 tunable parameters.
- * Total combinations: 3 × 3 × 2 × 3 × 3 × 3 × 3 × 3 × 2 = 8,748
+ * Return the trend-pullback parameter space with 10 tunable parameters.
  */
 export function getTrendPullbackParameterSpace(): ParameterSpace {
   return {
@@ -535,6 +555,8 @@ export function getTrendPullbackParameterSpace(): ParameterSpace {
     swing_lookback: [5, 10, 15],
     // Active presets: 0=fixed baseline, 5=trailing ATR highest_close aggressive
     exit_preset: [0, 5],
+    // Weight preset for confidence score (0=equal, 1=rsi_heavy, 2=trend_heavy, 3=momentum_heavy)
+    weight_preset: [0, 1, 2, 3],
   };
 }
 
@@ -610,26 +632,27 @@ export function buildTrendPullbackGridConfig(
     },
     exitMode: preset.exitMode,
     trailingStop: preset.trailingStop,
+    confidenceWeights: resolveWeightPreset(params.weight_preset ?? 0),
   };
 }
 
 /**
  * Generate the full trend-pullback parameter grid using Cartesian product.
- * Total: 8,748 configurations.
+ *
+ * Returns a generator to avoid materializing all entries in memory at once.
  */
-export function generateTrendPullbackGrid(): TrendPullbackGridEntry[] {
+export function* generateTrendPullbackGrid(): Generator<TrendPullbackGridEntry> {
   const space = getTrendPullbackParameterSpace();
   const paramNames = Object.keys(space);
   const paramArrays = paramNames.map(name => space[name]);
 
-  const combinations = cartesianProduct(paramArrays);
-
-  return combinations.map(values => {
+  for (const values of cartesianProductGen(paramArrays)) {
     const params: Record<string, number> = {};
     paramNames.forEach((name, i) => {
       params[name] = values[i];
     });
+
     const config = buildTrendPullbackGridConfig(params);
-    return { params, config };
-  });
+    yield { params, config };
+  }
 }

@@ -1,4 +1,4 @@
-import type { CachingDataProvider } from './caching-data-provider.js';
+import type { HistoricalDataCache } from './historical-data-cache.js';
 import { generateGrid } from './parameter-grid.js';
 import { walkForwardValidate } from './walk-forward-validator.js';
 import type { WalkForwardResult } from './walk-forward-validator.js';
@@ -89,7 +89,7 @@ export type TuningOutcome =
 
 export class TuningEngine {
   constructor(
-    private readonly dataProvider: CachingDataProvider,
+    private readonly dataProvider: HistoricalDataCache,
     private readonly cacheDir: string
   ) {}
 
