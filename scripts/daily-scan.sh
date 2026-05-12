@@ -7,7 +7,7 @@ set -e
 PROJECT_DIR="/Users/haidex/Documents/projects/liveTrack/stock-price-tracker"
 NODE="/Users/haidex/.nvm/versions/node/v20.20.2/bin/node"
 LOG_DIR="$PROJECT_DIR/.stock-tracker/logs"
-TICKERS="AAPL,MSFT,GOOGL,AMZN,NVDA,META,TSLA,JPM,HOOD,SOFI,ZETA,IREN,UNH,KTOS,ACHR,UUUU,GRAB,NOW,JNJ,NFLX"
+TICKERS="AAPL,MSFT,GOOGL,AMZN,NVDA,META,TSLA,RKT,HOOD,SOFI,ZETA,IREN,UNH,KTOS,ACHR,UUUU,GRAB,NOW,ZETA,NFLX"
 
 mkdir -p "$LOG_DIR"
 

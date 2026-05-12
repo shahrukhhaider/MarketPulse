@@ -189,6 +189,44 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
     // Map taskId → { ticker, strategy } for result processing
     const taskMeta = new Map<string, { ticker: string; strategy: string }>();
 
+    // Register result-collecting listener BEFORE dispatching tasks.
+    // This prevents a race condition where workers complete tasks during
+    // the for-await loop and those 'task:complete' events are missed.
+    let completedCount = 0;
+    let expectedCount = 0;
+    let completionResolve: (() => void) | null = null;
+
+    const onComplete = (result: WorkerResult) => {
+      if (!dispatchedTaskIds.has(result.taskId)) return;
+
+      if (result.success && result.result) {
+        const signalOutput = result.result as SignalOutput;
+        const meta = taskMeta.get(result.taskId);
+        if (meta) {
+          signalOutput.ticker = meta.ticker;
+        }
+        signals.push(signalOutput);
+        scannedCount++;
+      } else {
+        // Worker failed — record warning
+        const meta = taskMeta.get(result.taskId);
+        const errorMsg = result.error?.message ?? 'Worker execution failed';
+        if (meta) {
+          warnings.push(`[${meta.ticker}/${meta.strategy}] ${errorMsg}`);
+        } else {
+          warnings.push(`[${result.ticker}] ${errorMsg}`);
+        }
+      }
+
+      completedCount++;
+      if (completionResolve && completedCount >= expectedCount) {
+        pool.removeListener('task:complete', onComplete);
+        completionResolve();
+      }
+    };
+
+    pool.on('task:complete', onComplete);
+
     for await (const fetchResult of fetchStream) {
       if (!fetchResult.success || !fetchResult.data) {
         // Data fetch failed — record warning and skip
@@ -255,43 +293,19 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
       }
     }
 
-    // Wait for all dispatched tasks to complete
-    if (dispatchedTaskIds.size > 0) {
+    // Wait for all dispatched tasks to complete (some may have already finished)
+    expectedCount = dispatchedTaskIds.size;
+    if (expectedCount > 0 && completedCount < expectedCount) {
       await new Promise<void>((resolve) => {
-        let completedCount = 0;
-        const expectedCount = dispatchedTaskIds.size;
-
-        const onComplete = (result: WorkerResult) => {
-          if (!dispatchedTaskIds.has(result.taskId)) return;
-
-          if (result.success && result.result) {
-            const signalOutput = result.result as SignalOutput;
-            const meta = taskMeta.get(result.taskId);
-            if (meta) {
-              signalOutput.ticker = meta.ticker;
-            }
-            signals.push(signalOutput);
-            scannedCount++;
-          } else {
-            // Worker failed — record warning
-            const meta = taskMeta.get(result.taskId);
-            const errorMsg = result.error?.message ?? 'Worker execution failed';
-            if (meta) {
-              warnings.push(`[${meta.ticker}/${meta.strategy}] ${errorMsg}`);
-            } else {
-              warnings.push(`[${result.ticker}] ${errorMsg}`);
-            }
-          }
-
-          completedCount++;
-          if (completedCount >= expectedCount) {
-            pool.removeListener('task:complete', onComplete);
-            resolve();
-          }
-        };
-
-        pool.on('task:complete', onComplete);
+        completionResolve = resolve;
+        // Check again in case all completed between setting expectedCount and here
+        if (completedCount >= expectedCount) {
+          pool.removeListener('task:complete', onComplete);
+          resolve();
+        }
       });
+    } else {
+      pool.removeListener('task:complete', onComplete);
     }
   } finally {
     await pool.shutdown();

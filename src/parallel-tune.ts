@@ -300,6 +300,47 @@ export async function parallelTune(options: ParallelTuneOptions): Promise<TuneBa
     // Track which tickers were dispatched to workers
     const dispatchedTickers = new Set<string>();
 
+    // Register result-collecting listener BEFORE dispatching tasks.
+    // This prevents a race condition where workers complete tasks during
+    // the for-await loop and those 'task:complete' events are missed.
+    let completedCount = 0;
+    let expectedCount = 0;
+    let completionResolve: (() => void) | null = null;
+
+    const onComplete = (result: WorkerResult) => {
+      if (!dispatchedTickers.has(result.ticker)) return;
+
+      // Process result on main thread
+      if (result.success && result.result) {
+        const v3Result = result.result as V3TuneResult;
+        const data = tickerData.get(result.ticker);
+
+        if (data) {
+          const processed = processTickerResult(result.ticker, v3Result, data, options);
+          summaries.push(...processed.summaries);
+          succeeded += processed.succeeded;
+          failed += processed.failed;
+          skipped += processed.skipped;
+        }
+      } else {
+        // Worker failed — record error for both strategies
+        const errorMsg = result.error?.message ?? 'Worker execution failed';
+        summaries.push(
+          { ticker: result.ticker, strategy: 'consolidation_breakout', status: 'error', profile_saved: false, error_message: errorMsg },
+          { ticker: result.ticker, strategy: 'trend_pullback', status: 'error', profile_saved: false, error_message: errorMsg },
+        );
+        failed += 2;
+      }
+
+      completedCount++;
+      if (completionResolve && completedCount >= expectedCount) {
+        pool.removeListener('task:complete', onComplete);
+        completionResolve();
+      }
+    };
+
+    pool.on('task:complete', onComplete);
+
     for await (const fetchResult of fetchStream) {
       if (!fetchResult.success || !fetchResult.data) {
         // Data fetch failed — record as error for both strategies
@@ -329,44 +370,19 @@ export async function parallelTune(options: ParallelTuneOptions): Promise<TuneBa
       pool.submit(task);
     }
 
-    // Wait for all dispatched tasks to complete
-    if (dispatchedTickers.size > 0) {
+    // Wait for all dispatched tasks to complete (some may have already finished)
+    expectedCount = dispatchedTickers.size;
+    if (expectedCount > 0 && completedCount < expectedCount) {
       await new Promise<void>((resolve) => {
-        let completedCount = 0;
-        const expectedCount = dispatchedTickers.size;
-
-        const onComplete = (result: WorkerResult) => {
-          // Process result on main thread
-          if (result.success && result.result) {
-            const v3Result = result.result as V3TuneResult;
-            const data = tickerData.get(result.ticker);
-
-            if (data) {
-              const processed = processTickerResult(result.ticker, v3Result, data, options);
-              summaries.push(...processed.summaries);
-              succeeded += processed.succeeded;
-              failed += processed.failed;
-              skipped += processed.skipped;
-            }
-          } else {
-            // Worker failed — record error for both strategies
-            const errorMsg = result.error?.message ?? 'Worker execution failed';
-            summaries.push(
-              { ticker: result.ticker, strategy: 'consolidation_breakout', status: 'error', profile_saved: false, error_message: errorMsg },
-              { ticker: result.ticker, strategy: 'trend_pullback', status: 'error', profile_saved: false, error_message: errorMsg },
-            );
-            failed += 2;
-          }
-
-          completedCount++;
-          if (completedCount >= expectedCount) {
-            pool.removeListener('task:complete', onComplete);
-            resolve();
-          }
-        };
-
-        pool.on('task:complete', onComplete);
+        completionResolve = resolve;
+        // Check again in case all completed between setting expectedCount and here
+        if (completedCount >= expectedCount) {
+          pool.removeListener('task:complete', onComplete);
+          resolve();
+        }
       });
+    } else {
+      pool.removeListener('task:complete', onComplete);
     }
   } finally {
     await pool.shutdown();

@@ -251,9 +251,10 @@ export class BacktestEngine {
     let pendingBuySignal: V2Signal | null = null;
     let entryBarIndex = 0;
 
+    // Pass the full array every iteration — the engine uses its internal
+    // currentBarIndex to track position, so slicing is unnecessary.
     for (let i = minDataPoints; i <= dataPoints.length; i++) {
-      const slice = dataPoints.slice(0, i);
-      const signal = engine.evaluateWithOHLCV(slice, params);
+      const signal = engine.evaluateWithOHLCV(dataPoints, params);
 
       if (signal.direction === 'BUY') {
         signals.push(signal);

@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import type {
   Strategy,
   StrategyType,
@@ -16,6 +15,12 @@ import type {
 import { range_pct, atr_ratio, atr, sma, sma_slope, highestHigh, swingLow, avgVolume, returnNd } from '../indicators.js';
 import type { IndicatorCache } from '../indicator-cache.js';
 import { computeConfidenceScore, DEFAULT_WEIGHTS } from '../confidence-score.js';
+
+// Fast signal ID generator — avoids crypto.randomUUID() overhead in hot loops
+let _signalCounter = 0;
+function fastSignalId(): string {
+  return `s${++_signalCounter}`;
+}
 
 // ============================================================
 // Result interfaces for standalone detection functions
@@ -110,17 +115,14 @@ export class ConsolidationBreakoutEngine implements Strategy {
       consolidationBar: barIndex,
     };
 
-    // Slice data up to and including barIndex
-    const slice = dataPoints.slice(0, barIndex + 1);
-
     // Minimum data check: need enough for consolidation window, ATR(20) (needs 21 points), and SMA(50)
     const minRequired = Math.max(config.consolidation_window, 21, 50);
-    if (slice.length < minRequired) {
+    if (barIndex + 1 < minRequired) {
       return notDetected;
     }
 
     // 1. Compute range_pct over the consolidation window
-    const rangePct = cache ? cache.getRangePct(config.consolidation_window, barIndex) : range_pct(slice, config.consolidation_window);
+    const rangePct = cache ? cache.getRangePct(config.consolidation_window, barIndex) : range_pct(dataPoints.slice(0, barIndex + 1), config.consolidation_window);
     if (rangePct === undefined) return notDetected;
 
     // range_pct returns a ratio (e.g. 0.04 for 4%), config uses percentage (e.g. 4)
@@ -129,21 +131,31 @@ export class ConsolidationBreakoutEngine implements Strategy {
     if (rangePctPercent > config.max_range_pct) return notDetected;
 
     // 2. Compute atr_ratio(5, 20)
-    const atrRat = cache ? cache.getAtrRatio(5, 20, barIndex) : atr_ratio(slice, 5, 20);
+    const atrRat = cache ? cache.getAtrRatio(5, 20, barIndex) : atr_ratio(dataPoints.slice(0, barIndex + 1), 5, 20);
     if (atrRat === undefined) return notDetected;
     if (atrRat >= config.atr_ratio_threshold) return notDetected;
 
     // 3. Check close >= SMA(50)
-    const closes = slice.map(d => d.close);
-    const sma50 = cache ? cache.getSma(50, barIndex) : sma(closes, 50);
+    const currentClose = dataPoints[barIndex].close;
+    let sma50: number | undefined;
+    if (cache) {
+      sma50 = cache.getSma(50, barIndex);
+    } else {
+      const closes = dataPoints.slice(0, barIndex + 1).map(d => d.close);
+      sma50 = sma(closes, 50);
+    }
     if (sma50 === undefined) return notDetected;
-
-    const currentClose = slice[slice.length - 1].close;
     if (currentClose < sma50) return notDetected;
 
     // 4. Optional SMA proximity check
     if (config.sma_proximity_pct !== undefined) {
-      const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
+      let sma20: number | undefined;
+      if (cache) {
+        sma20 = cache.getSma(20, barIndex);
+      } else {
+        const closes = dataPoints.slice(0, barIndex + 1).map(d => d.close);
+        sma20 = sma(closes, 20);
+      }
       if (sma20 === undefined || sma20 === 0) return notDetected;
 
       const proximity = Math.abs(currentClose - sma20) / sma20;
@@ -152,8 +164,8 @@ export class ConsolidationBreakoutEngine implements Strategy {
     }
 
     // All conditions pass — compute consolidation high and low over the window
-    const consolidationHighVal = cache ? cache.getHighestHigh(config.consolidation_window, barIndex) : highestHigh(slice, config.consolidation_window);
-    const consolidationLowVal = cache ? cache.getSwingLow(config.consolidation_window, barIndex) : swingLow(slice, config.consolidation_window);
+    const consolidationHighVal = cache ? cache.getHighestHigh(config.consolidation_window, barIndex) : highestHigh(dataPoints.slice(0, barIndex + 1), config.consolidation_window);
+    const consolidationLowVal = cache ? cache.getSwingLow(config.consolidation_window, barIndex) : swingLow(dataPoints.slice(0, barIndex + 1), config.consolidation_window);
 
     if (consolidationHighVal === undefined || consolidationLowVal === undefined) {
       return notDetected;
@@ -184,15 +196,12 @@ export class ConsolidationBreakoutEngine implements Strategy {
     config: BreakoutConfig,
     cache?: IndicatorCache
   ): boolean {
-    // Slice data up to and including barIndex
-    const slice = dataPoints.slice(0, barIndex + 1);
-
-    // Need at least 20 bars for avgVolume(20) and 21 for returnNd(20)
-    if (slice.length < 21) {
+    // Need at least 21 bars for avgVolume(20) and returnNd(20)
+    if (barIndex + 1 < 21) {
       return false;
     }
 
-    const currentBar = slice[slice.length - 1];
+    const currentBar = dataPoints[barIndex];
 
     // 1. Check close > consolidationHigh (strict inequality)
     if (currentBar.close <= consolidationHigh) {
@@ -200,7 +209,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
     }
 
     // 2. Check volume > avgVolume(20) × volume_multiplier
-    const avg20Vol = cache ? cache.getAvgVolume(20, barIndex) : avgVolume(slice, 20);
+    const avg20Vol = cache ? cache.getAvgVolume(20, barIndex) : avgVolume(dataPoints.slice(0, barIndex + 1), 20);
     if (avg20Vol === undefined) {
       return false;
     }
@@ -210,7 +219,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
 
     // 3. Optionally check returnNd(20) > return_20d_threshold
     if (config.return_20d_threshold !== undefined) {
-      const closes = slice.map(d => d.close);
+      const closes = dataPoints.slice(0, barIndex + 1).map(d => d.close);
       const ret20 = returnNd(closes, 20);
       if (ret20 === undefined) {
         return false;
@@ -244,16 +253,19 @@ export class ConsolidationBreakoutEngine implements Strategy {
     config: ConsolidationBreakoutConfiguration,
     cache?: IndicatorCache
   ): EntryResult | null {
-    const slice = dataPoints.slice(0, barIndex + 1);
-
     // Need sufficient data for SMA(50) at minimum
-    if (slice.length < 50) return null;
+    if (barIndex + 1 < 50) return null;
 
-    const closes = slice.map(d => d.close);
-    const currentClose = slice[slice.length - 1].close;
+    const currentClose = dataPoints[barIndex].close;
 
     // ---- Step 1: Direction check ----
-    const sma50 = cache ? cache.getSma(50, barIndex) : sma(closes, 50);
+    let sma50: number | undefined;
+    if (cache) {
+      sma50 = cache.getSma(50, barIndex);
+    } else {
+      const closes = dataPoints.slice(0, barIndex + 1).map(d => d.close);
+      sma50 = sma(closes, 50);
+    }
     if (sma50 === undefined) return null;
 
     // close > SMA(50) — always required
@@ -261,14 +273,14 @@ export class ConsolidationBreakoutEngine implements Strategy {
 
     // Optional: SMA(20) >= SMA(50)
     if (config.direction.require_sma20_above_sma50) {
-      const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
+      const sma20 = cache ? cache.getSma(20, barIndex) : sma(dataPoints.slice(0, barIndex + 1).map(d => d.close), 20);
       if (sma20 === undefined) return null;
       if (sma20 < sma50) return null;
     }
 
     // Optional: SMA(50) slope positive — current SMA(50) > previous bar's SMA(50)
     if (config.direction.require_sma50_slope_positive) {
-      const slope = cache ? cache.getSmaSlope(50, barIndex) : sma_slope(closes, 50);
+      const slope = cache ? cache.getSmaSlope(50, barIndex) : sma_slope(dataPoints.slice(0, barIndex + 1).map(d => d.close), 50);
       if (slope === undefined || slope === false) return null;
     }
 
@@ -313,7 +325,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
     if (!breakoutDetected) return null;
 
     // ---- Step 4: Overextension filter ----
-    const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
+    const sma20 = cache ? cache.getSma(20, barIndex) : sma(dataPoints.slice(0, barIndex + 1).map(d => d.close), 20);
     if (sma20 === undefined || sma20 === 0) return null;
     if (sma50 === 0) return null;
 
@@ -329,12 +341,12 @@ export class ConsolidationBreakoutEngine implements Strategy {
     // ---- Step 5: Compute stop-loss ----
     const entryPrice = currentClose;
 
-    const atr14 = cache ? cache.getAtr(14, barIndex) : atr(slice, 14);
+    const atr14 = cache ? cache.getAtr(14, barIndex) : atr(dataPoints.slice(0, barIndex + 1), 14);
     if (atr14 === undefined) return null;
 
     const atrStop = entryPrice - config.stopLoss.atr_multiple * atr14;
 
-    const swingLowVal = cache ? cache.getSwingLow(config.stopLoss.swing_lookback, barIndex) : swingLow(slice, config.stopLoss.swing_lookback);
+    const swingLowVal = cache ? cache.getSwingLow(config.stopLoss.swing_lookback, barIndex) : swingLow(dataPoints.slice(0, barIndex + 1), config.stopLoss.swing_lookback);
     const structureStop = swingLowVal !== undefined
       ? swingLowVal - config.stopLoss.buffer * atr14
       : -Infinity;
@@ -390,15 +402,12 @@ export class ConsolidationBreakoutEngine implements Strategy {
     highestCloseSinceEntry: number,
     cache?: IndicatorCache
   ): number | undefined {
-    const slice = dataPoints.slice(0, barIndex + 1);
-
     // ATR(14) is required for all methods
-    const atr14 = cache ? cache.getAtr(14, barIndex) : atr(slice, 14);
+    const atr14 = cache ? cache.getAtr(14, barIndex) : atr(dataPoints.slice(0, barIndex + 1), 14);
     if (atr14 === undefined) return undefined;
 
     if (method === 'sma20') {
-      const closes = slice.map(d => d.close);
-      const sma20 = cache ? cache.getSma(20, barIndex) : sma(closes, 20);
+      const sma20 = cache ? cache.getSma(20, barIndex) : sma(dataPoints.slice(0, barIndex + 1).map(d => d.close), 20);
       if (sma20 === undefined) return undefined;
 
       const buffer = config.smaTrailBuffer ?? 0;
@@ -414,7 +423,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
     }
 
     // reference === 'close'
-    const currentClose = slice[slice.length - 1].close;
+    const currentClose = dataPoints[barIndex].close;
     return currentClose - multiple * atr14;
   }
 
@@ -566,7 +575,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
   evaluateWithOHLCV(dataPoints: HistoricalDataPoint[], params: ConsolidationBreakoutParams): V2Signal {
     if (!dataPoints || dataPoints.length === 0) {
       return {
-        id: crypto.randomUUID(),
+        id: fastSignalId(),
         ticker: '',
         direction: 'HOLD' as SignalDirection,
         strategyType: this.type,
@@ -582,7 +591,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
 
     if (!currentBar) {
       return {
-        id: crypto.randomUUID(),
+        id: fastSignalId(),
         ticker,
         direction: 'HOLD' as SignalDirection,
         strategyType: this.type,
@@ -641,7 +650,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
           this.positionOpen = false;
           const exitReason = this.effectiveStopLoss > this.originalStopLoss ? 'trailing_stop' as const : 'stop_loss' as const;
           const signal: V2Signal = {
-            id: crypto.randomUUID(),
+            id: fastSignalId(),
             ticker,
             direction: 'SELL' as SignalDirection,
             strategyType: this.type,
@@ -666,7 +675,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
         if (!removeProfitTarget && currentBar.high >= this.profitTargetPrice) {
           this.positionOpen = false;
           const signal: V2Signal = {
-            id: crypto.randomUUID(),
+            id: fastSignalId(),
             ticker,
             direction: 'SELL' as SignalDirection,
             strategyType: this.type,
@@ -688,14 +697,19 @@ export class ConsolidationBreakoutEngine implements Strategy {
         }
 
         // Priority 3: Trend failsafe
-        const slice = dataPoints.slice(0, this.currentBarIndex);
-        const closes = slice.map(d => d.close);
         const trendSmaBarIndex = this.currentBarIndex - 1;
-        const trendSma = paramCache ? paramCache.getSma(config.trendExit.trend_exit_sma_period, trendSmaBarIndex) ?? sma(closes, config.trendExit.trend_exit_sma_period) : sma(closes, config.trendExit.trend_exit_sma_period);
+        let trendSma: number | undefined;
+        if (paramCache) {
+          trendSma = paramCache.getSma(config.trendExit.trend_exit_sma_period, trendSmaBarIndex);
+        }
+        if (trendSma === undefined) {
+          const closes = dataPoints.slice(0, this.currentBarIndex).map(d => d.close);
+          trendSma = sma(closes, config.trendExit.trend_exit_sma_period);
+        }
         if (trendSma !== undefined && currentBar.close < trendSma) {
           this.positionOpen = false;
           const signal: V2Signal = {
-            id: crypto.randomUUID(),
+            id: fastSignalId(),
             ticker,
             direction: 'SELL' as SignalDirection,
             strategyType: this.type,
@@ -718,7 +732,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
 
         // No exit condition triggered — HOLD
         return {
-          id: crypto.randomUUID(),
+          id: fastSignalId(),
           ticker,
           direction: 'HOLD' as SignalDirection,
           strategyType: this.type,
@@ -734,7 +748,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
         this.positionOpen = false;
         const rValue = this.entryPrice - this.stopLossPrice;
         const signal: V2Signal = {
-          id: crypto.randomUUID(),
+          id: fastSignalId(),
           ticker,
           direction: 'SELL' as SignalDirection,
           strategyType: this.type,
@@ -760,7 +774,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
         this.positionOpen = false;
         const rValue = this.entryPrice - this.stopLossPrice;
         const signal: V2Signal = {
-          id: crypto.randomUUID(),
+          id: fastSignalId(),
           ticker,
           direction: 'SELL' as SignalDirection,
           strategyType: this.type,
@@ -782,15 +796,20 @@ export class ConsolidationBreakoutEngine implements Strategy {
       }
 
       // Priority 3: Trend failsafe — bar.close < SMA(trend_exit_sma_period)
-      const slice = dataPoints.slice(0, this.currentBarIndex);
-      const closes = slice.map(d => d.close);
       const trendSmaBarIndex = this.currentBarIndex - 1;
-      const trendSma = paramCache ? paramCache.getSma(config.trendExit.trend_exit_sma_period, trendSmaBarIndex) ?? sma(closes, config.trendExit.trend_exit_sma_period) : sma(closes, config.trendExit.trend_exit_sma_period);
+      let trendSma: number | undefined;
+      if (paramCache) {
+        trendSma = paramCache.getSma(config.trendExit.trend_exit_sma_period, trendSmaBarIndex);
+      }
+      if (trendSma === undefined) {
+        const closes = dataPoints.slice(0, this.currentBarIndex).map(d => d.close);
+        trendSma = sma(closes, config.trendExit.trend_exit_sma_period);
+      }
       if (trendSma !== undefined && currentBar.close < trendSma) {
         this.positionOpen = false;
         const rValue = this.entryPrice - this.stopLossPrice;
         const signal: V2Signal = {
-          id: crypto.randomUUID(),
+          id: fastSignalId(),
           ticker,
           direction: 'SELL' as SignalDirection,
           strategyType: this.type,
@@ -813,7 +832,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
 
       // No exit condition triggered — HOLD
       return {
-        id: crypto.randomUUID(),
+        id: fastSignalId(),
         ticker,
         direction: 'HOLD' as SignalDirection,
         strategyType: this.type,
@@ -837,7 +856,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
       this.highestCloseSinceEntry = entryResult.entryPrice;
 
       return {
-        id: crypto.randomUUID(),
+        id: fastSignalId(),
         ticker,
         direction: 'BUY' as SignalDirection,
         strategyType: this.type,
@@ -851,7 +870,7 @@ export class ConsolidationBreakoutEngine implements Strategy {
 
     // No entry — HOLD
     return {
-      id: crypto.randomUUID(),
+      id: fastSignalId(),
       ticker,
       direction: 'HOLD' as SignalDirection,
       strategyType: this.type,
