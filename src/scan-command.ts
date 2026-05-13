@@ -21,6 +21,11 @@ import type { SignalOutput } from './strategy-registry.js';
 import { parallelScan } from './parallel-scan.js';
 import { RegimeDetector } from './regime-detector.js';
 import type { RegimeResult, RegimeState } from './regime-detector.js';
+import { load as loadJournal } from './journal-store.js';
+import { JOURNAL_DEFAULTS } from './journal-types.js';
+import type { JournalEntry } from './journal-types.js';
+import { computePositionMetrics } from './position-metrics.js';
+import type { PositionMetrics } from './position-metrics.js';
 
 // ============================================================
 // Dependencies
@@ -93,6 +98,86 @@ function resolveTickerList(tickersArg: string, dataDir: string): string[] | { er
 }
 
 // ============================================================
+// Open Positions Processing
+// ============================================================
+
+/**
+ * Load open journal positions, resolve current prices, and compute metrics.
+ * Returns the computed positions array and any warnings generated.
+ * Non-fatal: always returns a result even if journal is missing or malformed.
+ */
+async function loadOpenPositions(
+  dataDir: string,
+  cachingProvider: HistoricalDataCache,
+  existingPriceData: Map<string, number>,
+): Promise<{ openPositions: PositionMetrics[]; warnings: string[] }> {
+  const warnings: string[] = [];
+  const journalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
+
+  // Load journal entries
+  const loadResult = loadJournal(journalPath);
+  let openEntries: JournalEntry[] = [];
+
+  if (!loadResult.success) {
+    // journal-store.load() returns ok([]) when file doesn't exist,
+    // so reaching here means the file is malformed — add a warning
+    warnings.push(`Journal warning: ${loadResult.error}`);
+  } else {
+    openEntries = loadResult.data.filter((e) => e.status === 'open');
+  }
+
+  if (openEntries.length === 0) {
+    return { openPositions: [], warnings };
+  }
+
+  // Collect unique tickers from open positions
+  const uniqueTickers = [...new Set(openEntries.map((e) => e.ticker))];
+
+  // Resolve current prices: reuse existing data, fetch remaining
+  const priceMap = new Map<string, number>(existingPriceData);
+
+  const tickersToFetch = uniqueTickers.filter((t) => !priceMap.has(t));
+
+  for (const ticker of tickersToFetch) {
+    try {
+      const dataResult = await cachingProvider.getHistoricalData(ticker, '1y');
+      if (dataResult.success && dataResult.data.dataPoints.length > 0) {
+        const lastPoint = dataResult.data.dataPoints[dataResult.data.dataPoints.length - 1];
+        priceMap.set(ticker, lastPoint.close);
+      } else {
+        warnings.push(`[${ticker}] Price data unavailable for open position`);
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      warnings.push(`[${ticker}] Failed to fetch price for open position: ${message}`);
+    }
+  }
+
+  // Compute metrics for each open entry
+  const today = new Date();
+  const positions: PositionMetrics[] = openEntries.map((entry) => {
+    const currentPrice = priceMap.get(entry.ticker) ?? null;
+    if (currentPrice === null) {
+      // Only add warning if we haven't already warned about this ticker
+      if (!tickersToFetch.includes(entry.ticker) && !existingPriceData.has(entry.ticker)) {
+        warnings.push(`[${entry.ticker}] Price data unavailable for open position`);
+      }
+    }
+    return computePositionMetrics({ entry, currentPrice, today });
+  });
+
+  // Sort by pnl_pct descending, nulls last
+  positions.sort((a, b) => {
+    if (a.pnl_pct === null && b.pnl_pct === null) return 0;
+    if (a.pnl_pct === null) return 1;
+    if (b.pnl_pct === null) return -1;
+    return b.pnl_pct - a.pnl_pct;
+  });
+
+  return { openPositions: positions, warnings };
+}
+
+// ============================================================
 // createScanHandler
 // ============================================================
 
@@ -154,12 +239,17 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         ? result.signals.map(s => ({ ...s, regimeState: regimeStateMap!.get(s.ticker) }))
         : result.signals;
 
+      // Load and process open positions
+      // Price data reuse happens transparently via the caching provider
+      const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
+
       const output: Record<string, unknown> = {
         signals: annotatedSignals,
-        warnings: result.warnings,
+        warnings: [...result.warnings, ...positionsResult.warnings],
         total: result.total,
         scanned: result.scanned,
         skipped: result.skipped,
+        openPositions: positionsResult.openPositions,
       };
 
       if (regimeResult) {
@@ -238,12 +328,17 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       ? sorted.map(s => ({ ...s, regimeState: regimeStateMap!.get(s.ticker) }))
       : sorted;
 
+    // Load and process open positions
+    // Price data reuse happens transparently via the caching provider
+    const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
+
     const output: Record<string, unknown> = {
       signals: annotatedSignals,
-      warnings,
+      warnings: [...warnings, ...positionsResult.warnings],
       total: tickers.length,
       scanned: signals.length,
       skipped: tickers.length - signals.length,
+      openPositions: positionsResult.openPositions,
     };
 
     if (regimeResult) {
