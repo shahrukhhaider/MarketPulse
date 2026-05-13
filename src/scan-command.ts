@@ -19,6 +19,8 @@ import { loadStrategyProfile } from './profile-store.js';
 import { detectSignal } from './signal-detector.js';
 import type { SignalOutput } from './strategy-registry.js';
 import { parallelScan } from './parallel-scan.js';
+import { RegimeDetector } from './regime-detector.js';
+import type { RegimeResult, RegimeState } from './regime-detector.js';
 
 // ============================================================
 // Dependencies
@@ -27,6 +29,7 @@ import { parallelScan } from './parallel-scan.js';
 export interface ScanCommandDeps {
   cachingProvider: HistoricalDataCache;
   dataDir: string;
+  regimeDetector?: RegimeDetector;
 }
 
 // ============================================================
@@ -94,12 +97,13 @@ function resolveTickerList(tickersArg: string, dataDir: string): string[] | { er
 // ============================================================
 
 export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
-  const { cachingProvider, dataDir } = deps;
+  const { cachingProvider, dataDir, regimeDetector } = deps;
 
   return async (opts: Record<string, string>) => {
     const tickersArg = opts['tickers'];
     const strategyName = opts['strategy'];
     const allowStale = opts['allow-stale'] !== undefined;
+    const regimeFlag = opts['regime'] !== undefined;
 
     if (!tickersArg) {
       return errorResult('scan', 'MISSING_PARAM', 'Missing required parameter: --tickers');
@@ -119,6 +123,18 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       return errorResult('scan', 'MISSING_PARAM', 'No tickers specified');
     }
 
+    // Run regime detection if --regime flag is passed and regimeDetector is available
+    let regimeResult: RegimeResult | undefined;
+    let regimeStateMap: Map<string, RegimeState> | undefined;
+
+    if (regimeFlag && regimeDetector) {
+      regimeResult = await regimeDetector.detect(tickers);
+      regimeStateMap = new Map<string, RegimeState>();
+      for (const state of regimeResult.tickers) {
+        regimeStateMap.set(state.ticker, state);
+      }
+    }
+
     // Parse concurrency from opts (set by command-wiring.ts)
     const concurrency = opts['_concurrency'] ? parseInt(opts['_concurrency'], 10) : 8;
 
@@ -133,13 +149,24 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         dataDir,
       });
 
-      return successResult('scan', {
-        signals: result.signals,
+      // Annotate signals with regime state if available
+      const annotatedSignals = regimeStateMap
+        ? result.signals.map(s => ({ ...s, regimeState: regimeStateMap!.get(s.ticker) }))
+        : result.signals;
+
+      const output: Record<string, unknown> = {
+        signals: annotatedSignals,
         warnings: result.warnings,
         total: result.total,
         scanned: result.scanned,
         skipped: result.skipped,
-      });
+      };
+
+      if (regimeResult) {
+        output.regime = regimeResult;
+      }
+
+      return successResult('scan', output);
     }
 
     // Sequential path: single ticker or concurrency === 1
@@ -206,12 +233,23 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     // Sort by signal priority
     const sorted = sortBySignalPriority(signals);
 
-    return successResult('scan', {
-      signals: sorted,
+    // Annotate signals with regime state if available
+    const annotatedSignals = regimeStateMap
+      ? sorted.map(s => ({ ...s, regimeState: regimeStateMap!.get(s.ticker) }))
+      : sorted;
+
+    const output: Record<string, unknown> = {
+      signals: annotatedSignals,
       warnings,
       total: tickers.length,
       scanned: signals.length,
       skipped: tickers.length - signals.length,
-    });
+    };
+
+    if (regimeResult) {
+      output.regime = regimeResult;
+    }
+
+    return successResult('scan', output);
   };
 }

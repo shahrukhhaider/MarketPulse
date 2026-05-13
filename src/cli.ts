@@ -55,6 +55,12 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // If --summary was requested and this is a successful regime command, use formatted output
+  if (wantSummary && result.success && parsed.command === 'regime' && result.data?.formatted) {
+    process.stdout.write(result.data.formatted + '\n');
+    process.exit(0);
+  }
+
   const output = router.formatOutput(result);
   process.stdout.write(output + '\n');
   process.exit(0);

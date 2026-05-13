@@ -3,7 +3,8 @@
 # Runs at market open (9:30 AM ET) on weekdays
 #
 # Flow:
-#   1. Run scan → get active signals
+#   0. Run regime detection → cache market state for the day
+#   1. Run scan (with regime annotation) → get active signals
 #   2. Print terminal summary
 #   3. Auto-enter paper positions for active signals via Webull
 #   4. Update existing positions (check stop/target)
@@ -25,11 +26,16 @@ echo "[$(date)] === Daily Pipeline Start ===" >> "$LOG_DIR/cron.log"
 
 cd "$PROJECT_DIR"
 
-# ─── Step 1: Run scan (save JSON + print summary) ───
+# ─── Step 0: Run regime detection (cache for the day) ───
+echo "[$(date)] Running regime detection..." >> "$LOG_DIR/cron.log"
+$NODE dist/src/cli.js regime --tickers "$TICKERS" --json > "$LOG_DIR/regime_${TIMESTAMP}.json" 2>> "$LOG_DIR/cron.log" || true
+
+# ─── Step 1: Run scan with regime annotation (save JSON + print summary) ───
 echo "[$(date)] Running scan..." >> "$LOG_DIR/cron.log"
-$NODE dist/src/cli.js scan --tickers "$TICKERS" --strategy v3 --allow-stale --summary --log "$SCAN_LOG" 2>> "$LOG_DIR/cron.log"
+$NODE dist/src/cli.js scan --tickers "$TICKERS" --strategy v3 --allow-stale --regime --summary --log "$SCAN_LOG" 2>> "$LOG_DIR/cron.log"
 
 # ─── Step 2: Extract active signals and auto-enter ───
+
 echo "[$(date)] Checking for active signals..." >> "$LOG_DIR/cron.log"
 
 # Extract active signals from scan JSON using node one-liner
@@ -67,20 +73,24 @@ else
 fi
 
 # ─── Step 3: Update existing positions ───
+
 echo "" 
 echo "[$(date)] Updating open positions..." >> "$LOG_DIR/cron.log"
 $PYTHON scripts/webull-trade.py update 2>> "$LOG_DIR/cron.log"
 
 # ─── Step 4: Show portfolio status ───
+
 echo ""
 $PYTHON scripts/webull-trade.py status
 
 # ─── Step 5: Journal record (capture active signals) ───
+
 echo ""
 echo "[$(date)] Recording active signals to journal..." >> "$LOG_DIR/cron.log"
 $NODE dist/src/cli.js journal-record --from "$SCAN_LOG" >> "$LOG_DIR/cron.log" 2>&1 || true
 
 # ─── Step 6: Journal update (check outcomes of open entries) ───
+
 echo "[$(date)] Updating journal outcomes..." >> "$LOG_DIR/cron.log"
 $NODE dist/src/cli.js journal-update >> "$LOG_DIR/cron.log" 2>&1 || true
 

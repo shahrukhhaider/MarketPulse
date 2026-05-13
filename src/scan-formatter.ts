@@ -6,6 +6,7 @@
 // ============================================================
 
 import type { SignalOutput } from './strategy-registry.js';
+import type { RegimeState } from './regime-detector.js';
 
 // ============================================================
 // ANSI Color Helpers
@@ -50,9 +51,9 @@ function padLeft(s: string, len: number): string {
 
 function formatPrice(price: number): string {
   if (price === 0) return '—';
-  if (price >= 100) return `$${price.toFixed(2)}`;
-  if (price >= 10) return `$${price.toFixed(2)}`;
-  return `$${price.toFixed(2)}`;
+  if (price >= 100) return `${price.toFixed(2)}`;
+  if (price >= 10) return `${price.toFixed(2)}`;
+  return `${price.toFixed(2)}`;
 }
 
 function formatPct(pct: number): string {
@@ -61,19 +62,38 @@ function formatPct(pct: number): string {
 }
 
 // ============================================================
+// Regime Badge Helper
+// ============================================================
+
+/**
+ * Returns a regime badge string for display next to a ticker.
+ * Returns empty string when no regime data is present (preserves existing layout).
+ */
+function regimeBadge(regimeState: RegimeState | undefined): string {
+  if (!regimeState) return '';
+  switch (regimeState.ticker_regime) {
+    case 'bullish': return ' 🟢 bullish';
+    case 'bearish': return ' 🔴 bearish';
+    default: return ' ⚪ unknown';
+  }
+}
+
+// ============================================================
 // Signal Grouping
 // ============================================================
 
+type AnnotatedSignal = SignalOutput & { regimeState?: RegimeState };
+
 interface GroupedSignals {
-  active: SignalOutput[];
-  near: SignalOutput[];
-  forming_breakout: SignalOutput[];
-  forming_pullback: SignalOutput[];
-  none_below_sma: SignalOutput[];
-  none_other: SignalOutput[];
+  active: AnnotatedSignal[];
+  near: AnnotatedSignal[];
+  forming_breakout: AnnotatedSignal[];
+  forming_pullback: AnnotatedSignal[];
+  none_below_sma: AnnotatedSignal[];
+  none_other: AnnotatedSignal[];
 }
 
-function groupSignals(signals: SignalOutput[]): GroupedSignals {
+function groupSignals(signals: AnnotatedSignal[]): GroupedSignals {
   const groups: GroupedSignals = {
     active: [],
     near: [],
@@ -112,7 +132,7 @@ function groupSignals(signals: SignalOutput[]): GroupedSignals {
 // Section Renderers
 // ============================================================
 
-function renderActive(signals: SignalOutput[]): string {
+function renderActive(signals: AnnotatedSignal[]): string {
   if (signals.length === 0) return '';
 
   const lines: string[] = [];
@@ -131,7 +151,7 @@ function renderActive(signals: SignalOutput[]): string {
     // Extract target from reason
     const targetLine = sig.reason?.find(r => r.includes('Target:'));
     const targetMatch = targetLine?.match(/Target:\s*([\d.]+)/);
-    const target = targetMatch ? padLeft(`$${targetMatch[1]}`, 10) : padLeft('—', 10);
+    const target = targetMatch ? padLeft(`${targetMatch[1]}`, 10) : padLeft('—', 10);
 
     const risk = padLeft(formatPct(sig.risk_pct), 8);
 
@@ -139,13 +159,14 @@ function renderActive(signals: SignalOutput[]): string {
     const rrLine = sig.reason?.find(r => r.includes('R:R'));
     const rr = rrLine?.match(/R:R\s*=\s*([\d:]+)/)?.[1] ?? '—';
 
-    lines.push(`  ${green(ticker)} ${strat} ${entry}  ${red(stop)}  ${green(target)}  ${yellow(risk)}  ${cyan(rr)}`);
+    const badgeStr = regimeBadge(sig.regimeState);
+    lines.push(`  ${green(ticker)}${badgeStr} ${strat} ${entry}  ${red(stop)}  ${green(target)}  ${yellow(risk)}  ${cyan(rr)}`);
   }
 
   return lines.join('\n');
 }
 
-function renderNear(signals: SignalOutput[]): string {
+function renderNear(signals: AnnotatedSignal[]): string {
   if (signals.length === 0) return '';
 
   const lines: string[] = [];
@@ -154,13 +175,13 @@ function renderNear(signals: SignalOutput[]): string {
   lines.push('');
 
   for (const sig of signals) {
-    const ticker = bold(sig.ticker);
     const strat = sig.strategy === 'trend_pullback' ? 'Trend Pullback' : 'Consolidation';
     // Extract the "Need:" line from reason
     const needLine = sig.reason?.find(r => r.includes('Need:'));
     const need = needLine?.replace('Need: ', '') ?? 'trigger pending';
 
-    lines.push(`  ${yellow(padRight(sig.ticker, 8))} ${dim(strat)}`);
+    const badgeStr = regimeBadge(sig.regimeState);
+    lines.push(`  ${yellow(padRight(sig.ticker, 8))}${badgeStr} ${dim(strat)}`);
     lines.push(`           Entry: ${formatPrice(sig.entry)}  Stop: ${red(formatPrice(sig.stop))}  Risk: ${formatPct(sig.risk_pct)}`);
     lines.push(`           ${dim('→ ' + need)}`);
   }
@@ -168,7 +189,7 @@ function renderNear(signals: SignalOutput[]): string {
   return lines.join('\n');
 }
 
-function renderFormingBreakouts(signals: SignalOutput[]): string {
+function renderFormingBreakouts(signals: AnnotatedSignal[]): string {
   if (signals.length === 0) return '';
 
   const lines: string[] = [];
@@ -183,7 +204,7 @@ function renderFormingBreakouts(signals: SignalOutput[]): string {
     // Extract current price and distance from reason
     const priceLine = sig.reason?.find(r => r.includes('Current price:'));
     const priceMatch = priceLine?.match(/Current price:\s*([\d.]+)/);
-    const price = priceMatch ? padLeft(`$${priceMatch[1]}`, 10) : padLeft('—', 10);
+    const price = priceMatch ? padLeft(`${priceMatch[1]}`, 10) : padLeft('—', 10);
 
     const breakout = padLeft(formatPrice(sig.entry), 10);
 
@@ -191,13 +212,14 @@ function renderFormingBreakouts(signals: SignalOutput[]): string {
     const distMatch = distLine?.match(/([\d.]+)%/);
     const dist = distMatch ? padLeft(`${distMatch[1]}%`, 8) : padLeft('—', 8);
 
-    lines.push(`  ${blue(ticker)} ${price}   ${cyan(breakout)}   ${dist}`);
+    const badgeStr = regimeBadge(sig.regimeState);
+    lines.push(`  ${blue(ticker)}${badgeStr} ${price}   ${cyan(breakout)}   ${dist}`);
   }
 
   return lines.join('\n');
 }
 
-function renderFormingPullbacks(signals: SignalOutput[]): string {
+function renderFormingPullbacks(signals: AnnotatedSignal[]): string {
   if (signals.length === 0) return '';
 
   const lines: string[] = [];
@@ -219,23 +241,24 @@ function renderFormingPullbacks(signals: SignalOutput[]): string {
 
     const priceLine = sig.reason?.find(r => r.startsWith('Price:'));
     const priceMatch = priceLine?.match(/Price:\s*([\d.]+)/);
-    const price = priceMatch ? padLeft(`$${priceMatch[1]}`, 10) : padLeft('—', 10);
+    const price = priceMatch ? padLeft(`${priceMatch[1]}`, 10) : padLeft('—', 10);
 
     const smaLine = sig.reason?.find(r => r.includes('SMA(20):'));
     const smaMatch = smaLine?.match(/SMA\(20\):\s*([\d.]+)/);
-    const smaVal = smaMatch ? padLeft(`$${smaMatch[1]}`, 10) : padLeft('—', 10);
+    const smaVal = smaMatch ? padLeft(`${smaMatch[1]}`, 10) : padLeft('—', 10);
 
     const distLine = sig.reason?.find(r => r.includes('Distance to SMA(20):'));
     const distMatch = distLine?.match(/([-\d.]+)%/);
     const dist = distMatch ? padLeft(`${distMatch[1]}%`, 8) : padLeft('—', 8);
 
-    lines.push(`  ${blue(ticker)} ${price}   ${dim(smaVal)}    ${cyan(dist)}`);
+    const badgeStr = regimeBadge(sig.regimeState);
+    lines.push(`  ${blue(ticker)}${badgeStr} ${price}   ${dim(smaVal)}    ${cyan(dist)}`);
   }
 
   return lines.join('\n');
 }
 
-function renderNoSetup(signals: SignalOutput[], allSignals: SignalOutput[]): string {
+function renderNoSetup(signals: AnnotatedSignal[], allSignals: AnnotatedSignal[]): string {
   if (signals.length === 0) return '';
 
   // Only show tickers that have NO actionable signal (active/near/forming) in any strategy
@@ -247,7 +270,7 @@ function renderNoSetup(signals: SignalOutput[], allSignals: SignalOutput[]): str
   }
 
   // Deduplicate by ticker, only include those with no setup at all
-  const tickerMap = new Map<string, { dist: string }>();
+  const tickerMap = new Map<string, { dist: string; regimeState?: RegimeState }>();
 
   for (const sig of signals) {
     if (tickersWithSetup.has(sig.ticker)) continue;
@@ -257,7 +280,7 @@ function renderNoSetup(signals: SignalOutput[], allSignals: SignalOutput[]): str
     const distMatch = distLine?.match(/([-\d.]+)%/);
     const dist = distMatch ? `${distMatch[1]}%` : '—';
 
-    tickerMap.set(sig.ticker, { dist });
+    tickerMap.set(sig.ticker, { dist, regimeState: sig.regimeState });
   }
 
   if (tickerMap.size === 0) return '';
@@ -274,7 +297,8 @@ function renderNoSetup(signals: SignalOutput[], allSignals: SignalOutput[]): str
   });
 
   const tickerList = entries.map(([ticker, data]) => {
-    return `${dim(padRight(ticker, 6))} ${dim(data.dist)}`;
+    const badgeStr = regimeBadge(data.regimeState);
+    return `${dim(padRight(ticker, 6))}${badgeStr} ${dim(data.dist)}`;
   });
 
   // Print in rows of 4
@@ -301,7 +325,7 @@ function extractDistToSma(sig: SignalOutput): number {
 // ============================================================
 
 export interface ScanSummaryData {
-  signals: SignalOutput[];
+  signals: AnnotatedSignal[];
   warnings: string[];
   total: number;
   scanned: number;

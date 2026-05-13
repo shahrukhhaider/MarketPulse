@@ -43,6 +43,8 @@ import { createChartHandler } from './chart-command.js';
 import { createScanChartHandler } from './scan-chart-command.js';
 import { parallelTune } from './parallel-tune.js';
 import { createJournalStatusHandler, createJournalRecordHandler, createJournalUpdateHandler } from './journal-command.js';
+import { createRegimeHandler } from './regime-command.js';
+import { RegimeDetector } from './regime-detector.js';
 
 export interface WiringOptions {
   dataDir?: string;
@@ -1355,9 +1357,20 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
   // --- New pipeline commands: tune, scan, chart ---
   const tuneHandler = createTuneHandler({ cachingProvider, registry: strategyRegistry, dataDir });
-  const scanHandler = createScanHandler({ cachingProvider, dataDir });
+
+  // Instantiate RegimeDetector for scan --regime support
+  const regimeDetector = new RegimeDetector({
+    cachingProvider,
+    cacheDir: dataDir,
+  });
+
+  const scanHandler = createScanHandler({ cachingProvider, dataDir, regimeDetector });
   const chartHandler = createChartHandler({ cachingProvider, registry: strategyRegistry, dataDir });
   const scanChartHandler = createScanChartHandler({ cachingProvider, dataDir });
+
+  // --- regime command ---
+  const regimeHandler = createRegimeHandler({ cachingProvider, dataDir });
+  router.register('regime', [], regimeHandler);
 
   router.register('tune-pipeline', ['tickers', 'strategy'], async (opts) => {
     // Parse and validate --concurrency flag

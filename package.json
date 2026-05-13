@@ -26,6 +26,7 @@
     "journal:status": "node dist/src/cli.js journal-status",
     "journal:record": "node dist/src/cli.js journal-record",
     "journal:update": "node dist/src/cli.js journal-update",
+    "regime": "node dist/src/cli.js regime",
     "pipeline": "./scripts/daily-pipeline.sh"
   },
   "dependencies": {
