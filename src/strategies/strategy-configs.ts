@@ -1,7 +1,7 @@
 import type { FilterCondition } from './filter-evaluator.js';
 import type { HistoricalDataPoint, StrategyType } from '../types.js';
-import type { IndicatorCache } from '../indicator-cache.js';
-import type { ConfidenceWeightsConfig } from '../confidence-score.js';
+import type { IndicatorCache } from '../indicators/indicator-cache.js';
+import type { ConfidenceWeightsConfig } from '../indicators/confidence-score.js';
 
 // ============================================================
 // Exit Rule Types
@@ -268,6 +268,41 @@ export interface TrendPullbackConfiguration {
 
 export interface TrendPullbackParams {
   config: TrendPullbackConfiguration;
+  primaryDataPoints?: HistoricalDataPoint[];
+  cache?: IndicatorCache;
+}
+
+// ============================================================
+// V3 Bear Breakdown Strategy Types
+// ============================================================
+
+export interface BearBreakdownConfiguration {
+  name: string;
+  consolidation: {
+    consolidation_window: number;     // 5, 10, 15
+    max_range_pct: number;            // 4, 6, 8
+    atr_ratio_threshold: number;      // 0.8, 1.0
+    max_staleness: number;            // fixed 20
+  };
+  breakdown: {
+    volume_multiplier: number;        // 1.2, 1.5
+  };
+  stopLoss: {
+    atr_multiple: number;             // 1.2, 1.6, 2.0
+    swing_lookback: number;           // 10, 15, 20
+    buffer: number;                   // fixed 0.3
+  };
+  profitTarget: {
+    r_multiple: number;               // 2, 2.5, 3
+  };
+  maxRisk: {
+    max_risk_pct: number;             // 3, 5, 8
+  };
+  exitMode: 'fixed';                  // always fixed, no trailing
+}
+
+export interface BearBreakdownParams {
+  config: BearBreakdownConfiguration;
   primaryDataPoints?: HistoricalDataPoint[];
   cache?: IndicatorCache;
 }

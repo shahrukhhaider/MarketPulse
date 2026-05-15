@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { ProcessManager, type MonitorConfig } from '../../src/process-manager.js';
+import { ProcessManager, type MonitorConfig } from '../../src/monitoring/process-manager.js';
 import { ErrorCodes } from '../../src/types.js';
 
 describe('ProcessManager', () => {

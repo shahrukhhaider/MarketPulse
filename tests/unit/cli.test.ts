@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { createWiredRouter } from '../../src/command-wiring.js';
-import type { YahooFinanceClient } from '../../src/price-feed-client.js';
+import type { YahooFinanceClient } from '../../src/data/price-feed-client.js';
 
 /**
  * A mock YahooFinanceClient for CLI tests.

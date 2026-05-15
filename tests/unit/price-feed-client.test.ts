@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PriceFeedClient } from '../../src/price-feed-client.js';
-import type { YahooFinanceClient } from '../../src/price-feed-client.js';
+import { PriceFeedClient } from '../../src/data/price-feed-client.js';
+import type { YahooFinanceClient } from '../../src/data/price-feed-client.js';
 import { ErrorCodes, VALID_PERIODS, VALID_INTERVALS } from '../../src/types.js';
 
 /**

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { PriceFeedClient } from '../../src/price-feed-client.js';
-import type { YahooFinanceClient } from '../../src/price-feed-client.js';
+import { PriceFeedClient } from '../../src/data/price-feed-client.js';
+import type { YahooFinanceClient } from '../../src/data/price-feed-client.js';
 import { CommandRouter, successResult, errorResult } from '../../src/command-router.js';
 import {
   ErrorCodes,

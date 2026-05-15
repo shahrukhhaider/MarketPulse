@@ -1,5 +1,5 @@
 import type { HistoricalDataPoint } from '../types.js';
-import { sma, rsi, returnNd, highest, avgVolume } from '../indicators.js';
+import { sma, rsi, returnNd, highest, avgVolume } from '../indicators/indicators.js';
 
 export type FilterCondition =
   | { type: 'return_above'; period: number; threshold: number }

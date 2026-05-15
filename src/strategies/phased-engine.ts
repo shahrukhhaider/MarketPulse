@@ -15,7 +15,7 @@ import type {
   PhaseDefinition,
 } from './strategy-configs.js';
 import { evaluateConditions } from './filter-evaluator.js';
-import { atr, sma, swingLow } from '../indicators.js';
+import { atr, sma, swingLow } from '../indicators/indicators.js';
 
 export class PhasedStrategyEngine implements Strategy {
   type: StrategyType;

@@ -7,7 +7,7 @@ import type {
   SignalDirection,
   HistoricalDataPoint,
 } from '../types.js';
-import { sma, rsi, atr } from '../indicators.js';
+import { sma, rsi, atr } from '../indicators/indicators.js';
 import { evaluateConditions, scoreConditions } from './filter-evaluator.js';
 import {
   getDefaultCompositeConfig,

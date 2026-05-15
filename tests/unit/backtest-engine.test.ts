@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BacktestEngine, computePerformanceSummary } from '../../src/backtest-engine.js';
+import { BacktestEngine, computePerformanceSummary } from '../../src/pipeline/backtest-engine.js';
 import type { PricePoint, Strategy, StrategyParams, Signal, StrategyType } from '../../src/types.js';
 
 function makePricePoints(prices: number[], ticker = 'AAPL'): PricePoint[] {

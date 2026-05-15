@@ -9,9 +9,9 @@ import type {
   TrendPullbackConfiguration,
   TrendPullbackParams,
 } from './strategy-configs.js';
-import { sma, sma_slope, atr, atr_ratio, avgVolume, swingLow } from '../indicators.js';
-import type { IndicatorCache } from '../indicator-cache.js';
-import { computeConfidenceScore, DEFAULT_WEIGHTS } from '../confidence-score.js';
+import { sma, sma_slope, atr, atr_ratio, avgVolume, swingLow } from '../indicators/indicators.js';
+import type { IndicatorCache } from '../indicators/indicator-cache.js';
+import { computeConfidenceScore, DEFAULT_WEIGHTS } from '../indicators/confidence-score.js';
 
 // Fast signal ID generator — avoids crypto.randomUUID() overhead in hot loops
 let _tpSignalCounter = 0;

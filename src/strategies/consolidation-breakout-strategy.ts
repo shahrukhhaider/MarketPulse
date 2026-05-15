@@ -1,9 +1,9 @@
-import type { TunableStrategyInterface, SignalOutput } from '../strategy-registry.js';
+import type { TunableStrategyInterface, SignalOutput } from './strategy-registry.js';
 import type { HistoricalDataPoint, BacktestResult } from '../types.js';
-import type { ParameterSpace } from '../parameter-grid.js';
-import { getConsolidationBreakoutParameterSpace } from '../parameter-grid.js';
-import { runBacktest } from '../pipeline-functions.js';
-import { detectSignal } from '../signal-detector.js';
+import type { ParameterSpace } from './parameter-grid.js';
+import { getConsolidationBreakoutParameterSpace } from './parameter-grid.js';
+import { runBacktest } from '../pipeline/pipeline-functions.js';
+import { detectSignal } from './signal-detector.js';
 
 export class ConsolidationBreakoutStrategy implements TunableStrategyInterface {
   readonly name = 'consolidation_breakout';

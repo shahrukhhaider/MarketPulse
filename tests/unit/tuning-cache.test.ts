@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { TuningResultCache } from '../../src/tuning-cache.js';
-import type { TuningResult } from '../../src/tuning-engine.js';
+import { TuningResultCache } from '../../src/pipeline/tuning-cache.js';
+import type { TuningResult } from '../../src/pipeline/tuning-engine.js';
 
 function makeTuningResult(overrides: Partial<TuningResult> = {}): TuningResult {
   return {

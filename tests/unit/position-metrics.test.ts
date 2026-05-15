@@ -5,8 +5,8 @@ import {
   computeStopDistance,
   computeDaysHeld,
   computePositionMetrics,
-} from '../../src/position-metrics.js';
-import { JournalEntry } from '../../src/journal-types.js';
+} from '../../src/utils/position-metrics.js';
+import { JournalEntry } from '../../src/journal/journal-types.js';
 
 describe('computePnlPct', () => {
   it('returns positive percentage when current > entry', () => {

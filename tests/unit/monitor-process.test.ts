@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { parseArgs, buildSignalFilePath, startMonitorProcess } from '../../src/monitor-process.js';
-import type { YahooFinanceClient } from '../../src/price-feed-client.js';
-import * as ConfigStore from '../../src/config-store.js';
+import { parseArgs, buildSignalFilePath, startMonitorProcess } from '../../src/monitoring/monitor-process.js';
+import type { YahooFinanceClient } from '../../src/data/price-feed-client.js';
+import * as ConfigStore from '../../src/data/config-store.js';
 
 /** Helper: flush microtask queue so async start() completes its first poll */
 function flushMicrotasks(): Promise<void> {

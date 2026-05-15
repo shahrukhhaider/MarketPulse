@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitData } from '../../src/walk-forward-validator.js';
+import { splitData } from '../../src/pipeline/walk-forward-validator.js';
 import type { HistoricalDataPoint } from '../../src/types.js';
 
 function makeDataPoints(count: number): HistoricalDataPoint[] {

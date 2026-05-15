@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { WatchlistManager } from '../../src/watchlist-manager.js';
-import { getDefault } from '../../src/config-store.js';
+import { WatchlistManager } from '../../src/utils/watchlist-manager.js';
+import { getDefault } from '../../src/data/config-store.js';
 import { ErrorCodes } from '../../src/types.js';
 import type { Config } from '../../src/types.js';
 

@@ -1,18 +1,18 @@
 import * as path from 'node:path';
 import { CommandRouter, successResult, errorResult } from './command-router.js';
-import { load as loadConfig, save as saveConfig, getDefault } from './config-store.js';
-import { PriceDataStore } from './price-data-store.js';
-import { PriceFeedClient } from './price-feed-client.js';
-import type { YahooFinanceClient } from './price-feed-client.js';
-import { WatchlistManager } from './watchlist-manager.js';
-import { StrategyManager } from './strategy-manager.js';
-import { ProcessManager } from './process-manager.js';
-import { SignalStore } from './signal-store.js';
+import { load as loadConfig, save as saveConfig, getDefault } from './data/config-store.js';
+import { PriceDataStore } from './data/price-data-store.js';
+import { PriceFeedClient } from './data/price-feed-client.js';
+import type { YahooFinanceClient } from './data/price-feed-client.js';
+import { WatchlistManager } from './utils/watchlist-manager.js';
+import { StrategyManager } from './strategies/strategy-manager.js';
+import { ProcessManager } from './monitoring/process-manager.js';
+import { SignalStore } from './monitoring/signal-store.js';
 import { ErrorCodes } from './types.js';
 import type { StrategyType, StrategyParams, HistoricalPeriod, HistoricalInterval } from './types.js';
-import { DataProviderRegistry } from './data-provider.js';
-import { YahooFinanceAdapter } from './yahoo-finance-adapter.js';
-import { BacktestEngine, convertHistoricalData } from './backtest-engine.js';
+import { DataProviderRegistry } from './data/data-provider.js';
+import { YahooFinanceAdapter } from './data/yahoo-finance-adapter.js';
+import { BacktestEngine, convertHistoricalData } from './pipeline/backtest-engine.js';
 import { MovingAverageCrossoverStrategy } from './strategies/moving-average.js';
 import { RSIThresholdStrategy } from './strategies/rsi-threshold.js';
 import { PriceBreakoutStrategy } from './strategies/price-breakout.js';
@@ -21,30 +21,31 @@ import { getDefaultCompositeConfig, isV2Config, isConsolidationBreakoutConfig, i
 import { PhasedStrategyEngine } from './strategies/phased-engine.js';
 import { ConsolidationBreakoutEngine } from './strategies/consolidation-breakout-engine.js';
 import { TrendPullbackEngine } from './strategies/trend-pullback-engine.js';
-import { tuneV3, backtestV3 } from './pipeline-functions.js';
-import type { V3BacktestResult, V3TuneResult } from './pipeline-functions.js';
-import { loadStrategyProfile, saveStrategyProfile, computeExpiry } from './profile-store.js';
-import type { StrategyProfile } from './profile-store.js';
-import { HistoricalDataCache } from './historical-data-cache.js';
-import { TuningEngine } from './tuning-engine.js';
-import type { TuningInput, TunableStrategy, TimeHorizon, RiskProfile, BestRegion } from './tuning-engine.js';
+import { tuneV3, backtestV3 } from './pipeline/pipeline-functions.js';
+import type { V3BacktestResult, V3TuneResult } from './pipeline/pipeline-functions.js';
+import { loadStrategyProfile, saveStrategyProfile, computeExpiry } from './data/profile-store.js';
+import type { StrategyProfile } from './data/profile-store.js';
+import { HistoricalDataCache } from './data/historical-data-cache.js';
+import { TuningEngine } from './pipeline/tuning-engine.js';
+import type { TuningInput, TunableStrategy, TimeHorizon, RiskProfile, BestRegion } from './pipeline/tuning-engine.js';
 
-import { generateChartHtml, generateCombinedChartHtml, getChartFilePath } from './chart-generator.js';
+import { generateChartHtml, generateCombinedChartHtml, getChartFilePath } from './formatters/chart-generator.js';
 import { writeFileSync, readFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
-import { buildConfig, buildV2Config, generateV2Grid, generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig } from './parameter-grid.js';
-import type { ConsolidationBreakoutGridEntry } from './parameter-grid.js';
-import { evaluateV3Configuration, splitData } from './walk-forward-validator.js';
-import { StrategyRegistry } from './strategy-registry.js';
+import { buildConfig, buildV2Config, generateV2Grid, generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig } from './strategies/parameter-grid.js';
+import type { ConsolidationBreakoutGridEntry } from './strategies/parameter-grid.js';
+import { evaluateV3Configuration, splitData } from './pipeline/walk-forward-validator.js';
+import { StrategyRegistry } from './strategies/strategy-registry.js';
 import { ConsolidationBreakoutStrategy } from './strategies/consolidation-breakout-strategy.js';
-import { createTuneHandler } from './tune-command.js';
-import { createScanHandler } from './scan-command.js';
-import { createChartHandler } from './chart-command.js';
-import { createScanChartHandler } from './scan-chart-command.js';
-import { parallelTune } from './parallel-tune.js';
-import { createJournalStatusHandler, createJournalRecordHandler, createJournalUpdateHandler } from './journal-command.js';
-import { createRegimeHandler } from './regime-command.js';
-import { RegimeDetector } from './regime-detector.js';
+import { BearBreakdownStrategy } from './strategies/bear-breakdown-strategy.js';
+import { createTuneHandler } from './commands/tune-command.js';
+import { createScanHandler } from './commands/scan-command.js';
+import { createChartHandler } from './commands/chart-command.js';
+import { createScanChartHandler } from './commands/scan-chart-command.js';
+import { parallelTune } from './pipeline/parallel-tune.js';
+import { createJournalStatusHandler, createJournalRecordHandler, createJournalUpdateHandler } from './commands/journal-command.js';
+import { createRegimeHandler } from './commands/regime-command.js';
+import { RegimeDetector } from './indicators/regime-detector.js';
 
 export interface WiringOptions {
   dataDir?: string;
@@ -1003,18 +1004,24 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         // Step 2: Check for fresh profiles — skip tuning if both exist and are valid
         let cbBestParams: Record<string, number> = {};
         let tpBestParams: Record<string, number> = {};
+        let bbBestParams: Record<string, number> = {};
         let cbTuneResult: V3TuneResult['consolidation_breakout'] = { error: 'skipped' };
         let tpTuneResult: V3TuneResult['trend_pullback'] = { error: 'skipped' };
+        let bbTuneResult: V3TuneResult['bear_breakdown'] = { error: 'skipped' };
         let tuningSkipped = false;
 
         if (!forceTune) {
           const cbProfile = loadStrategyProfile(ticker, 'consolidation_breakout', { baseDir: dataDir });
           const tpProfile = loadStrategyProfile(ticker, 'trend_pullback', { baseDir: dataDir });
+          const bbProfile = loadStrategyProfile(ticker, 'bear_breakdown', { baseDir: dataDir });
 
           if (cbProfile.success && tpProfile.success) {
-            // Both profiles are fresh — skip tuning
+            // Both core profiles are fresh — skip tuning
             cbBestParams = cbProfile.data.params;
             tpBestParams = tpProfile.data.params;
+            if (bbProfile.success) {
+              bbBestParams = bbProfile.data.params;
+            }
             tuningSkipped = true;
           }
         }
@@ -1025,9 +1032,11 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
           cbTuneResult = v3TuneResult.consolidation_breakout;
           tpTuneResult = v3TuneResult.trend_pullback;
+          bbTuneResult = v3TuneResult.bear_breakdown;
 
           cbBestParams = !('error' in cbTuneResult) ? cbTuneResult.bestParams : {};
           tpBestParams = !('error' in tpTuneResult) ? tpTuneResult.bestParams : {};
+          bbBestParams = !('error' in bbTuneResult) ? bbTuneResult.bestParams : {};
         }
 
         // Step 3: Backtest both strategies with their best params
@@ -1046,6 +1055,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           tuning_skipped: tuningSkipped,
           consolidation_breakout: tuningSkipped ? 'used_cached_profile' : cbTuneResult,
           trend_pullback: tuningSkipped ? 'used_cached_profile' : tpTuneResult,
+          bear_breakdown: tuningSkipped ? 'used_cached_profile' : bbTuneResult,
           computed_at: new Date().toISOString(),
           v3: true,
         };
@@ -1106,6 +1116,26 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
             saveStrategyProfile(tpProfile, dataDir);
           }
 
+          if (Object.keys(bbBestParams).length > 0) {
+            const bbOos = !('error' in bbTuneResult) ? bbTuneResult.oosMetrics : null;
+            const bbProfile: StrategyProfile = {
+              ticker,
+              strategy: 'bear_breakdown',
+              params: bbBestParams,
+              walk_forward_metrics: {
+                return: bbOos ? bbOos.totalReturnPercent : 0,
+                benchmark: 0,
+                win_rate: bbOos ? bbOos.winRate : 0,
+                trades: bbOos ? bbOos.tradeCount : 0,
+                max_drawdown: bbOos ? bbOos.maxDrawdownPercent : 0,
+                sharpe: bbOos ? bbOos.sharpeRatio : 0,
+              },
+              last_tuned_at: lastTunedAt,
+              valid_until: validUntil,
+            };
+            saveStrategyProfile(bbProfile, dataDir);
+          }
+
           profileSaved = true;
         }
 
@@ -1114,6 +1144,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           best_params: {
             consolidation_breakout: cbBestParams,
             trend_pullback: tpBestParams,
+            bear_breakdown: bbBestParams,
           },
           profile_saved: profileSaved,
           backtest: {
@@ -1354,6 +1385,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   // --- Strategy Registry: instantiate and register strategies ---
   const strategyRegistry = new StrategyRegistry();
   strategyRegistry.register(new ConsolidationBreakoutStrategy());
+  strategyRegistry.register(new BearBreakdownStrategy());
 
   // --- New pipeline commands: tune, scan, chart ---
   const tuneHandler = createTuneHandler({ cachingProvider, registry: strategyRegistry, dataDir });
@@ -1536,7 +1568,8 @@ function getStrategyInstance(strategyType: StrategyType) {
     case 'breakout_volume':
       return new CompositeStrategyEngine(strategyType);
     case 'consolidation_breakout':
-      // V3 engine is instantiated in the backtest handler's V3 path (task 9.1)
+    case 'bear_breakdown':
+      // V3 engines are instantiated in the backtest handler's V3 path
       return undefined;
   }
 }
@@ -1555,6 +1588,8 @@ function getDefaultParams(strategyType: StrategyType): StrategyParams {
       return { config: getDefaultCompositeConfig(strategyType) } as CompositeStrategyParams;
     case 'consolidation_breakout':
       // Default params for V3 will be added in task 9.1
+      return { config: {} } as StrategyParams;
+    case 'bear_breakdown':
       return { config: {} } as StrategyParams;
   }
 }

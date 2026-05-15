@@ -8,7 +8,7 @@ import {
   loadStrategyProfile,
   DEFAULT_EXPIRY_DAYS,
   type StrategyProfile,
-} from '../../src/profile-store.js';
+} from '../../src/data/profile-store.js';
 
 const TEST_BASE_DIR = join('tests', '.test-profile-store');
 

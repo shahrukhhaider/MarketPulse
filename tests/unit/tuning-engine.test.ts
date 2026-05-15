@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { TuningEngine } from '../../src/tuning-engine.js';
-import type { TuningInput, ValidatedTuningInput, TuningError } from '../../src/tuning-engine.js';
+import { TuningEngine } from '../../src/pipeline/tuning-engine.js';
+import type { TuningInput, ValidatedTuningInput, TuningError } from '../../src/pipeline/tuning-engine.js';
 
 function isError(result: ValidatedTuningInput | TuningError): result is TuningError {
   return 'code' in result;

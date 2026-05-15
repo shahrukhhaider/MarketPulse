@@ -4,7 +4,7 @@ import {
   formatCompositeExitReasoning,
   formatSimpleReasoning,
   annotateTradesWithReasoning,
-} from '../../src/trade-annotator.js';
+} from '../../src/utils/trade-annotator.js';
 import type { BacktestResult, Signal, Trade } from '../../src/types.js';
 import type { StrategyConfiguration } from '../../src/strategies/strategy-configs.js';
 import type { CompositeStrategyParams } from '../../src/strategies/strategy-configs.js';

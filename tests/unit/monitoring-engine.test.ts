@@ -2,11 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { MonitoringEngine } from '../../src/monitoring-engine.js';
-import { PriceFeedClient } from '../../src/price-feed-client.js';
-import type { YahooFinanceClient } from '../../src/price-feed-client.js';
-import { PriceDataStore } from '../../src/price-data-store.js';
-import { SignalStore } from '../../src/signal-store.js';
+import { MonitoringEngine } from '../../src/monitoring/monitoring-engine.js';
+import { PriceFeedClient } from '../../src/data/price-feed-client.js';
+import type { YahooFinanceClient } from '../../src/data/price-feed-client.js';
+import { PriceDataStore } from '../../src/data/price-data-store.js';
+import { SignalStore } from '../../src/monitoring/signal-store.js';
 import type { WatchlistEntry, PricePoint } from '../../src/types.js';
 
 function makeWatchlistEntry(overrides: Partial<WatchlistEntry> = {}): WatchlistEntry {

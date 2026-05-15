@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { PriceDataStore } from '../../src/price-data-store.js';
+import { PriceDataStore } from '../../src/data/price-data-store.js';
 import type { PriceHistory, PricePoint } from '../../src/types.js';
 
 describe('PriceDataStore', () => {

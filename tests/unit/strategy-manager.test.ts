@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { StrategyManager } from '../../src/strategy-manager.js';
-import { getDefault, load } from '../../src/config-store.js';
+import { StrategyManager } from '../../src/strategies/strategy-manager.js';
+import { getDefault, load } from '../../src/data/config-store.js';
 import { ErrorCodes } from '../../src/types.js';
 import type { Config } from '../../src/types.js';
 

@@ -3,7 +3,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createWiredRouter } from './command-wiring.js';
-import { formatScanSummary } from './scan-formatter.js';
+import { formatScanSummary } from './formatters/scan-formatter.js';
 
 /**
  * CLI entry point for the stock-price-tracker tool.

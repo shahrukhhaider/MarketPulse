@@ -12,9 +12,9 @@ import type {
   ConsolidationBreakoutParams,
   ConsolidationBreakoutConfiguration,
 } from './strategy-configs.js';
-import { range_pct, atr_ratio, atr, sma, sma_slope, highestHigh, swingLow, avgVolume, returnNd } from '../indicators.js';
-import type { IndicatorCache } from '../indicator-cache.js';
-import { computeConfidenceScore, DEFAULT_WEIGHTS } from '../confidence-score.js';
+import { range_pct, atr_ratio, atr, sma, sma_slope, highestHigh, swingLow, avgVolume, returnNd } from '../indicators/indicators.js';
+import type { IndicatorCache } from '../indicators/indicator-cache.js';
+import { computeConfidenceScore, DEFAULT_WEIGHTS } from '../indicators/confidence-score.js';
 
 // Fast signal ID generator — avoids crypto.randomUUID() overhead in hot loops
 let _signalCounter = 0;

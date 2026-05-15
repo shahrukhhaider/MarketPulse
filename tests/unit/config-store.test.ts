@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { load, save, serialize, deserialize, getDefault } from '../../src/config-store.js';
+import { load, save, serialize, deserialize, getDefault } from '../../src/data/config-store.js';
 import type { Config } from '../../src/types.js';
 
 describe('ConfigStore', () => {
