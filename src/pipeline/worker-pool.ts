@@ -31,6 +31,8 @@ export interface WorkerTask {
   strategy?: string;
   /** Strategy params for scan tasks */
   params?: Record<string, number>;
+  /** Earnings dates for PEAD strategy scan tasks */
+  earningsDates?: string[];
 }
 
 export interface WorkerResult {

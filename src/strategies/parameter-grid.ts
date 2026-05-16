@@ -1,4 +1,5 @@
-import type { StrategyConfiguration, PhasedStrategyConfiguration, ConsolidationBreakoutConfiguration, TrendPullbackConfiguration, BearBreakdownConfiguration } from './strategy-configs.js';
+import type { StrategyConfiguration, PhasedStrategyConfiguration, ConsolidationBreakoutConfiguration, TrendPullbackConfiguration, BearBreakdownConfiguration, PostEarningsDriftConfiguration } from './strategy-configs.js';
+import { mergePeadConfig, validatePeadConfig } from './strategy-configs.js';
 import type { TimeHorizon, TunableStrategy } from '../pipeline/tuning-engine.js';
 import { resolveWeightPreset } from '../indicators/confidence-score.js';
 
@@ -29,6 +30,11 @@ export interface TrendPullbackGridEntry {
 export interface BearBreakdownGridEntry {
   params: Record<string, number>;
   config: BearBreakdownConfiguration;
+}
+
+export interface PostEarningsDriftGridEntry {
+  params: Record<string, number>;
+  config: PostEarningsDriftConfiguration;
 }
 
 /**
@@ -730,6 +736,77 @@ export function* generateBearBreakdownGrid(): Generator<BearBreakdownGridEntry> 
     });
 
     const config = buildBearBreakdownConfig(params);
+    yield { params, config };
+  }
+}
+
+/**
+ * Return the post-earnings-drift parameter space with 11 tunable parameters.
+ * Total combinations: 3 × 3 × 3 × 3 × 3 × 3 × 3 × 3 × 3 × 2 × 4 = 78,732
+ */
+export function getPostEarningsDriftParameterSpace(): ParameterSpace {
+  return {
+    gap_min_pct: [3, 5, 8],
+    gap_volume_multiplier: [1.2, 1.5, 2.0],
+    consolidation_min_days: [2, 3, 5],
+    consolidation_max_days: [7, 10, 14],
+    max_range_pct: [4, 5, 7],
+    breakout_volume_multiplier: [1.0, 1.2, 1.5],
+    stop_buffer_atr: [0.2, 0.3, 0.5],
+    r_multiple: [2.0, 2.5, 3.0],
+    max_risk_pct: [5, 8, 12],
+    trend_exit_sma_period: [30, 50],
+    // Weight preset for confidence score (0=equal, 1=rsi_heavy, 2=trend_heavy, 3=momentum_heavy)
+    weight_preset: [0, 1, 2, 3],
+  };
+}
+
+/**
+ * Map a flat parameter combination to a validated PostEarningsDriftConfiguration.
+ * Uses mergePeadConfig to construct the config from flat params, then validates.
+ * Throws if the resulting configuration is invalid (e.g., consolidation_min_days >= consolidation_max_days).
+ */
+export function buildPostEarningsDriftConfig(
+  params: Record<string, number>
+): PostEarningsDriftConfiguration {
+  const config = mergePeadConfig({
+    gap_min_pct: params.gap_min_pct,
+    gap_volume_multiplier: params.gap_volume_multiplier,
+    consolidation_min_days: params.consolidation_min_days,
+    consolidation_max_days: params.consolidation_max_days,
+    max_range_pct: params.max_range_pct,
+    breakout_volume_multiplier: params.breakout_volume_multiplier,
+    stop_buffer_atr: params.stop_buffer_atr,
+    r_multiple: params.r_multiple,
+    max_risk_pct: params.max_risk_pct,
+    trend_exit_sma_period: params.trend_exit_sma_period,
+  });
+
+  const result = validatePeadConfig(config);
+  if (!result.success) {
+    throw new Error(result.error);
+  }
+
+  return result.data;
+}
+
+/**
+ * Generate the full post-earnings-drift parameter grid using Cartesian product.
+ *
+ * Returns a generator to avoid materializing all entries in memory at once.
+ */
+export function* generatePostEarningsDriftGrid(): Generator<PostEarningsDriftGridEntry> {
+  const space = getPostEarningsDriftParameterSpace();
+  const paramNames = Object.keys(space);
+  const paramArrays = paramNames.map(name => space[name]);
+
+  for (const values of cartesianProductGen(paramArrays)) {
+    const params: Record<string, number> = {};
+    paramNames.forEach((name, i) => {
+      params[name] = values[i];
+    });
+
+    const config = buildPostEarningsDriftConfig(params);
     yield { params, config };
   }
 }

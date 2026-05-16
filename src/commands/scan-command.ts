@@ -17,12 +17,14 @@ import type { CommandHandler } from '../command-router.js';
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import { loadStrategyProfile } from '../data/profile-store.js';
 import { detectSignal } from '../strategies/signal-detector.js';
+import type { DetectSignalOptions } from '../strategies/signal-detector.js';
 import type { SignalOutput } from '../strategies/strategy-registry.js';
 import { parallelScan } from '../pipeline/parallel-scan.js';
 import { RegimeDetector } from '../indicators/regime-detector.js';
 import type { RegimeResult, RegimeState } from '../indicators/regime-detector.js';
 import { load as loadJournal } from '../journal/journal-store.js';
 import { JOURNAL_DEFAULTS } from '../journal/journal-types.js';
+import { EarningsDateProvider } from '../data/earnings-date-provider.js';
 import type { JournalEntry } from '../journal/journal-types.js';
 import { computePositionMetrics } from '../utils/position-metrics.js';
 import type { PositionMetrics } from '../utils/position-metrics.js';
@@ -254,6 +256,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
       if (regimeResult) {
         output.regime = regimeResult;
+        output.marketRegime = regimeResult.market;
       }
 
       return successResult('scan', output);
@@ -310,7 +313,12 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
           const profile = profileResult.data;
 
           // Detect signal using profile params
-          const signal = detectSignal(dataPoints, profile.params, strat);
+          // For PEAD strategy, pass earnings dates from cache
+          const options: DetectSignalOptions | undefined =
+            strat === 'post_earnings_drift'
+              ? { earningsDates: new EarningsDateProvider({ cacheDir: dataDir }).getEarningsDatesFromCache(ticker) }
+              : undefined;
+          const signal = detectSignal(dataPoints, profile.params, strat, options);
           signal.ticker = ticker;
           signals.push(signal);
         }
@@ -343,6 +351,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
     if (regimeResult) {
       output.regime = regimeResult;
+      output.marketRegime = regimeResult.market;
     }
 
     return successResult('scan', output);

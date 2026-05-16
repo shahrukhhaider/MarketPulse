@@ -13,11 +13,13 @@ import { join } from 'node:path';
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import type { SignalOutput } from '../strategies/strategy-registry.js';
 import { detectSignal } from '../strategies/signal-detector.js';
+import type { DetectSignalOptions } from '../strategies/signal-detector.js';
 import { loadStrategyProfile } from '../data/profile-store.js';
 import { sortBySignalPriority } from '../commands/scan-command.js';
 import { WorkerPool } from './worker-pool.js';
 import type { WorkerTask, WorkerResult } from './worker-pool.js';
 import { fetchHistoricalDataStream } from '../data/data-fetcher.js';
+import { EarningsDateProvider } from '../data/earnings-date-provider.js';
 import { createProgressReporter } from '../formatters/progress-reporter.js';
 import type { HistoricalDataPoint } from '../types.js';
 
@@ -117,7 +119,12 @@ async function scanSingleTicker(options: ParallelScanOptions): Promise<ParallelS
       const profile = profileResult.data;
 
       // Detect signal using profile params on main thread
-      const signal = detectSignal(dataPoints, profile.params, strat);
+      // For PEAD strategy, pass earnings dates from cache
+      const signalOptions: DetectSignalOptions | undefined =
+        strat === 'post_earnings_drift'
+          ? { earningsDates: new EarningsDateProvider({ cacheDir: options.dataDir }).getEarningsDatesFromCache(ticker) }
+          : undefined;
+      const signal = detectSignal(dataPoints, profile.params, strat, signalOptions);
       signal.ticker = ticker;
       signals.push(signal);
     }
@@ -277,6 +284,9 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
           data: fetchResult.data,
           strategy: strat,
           params: profile.params,
+          earningsDates: strat === 'post_earnings_drift'
+            ? new EarningsDateProvider({ cacheDir: dataDir }).getEarningsDatesFromCache(fetchResult.ticker)
+            : undefined,
         };
 
         dispatchedTaskIds.add(taskId);

@@ -121,7 +121,7 @@ export function createChartHandler(deps: ChartCommandDeps): CommandHandler {
       const dataPoints = dataResult.data.dataPoints;
 
       // Run backtest
-      const backtestResult = runBacktest(dataPoints, strategyName, params);
+      const backtestResult = runBacktest(dataPoints, strategyName, params, upperTicker);
 
       // Render chart
       const chartFilePath = renderChart(backtestResult, dataPoints, dataDir, upperTicker);

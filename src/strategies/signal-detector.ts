@@ -1,11 +1,17 @@
 import type { HistoricalDataPoint } from '../types.js';
 import type { SignalOutput } from './strategy-registry.js';
-import type { ConsolidationBreakoutConfiguration, TrendPullbackConfiguration, BearBreakdownConfiguration } from './strategy-configs.js';
+import type { ConsolidationBreakoutConfiguration, TrendPullbackConfiguration, BearBreakdownConfiguration, PostEarningsDriftConfiguration } from './strategy-configs.js';
+import { DEFAULT_PEAD_CONFIG, mergePeadConfig } from './strategy-configs.js';
 import { ConsolidationBreakoutEngine } from './consolidation-breakout-engine.js';
 import { TrendPullbackEngine } from './trend-pullback-engine.js';
 import { BearBreakdownEngine } from './bear-breakdown-engine.js';
+import { PostEarningsDriftEngine } from './post-earnings-drift-engine.js';
+import type { ConsolidationResult } from './post-earnings-drift-engine.js';
 import { buildConsolidationBreakoutConfig, buildTrendPullbackGridConfig, buildBearBreakdownConfig } from './parameter-grid.js';
 import { BreakoutContextAnalyzer } from '../indicators/breakout-context.js';
+import type { MarketRegime } from '../indicators/regime-detector.js';
+import { atr as computeAtr } from '../indicators/indicators.js';
+import { computePeadConfidenceScore } from '../indicators/confidence-score.js';
 
 // ============================================================
 // Signal State Type
@@ -28,10 +34,19 @@ export type SignalState = 'none' | 'forming' | 'near' | 'active';
  *
  * This function NEVER calls tuning, grid search, or parameter optimization.
  */
+/**
+ * Additional options for strategies that require auxiliary data beyond flat params.
+ */
+export interface DetectSignalOptions {
+  earningsDates?: string[];
+  marketRegime?: MarketRegime;
+}
+
 export function detectSignal(
   data: HistoricalDataPoint[],
   params: Record<string, number>,
-  strategy: string
+  strategy: string,
+  options?: DetectSignalOptions
 ): SignalOutput {
   if (strategy === 'consolidation_breakout') {
     return detectConsolidationBreakoutSignal(data, params);
@@ -43,6 +58,10 @@ export function detectSignal(
 
   if (strategy === 'bear_breakdown') {
     return detectBearBreakdownSignal(data, params);
+  }
+
+  if (strategy === 'post_earnings_drift') {
+    return detectPostEarningsDriftSignal(data, params, options);
   }
 
   // Unknown strategy — return none
@@ -532,4 +551,449 @@ function detectBearBreakdownSignal(
       `Distance from breakdown: ${distancePct.toFixed(2)}%`,
     ],
   };
+}
+
+// ============================================================
+// Post-Earnings Drift Signal Detection
+// ============================================================
+
+/**
+ * Post-earnings drift signal classification (four-state):
+ *
+ *   active  — shouldEnter() confirms valid entry AND risk ≤ max_risk_pct
+ *   near    — consolidation detected AND current close within 1% of consolidation high
+ *   forming — consolidation detected AND price > 1% from consolidation high, ATR ratio ≤ threshold
+ *   none    — no consolidation detected, insufficient data, or pattern failed
+ *
+ * Regime filter integration:
+ *   bearish (SPY and QQQ both trend = -1): suppress active/near → max "forming"
+ *   neutral/unknown: suppress active → max "near"
+ *   bullish: no suppression
+ */
+export function detectPostEarningsDriftSignal(
+  data: HistoricalDataPoint[],
+  params: Record<string, number>,
+  options?: DetectSignalOptions
+): SignalOutput {
+  const config = buildPeadConfigFromParams(params);
+  const barIndex = data.length - 1;
+  const date = data.length > 0 ? data[barIndex].date : new Date().toISOString().slice(0, 10);
+  const earningsDates = options?.earningsDates ?? [];
+  const marketRegime: MarketRegime = options?.marketRegime ?? 'unknown';
+
+  const noneOutput: SignalOutput = {
+    ticker: '',
+    strategy: 'post_earnings_drift',
+    signal: 'none',
+    date,
+    entry: 0,
+    stop: 0,
+    risk_pct: 0,
+    confidence: 0,
+    reason: [],
+  };
+
+  // Need minimum 51 bars for signal detection
+  if (data.length < 51) {
+    noneOutput.reason = ['Insufficient data for signal detection (need at least 51 bars)'];
+    return noneOutput;
+  }
+
+  // If no earnings dates provided, cannot detect PEAD pattern
+  if (earningsDates.length === 0) {
+    noneOutput.reason = ['No earnings dates available'];
+    return noneOutput;
+  }
+
+  // ---- Step 1: Find the most recent valid earnings gap scanning backward ----
+  const gapInfo = findMostRecentEarningsGap(data, barIndex, earningsDates, config);
+
+  if (!gapInfo) {
+    noneOutput.reason = ['No valid earnings gap detected in available data'];
+    return noneOutput;
+  }
+
+  // ---- Step 2: Evaluate consolidation from the gap day to current bar ----
+  const daysAfterGap = barIndex - gapInfo.gapDayIndex;
+
+  // If we're still on the gap day or before consolidation can start, no signal
+  if (daysAfterGap < 1) {
+    noneOutput.reason = ['Earnings gap detected but consolidation not yet started'];
+    return noneOutput;
+  }
+
+  // Check for gap-and-run: first bar after gap closes above gap day high
+  // AND all bars within consolidation_min_days close above gap day high
+  if (daysAfterGap >= config.consolidation_min_days) {
+    const firstBarAfterGap = data[gapInfo.gapDayIndex + 1];
+    if (firstBarAfterGap && firstBarAfterGap.close > gapInfo.gapDayHigh) {
+      let allAboveGapHigh = true;
+      const checkEnd = Math.min(gapInfo.gapDayIndex + config.consolidation_min_days, barIndex);
+      for (let i = gapInfo.gapDayIndex + 1; i <= checkEnd; i++) {
+        if (i < data.length && data[i].close <= gapInfo.gapDayHigh) {
+          allAboveGapHigh = false;
+          break;
+        }
+      }
+      if (allAboveGapHigh) {
+        noneOutput.reason = ['Gap-and-run detected — no consolidation setup'];
+        return noneOutput;
+      }
+    }
+  }
+
+  // Evaluate consolidation
+  const consolidation = PostEarningsDriftEngine.evaluateConsolidation(
+    data,
+    gapInfo.gapDayIndex,
+    barIndex,
+    gapInfo.gapDayHigh,
+    gapInfo.gapDayLow,
+    gapInfo.gapDayVolume,
+    config,
+    gapInfo.previousDayClose
+  );
+
+  // If consolidation failed or expired, no signal
+  if (consolidation.status === 'failed') {
+    noneOutput.reason = ['Consolidation failed — close dropped below gap day low or pre-gap close'];
+    return noneOutput;
+  }
+
+  if (consolidation.status === 'expired') {
+    noneOutput.reason = ['Consolidation expired — exceeded max days without breakout'];
+    return noneOutput;
+  }
+
+  if (consolidation.status === 'idle') {
+    noneOutput.reason = ['No active consolidation'];
+    return noneOutput;
+  }
+
+  // ---- Step 3: Classify signal state (priority: active > near > forming > none) ----
+
+  // Check for active: shouldEnter() confirms valid entry
+  let rawSignal: SignalOutput;
+
+  if (consolidation.status === 'valid') {
+    const entryResult = PostEarningsDriftEngine.shouldEnter(
+      data,
+      barIndex,
+      consolidation.consolidationHigh,
+      consolidation.consolidationLow,
+      config
+    );
+
+    if (entryResult) {
+      const riskPct = ((entryResult.entryPrice - entryResult.stopLossPrice) / entryResult.entryPrice) * 100;
+
+      if (riskPct <= config.max_risk_pct) {
+        // Active signal — use PEAD-specific confidence score
+        const confidence = computePeadConfidenceScore(
+          data,
+          barIndex,
+          consolidation,
+          config,
+          undefined, // spyData not available in signal detector context
+          params.weight_preset
+        );
+        rawSignal = {
+          ticker: '',
+          strategy: 'post_earnings_drift',
+          signal: 'active',
+          date,
+          entry: entryResult.entryPrice,
+          stop: entryResult.stopLossPrice,
+          risk_pct: riskPct,
+          confidence,
+          reason: [
+            'PEAD breakout entry confirmed',
+            `Entry: ${entryResult.entryPrice.toFixed(2)}`,
+            `Stop: ${entryResult.stopLossPrice.toFixed(2)}`,
+            `Target: ${entryResult.profitTargetPrice.toFixed(2)}`,
+            `Risk: ${riskPct.toFixed(2)}%`,
+            `R:R = 1:${config.r_multiple}`,
+          ],
+        };
+      } else {
+        // Risk exceeds max — downgrade to near or forming based on proximity
+        rawSignal = classifyByProximity(data, barIndex, date, consolidation, config);
+        rawSignal.reason.push(`Risk ${riskPct.toFixed(2)}% exceeds max ${config.max_risk_pct}% — downgraded from active`);
+      }
+    } else {
+      // shouldEnter() didn't confirm — classify by proximity
+      rawSignal = classifyByProximity(data, barIndex, date, consolidation, config);
+    }
+  } else {
+    // Consolidation in_progress — classify by proximity
+    rawSignal = classifyByProximity(data, barIndex, date, consolidation, config);
+  }
+
+  // ---- Step 4: Apply regime filter suppression ----
+  return applyRegimeFilter(rawSignal, marketRegime);
+}
+
+// ============================================================
+// PEAD Signal Detection Helpers
+// ============================================================
+
+/**
+ * Build a PostEarningsDriftConfiguration from flat params.
+ * Falls back to defaults for any missing parameter.
+ */
+function buildPeadConfigFromParams(params: Record<string, number>): PostEarningsDriftConfiguration {
+  return mergePeadConfig({
+    gap_min_pct: params.gap_min_pct,
+    gap_volume_multiplier: params.gap_volume_multiplier,
+    consolidation_min_days: params.consolidation_min_days,
+    consolidation_max_days: params.consolidation_max_days,
+    max_range_pct: params.max_range_pct,
+    breakout_volume_multiplier: params.breakout_volume_multiplier,
+    stop_buffer_atr: params.stop_buffer_atr,
+    r_multiple: params.r_multiple,
+    max_risk_pct: params.max_risk_pct,
+    trend_exit_sma_period: params.trend_exit_sma_period,
+  });
+}
+
+/**
+ * Find the most recent valid earnings gap by scanning backward through earnings dates.
+ * Returns gap info or null if no valid gap found within the data window.
+ */
+function findMostRecentEarningsGap(
+  data: HistoricalDataPoint[],
+  barIndex: number,
+  earningsDates: string[],
+  config: PostEarningsDriftConfiguration
+): {
+  gapDayIndex: number;
+  gapDayHigh: number;
+  gapDayLow: number;
+  gapDayVolume: number;
+  previousDayClose: number;
+} | null {
+  // Build a date-to-index map for quick lookup
+  const dateToIndex = new Map<string, number>();
+  for (let i = 0; i <= barIndex; i++) {
+    dateToIndex.set(data[i].date.slice(0, 10), i);
+  }
+
+  // Scan earnings dates in reverse (most recent first) to find the latest valid gap
+  // Only consider gaps that are within the consolidation window from the current bar
+  const maxLookback = config.consolidation_max_days + 5; // some buffer for gap day + consolidation
+
+  for (let ei = earningsDates.length - 1; ei >= 0; ei--) {
+    const earningsDate = earningsDates[ei].slice(0, 10);
+    const earningsBarIndex = dateToIndex.get(earningsDate);
+
+    if (earningsBarIndex === undefined) continue;
+
+    // Skip if too far back from current bar
+    if (barIndex - earningsBarIndex > maxLookback) continue;
+
+    // Skip if in the future relative to current bar
+    if (earningsBarIndex > barIndex) continue;
+
+    // Check for nearby earnings (another earnings within 14 calendar days)
+    if (hasNearbyEarningsDate(earningsDates, ei)) continue;
+
+    // Detect the gap
+    const gapResult = PostEarningsDriftEngine.detectEarningsGap(data, earningsBarIndex, config);
+
+    if (gapResult.detected) {
+      return {
+        gapDayIndex: gapResult.gapDayIndex,
+        gapDayHigh: gapResult.gapDayHigh,
+        gapDayLow: gapResult.gapDayLow,
+        gapDayVolume: gapResult.gapDayVolume,
+        previousDayClose: gapResult.previousDayClose,
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Check if there's another earnings date within 14 calendar days of the given index.
+ */
+function hasNearbyEarningsDate(earningsDates: string[], currentIndex: number): boolean {
+  const currentDate = new Date(earningsDates[currentIndex]);
+  const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+
+  if (currentIndex + 1 < earningsDates.length) {
+    const nextDate = new Date(earningsDates[currentIndex + 1]);
+    const diffMs = nextDate.getTime() - currentDate.getTime();
+    if (diffMs > 0 && diffMs <= fourteenDaysMs) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Classify signal as "near" or "forming" based on price proximity to consolidation high.
+ *
+ * near: current close within 1% of consolidation high
+ * forming: consolidation detected but price > 1% from consolidation high AND ATR ratio ≤ threshold
+ */
+function classifyByProximity(
+  data: HistoricalDataPoint[],
+  barIndex: number,
+  date: string,
+  consolidation: ConsolidationResult,
+  config: PostEarningsDriftConfiguration
+): SignalOutput {
+  const currentClose = data[barIndex].close;
+  const consolidationHigh = consolidation.consolidationHigh;
+
+  // Compute proximity: how far is current close from consolidation high (as fraction)
+  const proximityPct = consolidationHigh > 0
+    ? (consolidationHigh - currentClose) / consolidationHigh
+    : Infinity;
+
+  // Near: price within 1% of consolidation high (below or at the high)
+  if (proximityPct >= 0 && proximityPct <= 0.01) {
+    // Confidence scaled inversely by proximity distance: closer = higher confidence
+    const confidence = 0.5 + (1 - proximityPct / 0.01) * 0.3;
+    return {
+      ticker: '',
+      strategy: 'post_earnings_drift',
+      signal: 'near',
+      date,
+      entry: consolidationHigh,
+      stop: 0,
+      risk_pct: 0,
+      confidence,
+      reason: [
+        'PEAD consolidation detected, price near breakout level',
+        `Consolidation high: ${consolidationHigh.toFixed(2)}`,
+        `Current price: ${currentClose.toFixed(2)}`,
+        `Proximity: ${(proximityPct * 100).toFixed(2)}%`,
+        `Days in consolidation: ${consolidation.daysInConsolidation}`,
+      ],
+    };
+  }
+
+  // Also classify as "near" if price is above consolidation high but within 1%
+  // (price has slightly exceeded but not with volume confirmation)
+  if (proximityPct < 0 && Math.abs(proximityPct) <= 0.01) {
+    const confidence = 0.5 + (1 - Math.abs(proximityPct) / 0.01) * 0.3;
+    return {
+      ticker: '',
+      strategy: 'post_earnings_drift',
+      signal: 'near',
+      date,
+      entry: consolidationHigh,
+      stop: 0,
+      risk_pct: 0,
+      confidence,
+      reason: [
+        'PEAD consolidation detected, price at breakout level',
+        `Consolidation high: ${consolidationHigh.toFixed(2)}`,
+        `Current price: ${currentClose.toFixed(2)}`,
+        `Proximity: ${(Math.abs(proximityPct) * 100).toFixed(2)}% above`,
+        `Days in consolidation: ${consolidation.daysInConsolidation}`,
+      ],
+    };
+  }
+
+  // Forming: consolidation detected, price > 1% from consolidation high
+  // Check ATR ratio condition for forming quality
+  const atrRatioOk = checkAtrRatio(data, barIndex);
+
+  const confidence = atrRatioOk
+    ? 0.2 + Math.max(0, 0.3 - Math.abs(proximityPct)) * 0.5
+    : 0.1;
+
+  return {
+    ticker: '',
+    strategy: 'post_earnings_drift',
+    signal: 'forming',
+    date,
+    entry: consolidationHigh,
+    stop: 0,
+    risk_pct: 0,
+    confidence,
+    reason: [
+      'PEAD consolidation detected, price not yet near breakout',
+      `Consolidation high: ${consolidationHigh.toFixed(2)}`,
+      `Current price: ${currentClose.toFixed(2)}`,
+      `Distance from breakout: ${(Math.abs(proximityPct) * 100).toFixed(2)}%`,
+      `Days in consolidation: ${consolidation.daysInConsolidation}`,
+      consolidation.decliningVolumeFlag ? 'Declining volume ✓' : 'Volume not declining',
+    ],
+  };
+}
+
+/**
+ * Check if ATR ratio (short/long) is at or below threshold (1.0).
+ * Used to confirm forming signal quality — low volatility during consolidation.
+ */
+function checkAtrRatio(data: HistoricalDataPoint[], barIndex: number): boolean {
+  const barsUpTo = data.slice(0, barIndex + 1);
+
+  if (barsUpTo.length < 15) return true; // Not enough data, assume OK
+
+  const atr14 = computeAtr(barsUpTo, 14);
+  if (atr14 === undefined) return true;
+
+  // Use a longer ATR for comparison if we have enough data
+  if (barsUpTo.length >= 51) {
+    const atr50 = computeAtr(barsUpTo, 50);
+    if (atr50 !== undefined && atr50 > 0) {
+      return (atr14 / atr50) <= 1.0;
+    }
+  }
+
+  return true; // Default to OK if we can't compute ratio
+}
+
+/**
+ * Apply regime filter suppression to a PEAD signal.
+ *
+ * Bearish (SPY and QQQ both trend = -1): max "forming"
+ * Neutral/unknown: max "near"
+ * Bullish: no suppression
+ */
+function applyRegimeFilter(signal: SignalOutput, marketRegime: MarketRegime): SignalOutput {
+  if (marketRegime === 'bullish') {
+    // No suppression
+    return signal;
+  }
+
+  if (marketRegime === 'bearish') {
+    // Suppress active and near → downgrade to forming max
+    if (signal.signal === 'active' || signal.signal === 'near') {
+      return {
+        ...signal,
+        signal: 'forming',
+        entry: signal.signal === 'active' ? signal.entry : signal.entry,
+        stop: 0,
+        risk_pct: 0,
+        confidence: Math.min(signal.confidence, 0.4),
+        reason: [
+          ...signal.reason,
+          'Regime suppression: bearish market — downgraded to forming',
+        ],
+      };
+    }
+    return signal;
+  }
+
+  // Neutral or unknown: suppress active → max "near"
+  if (signal.signal === 'active') {
+    return {
+      ...signal,
+      signal: 'near',
+      confidence: Math.min(signal.confidence, 0.7),
+      reason: [
+        ...signal.reason,
+        'Regime suppression: neutral/unknown market — downgraded to near',
+      ],
+    };
+  }
+
+  return signal;
 }

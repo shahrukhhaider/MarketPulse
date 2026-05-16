@@ -1,16 +1,18 @@
 import type { HistoricalDataPoint, BacktestResult, PerformanceSummary, Trade } from '../types.js';
 import type { TuningPerformanceMetrics } from './tuning-engine.js';
 import type { ConsolidationBreakoutGridEntry, TrendPullbackGridEntry, BearBreakdownGridEntry } from '../strategies/parameter-grid.js';
-import { generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig, generateTrendPullbackGrid, buildTrendPullbackGridConfig, generateBearBreakdownGrid, buildBearBreakdownConfig } from '../strategies/parameter-grid.js';
+import { generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig, generateTrendPullbackGrid, buildTrendPullbackGridConfig, generateBearBreakdownGrid, buildBearBreakdownConfig, buildPostEarningsDriftConfig } from '../strategies/parameter-grid.js';
 import { splitData, evaluateV3Configuration, evaluateTrendPullbackConfiguration, evaluateBearBreakdownConfiguration } from './walk-forward-validator.js';
 import { BacktestEngine } from './backtest-engine.js';
 import { ConsolidationBreakoutEngine } from '../strategies/consolidation-breakout-engine.js';
 import { TrendPullbackEngine } from '../strategies/trend-pullback-engine.js';
 import { BearBreakdownEngine } from '../strategies/bear-breakdown-engine.js';
-import type { ConsolidationBreakoutParams, TrendPullbackParams, BearBreakdownParams } from '../strategies/strategy-configs.js';
+import { PostEarningsDriftEngine } from '../strategies/post-earnings-drift-engine.js';
+import type { ConsolidationBreakoutParams, TrendPullbackParams, BearBreakdownParams, PostEarningsDriftParams } from '../strategies/strategy-configs.js';
 import { generateChartHtml, getChartFilePath } from '../formatters/chart-generator.js';
 import { writeFileSync } from 'node:fs';
 import { IndicatorCache, getDefaultCacheConfig } from '../indicators/indicator-cache.js';
+import { EarningsDateProvider } from '../data/earnings-date-provider.js';
 
 // ============================================================
 // TuneResult Interface
@@ -203,7 +205,8 @@ export function tuneV3(data: HistoricalDataPoint[]): V3TuneResult {
 export function runBacktest(
   data: HistoricalDataPoint[],
   strategy: string,
-  params: Record<string, number>
+  params: Record<string, number>,
+  ticker?: string
 ): BacktestResult {
   if (strategy === 'consolidation_breakout') {
     const config = buildConsolidationBreakoutConfig(params);
@@ -230,6 +233,18 @@ export function runBacktest(
     engine.reset();
     const backtestEngine = new BacktestEngine();
     return backtestEngine.runV2(data, engine, bbParams);
+  }
+
+  if (strategy === 'post_earnings_drift') {
+    const config = buildPostEarningsDriftConfig(params);
+    const earningsDates = ticker
+      ? new EarningsDateProvider().getEarningsDatesFromCache(ticker)
+      : [];
+    const peadParams: PostEarningsDriftParams = { config, earningsDates };
+    const engine = new PostEarningsDriftEngine();
+    engine.reset();
+    const backtestEngine = new BacktestEngine();
+    return backtestEngine.runV2(data, engine, peadParams);
   }
 
   throw new Error(`Unsupported strategy for runBacktest: ${strategy}`);

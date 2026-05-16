@@ -2,6 +2,7 @@ import { parentPort } from 'node:worker_threads';
 import { tuneV3 } from './pipeline-functions.js';
 import type { V3TuneResult } from './pipeline-functions.js';
 import { detectSignal } from '../strategies/signal-detector.js';
+import type { DetectSignalOptions } from '../strategies/signal-detector.js';
 import type { SignalOutput } from '../strategies/strategy-registry.js';
 import type { MainToWorkerMessage, WorkerToMainMessage } from './worker-pool.js';
 
@@ -28,7 +29,10 @@ parentPort.on('message', (msg: MainToWorkerMessage) => {
       if (payload.taskType === 'tune') {
         result = tuneV3(payload.data);
       } else if (payload.taskType === 'scan') {
-        result = detectSignal(payload.data, payload.params!, payload.strategy!);
+        const options: DetectSignalOptions | undefined = payload.earningsDates
+          ? { earningsDates: payload.earningsDates }
+          : undefined;
+        result = detectSignal(payload.data, payload.params!, payload.strategy!, options);
       } else {
         throw new Error(`Unknown task type: ${payload.taskType}`);
       }

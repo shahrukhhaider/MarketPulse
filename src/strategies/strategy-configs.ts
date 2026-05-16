@@ -2,6 +2,7 @@ import type { FilterCondition } from './filter-evaluator.js';
 import type { HistoricalDataPoint, StrategyType } from '../types.js';
 import type { IndicatorCache } from '../indicators/indicator-cache.js';
 import type { ConfidenceWeightsConfig } from '../indicators/confidence-score.js';
+import type { Result } from '../data/config-store.js';
 
 // ============================================================
 // Exit Rule Types
@@ -305,6 +306,81 @@ export interface BearBreakdownParams {
   config: BearBreakdownConfiguration;
   primaryDataPoints?: HistoricalDataPoint[];
   cache?: IndicatorCache;
+}
+
+// ============================================================
+// V3 Post-Earnings Drift Strategy Types
+// ============================================================
+
+export interface PostEarningsDriftConfiguration {
+  gap_min_pct: number;                // default 5, range [1, 50]
+  gap_volume_multiplier: number;      // default 1.5, range [1.0, 10.0]
+  consolidation_min_days: number;     // default 3, range [1, 30]
+  consolidation_max_days: number;     // default 10, range [2, 60]
+  max_range_pct: number;              // default 5, range [1, 30]
+  breakout_volume_multiplier: number; // default 1.2, range [1.0, 10.0]
+  stop_buffer_atr: number;            // default 0.3, range [0.1, 3.0]
+  r_multiple: number;                 // default 2.5, range [0.5, 10.0]
+  max_risk_pct: number;               // default 8, range [1, 25]
+  trend_exit_sma_period: number;      // default 50, range [5, 200]
+}
+
+export interface PostEarningsDriftParams {
+  config: PostEarningsDriftConfiguration;
+  earningsDates: string[];  // ISO dates for this ticker
+}
+
+export const DEFAULT_PEAD_CONFIG: PostEarningsDriftConfiguration = {
+  gap_min_pct: 5,
+  gap_volume_multiplier: 1.5,
+  consolidation_min_days: 3,
+  consolidation_max_days: 10,
+  max_range_pct: 5,
+  breakout_volume_multiplier: 1.2,
+  stop_buffer_atr: 0.3,
+  r_multiple: 2.5,
+  max_risk_pct: 8,
+  trend_exit_sma_period: 50,
+};
+
+interface PeadParamRange {
+  min: number;
+  max: number;
+}
+
+const PEAD_PARAM_RANGES: Record<keyof PostEarningsDriftConfiguration, PeadParamRange> = {
+  gap_min_pct: { min: 1, max: 50 },
+  gap_volume_multiplier: { min: 1.0, max: 10.0 },
+  consolidation_min_days: { min: 1, max: 30 },
+  consolidation_max_days: { min: 2, max: 60 },
+  max_range_pct: { min: 1, max: 30 },
+  breakout_volume_multiplier: { min: 1.0, max: 10.0 },
+  stop_buffer_atr: { min: 0.1, max: 3.0 },
+  r_multiple: { min: 0.5, max: 10.0 },
+  max_risk_pct: { min: 1, max: 25 },
+  trend_exit_sma_period: { min: 5, max: 200 },
+};
+
+export function validatePeadConfig(config: PostEarningsDriftConfiguration): Result<PostEarningsDriftConfiguration> {
+  for (const [key, range] of Object.entries(PEAD_PARAM_RANGES)) {
+    const value = config[key as keyof PostEarningsDriftConfiguration];
+    if (value < range.min || value > range.max) {
+      return { success: false, error: `Parameter '${key}' value ${value} is outside valid range [${range.min}, ${range.max}]` };
+    }
+  }
+
+  if (config.consolidation_min_days >= config.consolidation_max_days) {
+    return { success: false, error: `consolidation_min_days (${config.consolidation_min_days}) must be less than consolidation_max_days (${config.consolidation_max_days})` };
+  }
+
+  return { success: true, data: config };
+}
+
+export function mergePeadConfig(partial?: Partial<PostEarningsDriftConfiguration>): PostEarningsDriftConfiguration {
+  if (!partial) {
+    return { ...DEFAULT_PEAD_CONFIG };
+  }
+  return { ...DEFAULT_PEAD_CONFIG, ...partial };
 }
 
 // ============================================================

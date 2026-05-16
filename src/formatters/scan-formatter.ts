@@ -8,6 +8,8 @@
 import type { SignalOutput } from '../strategies/strategy-registry.js';
 import type { RegimeState } from '../indicators/regime-detector.js';
 import type { PositionMetrics } from '../utils/position-metrics.js';
+import { toExposureTier } from './market-exposure.js';
+import type { MarketRegimeData } from './market-exposure.js';
 
 // ============================================================
 // ANSI Color Helpers
@@ -86,6 +88,111 @@ function regimeBadge(regimeState: RegimeState | undefined): string {
 
 type AnnotatedSignal = SignalOutput & { regimeState?: RegimeState };
 
+// ============================================================
+// Conflict Resolution
+// ============================================================
+
+const STRATEGY_DIRECTION: Record<string, 'long' | 'short'> = {
+  consolidation_breakout: 'long',
+  trend_pullback: 'long',
+  post_earnings_drift: 'long',
+  bear_breakdown: 'short',
+};
+
+const SIGNAL_PRIORITY: Record<string, number> = {
+  active: 0,
+  active_late: 1,
+  extended: 2,
+  pressure: 3,
+  near: 4,
+  forming: 5,
+  none: 6,
+};
+
+/**
+ * Resolve directional conflicts for tickers with opposing signals.
+ * When a ticker has both long and short actionable signals, the dominant
+ * direction wins (by signal priority, then confidence). Losing direction
+ * signals are removed. Non-conflict signals pass through unchanged.
+ */
+function resolveConflicts(signals: AnnotatedSignal[]): AnnotatedSignal[] {
+  // Group by ticker
+  const byTicker = new Map<string, AnnotatedSignal[]>();
+  for (const sig of signals) {
+    if (!sig.ticker) continue;
+    const existing = byTicker.get(sig.ticker);
+    if (existing) {
+      existing.push(sig);
+    } else {
+      byTicker.set(sig.ticker, [sig]);
+    }
+  }
+
+  const result: AnnotatedSignal[] = [];
+
+  for (const [, tickerSignals] of byTicker) {
+    // Separate into long and short actionable signals
+    const longSignals: AnnotatedSignal[] = [];
+    const shortSignals: AnnotatedSignal[] = [];
+
+    for (const sig of tickerSignals) {
+      if (sig.signal === 'none') {
+        result.push(sig);
+        continue;
+      }
+      const dir = STRATEGY_DIRECTION[sig.strategy] ?? 'long';
+      if (dir === 'long') {
+        longSignals.push(sig);
+      } else {
+        shortSignals.push(sig);
+      }
+    }
+
+    // No conflict: only one direction has signals
+    if (longSignals.length === 0 || shortSignals.length === 0) {
+      result.push(...longSignals, ...shortSignals);
+      continue;
+    }
+
+    // Conflict: pick dominant direction
+    const bestLong = getBestSignal(longSignals);
+    const bestShort = getBestSignal(shortSignals);
+
+    const longPriority = SIGNAL_PRIORITY[bestLong.signal] ?? 6;
+    const shortPriority = SIGNAL_PRIORITY[bestShort.signal] ?? 6;
+
+    if (longPriority < shortPriority) {
+      // Long wins by priority
+      result.push(...longSignals);
+    } else if (shortPriority < longPriority) {
+      // Short wins by priority
+      result.push(...shortSignals);
+    } else {
+      // Same priority — tie-break by confidence
+      if (bestLong.confidence >= bestShort.confidence) {
+        result.push(...longSignals);
+      } else {
+        result.push(...shortSignals);
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Get the best signal from a group (lowest priority number, then highest confidence).
+ */
+function getBestSignal(signals: AnnotatedSignal[]): AnnotatedSignal {
+  return signals.reduce((best, sig) => {
+    const bestPri = SIGNAL_PRIORITY[best.signal] ?? 6;
+    const sigPri = SIGNAL_PRIORITY[sig.signal] ?? 6;
+    if (sigPri < bestPri) return sig;
+    if (sigPri === bestPri && sig.confidence > best.confidence) return sig;
+    return best;
+  });
+}
+
 interface GroupedSignals {
   active: AnnotatedSignal[];
   near: AnnotatedSignal[];
@@ -138,6 +245,97 @@ function groupSignals(signals: AnnotatedSignal[]): GroupedSignals {
 // Section Renderers
 // ============================================================
 
+// ============================================================
+// Shared Helpers for Active Signal Rendering
+// ============================================================
+
+function extractTarget(reason: string[]): string {
+  const line = reason.find(r => r.includes('Target:'));
+  return line?.match(/Target:\s*([\d.]+)/)?.[1] ?? '—';
+}
+
+function extractRR(reason: string[]): string {
+  const line = reason.find(r => r.includes('R:R'));
+  return line?.match(/R:R\s*=\s*([\d:.]+)/)?.[1] ?? '—';
+}
+
+function wrapText(text: string, maxWidth: number): string[] {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    if (current.length + word.length + 1 > maxWidth && current.length > 0) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = current ? `${current} ${word}` : word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+/**
+ * Generate a human-readable rationale and exit plan for an ACTIVE signal.
+ * Returns array of lines (empty for unknown strategies).
+ */
+function generateRationale(sig: AnnotatedSignal): string[] {
+  const isShort = sig.strategy === 'bear_breakdown';
+  const stop = formatPrice(sig.stop);
+  const risk = formatPct(sig.risk_pct);
+
+  // Buy zone
+  const zoneLow = isShort ? sig.entry * 0.98 : sig.entry;
+  const zoneHigh = isShort ? sig.entry : sig.entry * 1.02;
+  const buyZone = `${formatPrice(zoneLow)} – ${formatPrice(zoneHigh)}`;
+
+  let rationaleText: string;
+  switch (sig.strategy) {
+    case 'trend_pullback':
+      rationaleText = `Uptrend intact (SMA20 > SMA50). Pulled back on declining volume and reclaimed SMA10 with expansion. Buy zone ${buyZone}, stop ${stop} (${risk} risk).`;
+      break;
+    case 'consolidation_breakout':
+      rationaleText = `Price broke above tight consolidation range on expanding volume. Buy zone ${buyZone}, stop below consolidation low at ${stop} (${risk} risk).`;
+      break;
+    case 'bear_breakdown':
+      rationaleText = `Downtrend confirmed below SMA50. Price broke below consolidation support on expanding volume. Buy zone ${buyZone}, stop above swing high at ${stop} (${risk} risk).`;
+      break;
+    case 'post_earnings_drift':
+      rationaleText = `Gapped up on earnings and formed tight consolidation base. Breakout above base confirmed with volume. Buy zone ${buyZone}, stop at base low ${stop} (${risk} risk).`;
+      break;
+    default:
+      return [];
+  }
+
+  const result = wrapText(rationaleText, 72);
+
+  // Exit plan: derive from profitTargetPrice in reason[]
+  const targetStr = extractTarget(sig.reason ?? []);
+  const profitTarget = parseFloat(targetStr);
+
+  if (!isNaN(profitTarget) && profitTarget > 0) {
+    const exitPlan = buildExitPlan(sig.entry, profitTarget, isShort);
+    result.push(...wrapText(exitPlan, 72));
+  }
+
+  return result;
+}
+
+/**
+ * Build the exit plan string with partial profit targets.
+ * target1 = halfway to profitTarget, target2 = profitTarget, trail = SMA10
+ */
+function buildExitPlan(entry: number, profitTarget: number, isShort: boolean): string {
+  const verb = isShort ? 'Cover' : 'Take';
+  const target1 = entry + 0.5 * (profitTarget - entry);
+  const target2 = profitTarget;
+  const pct1 = Math.abs((target1 - entry) / entry * 100);
+  const pct2 = Math.abs((target2 - entry) / entry * 100);
+  const sign = isShort ? '-' : '+';
+  return `Exit plan: ${verb} ⅓ at ${formatPrice(target1)} (${sign}${pct1.toFixed(1)}%) · ${verb} ⅓ at ${formatPrice(target2)} (${sign}${pct2.toFixed(1)}%) · Trail ⅓ on SMA10`;
+}
+
 function renderActive(signals: AnnotatedSignal[]): string {
   if (signals.length === 0) return '';
 
@@ -145,8 +343,8 @@ function renderActive(signals: AnnotatedSignal[]): string {
   lines.push('');
   lines.push(badge(BG_GREEN, 'ACTIVE') + '  Entry confirmed');
   lines.push('');
-  lines.push(dim('  Ticker   Side    Strategy              Entry       Stop        Target      Risk     R:R'));
-  lines.push(dim('  ──────   ────    ────────              ─────       ────        ──────      ────     ───'));
+  lines.push(dim('  Ticker   Side    Strategy              Buy Zone              Stop        Risk     R:R'));
+  lines.push(dim('  ──────   ────    ────────              ────────              ────        ────     ───'));
 
   for (const sig of signals) {
     const ticker = padRight(sig.ticker, 8);
@@ -156,24 +354,28 @@ function renderActive(signals: AnnotatedSignal[]): string {
       ? 'Trend Pullback'
       : sig.strategy === 'bear_breakdown'
         ? 'Bear Breakdown'
-        : 'Consolidation';
+        : sig.strategy === 'post_earnings_drift'
+          ? 'PEAD Breakout'
+          : 'Consolidation';
     const strat = padRight(stratName, 20);
-    const entry = padLeft(formatPrice(sig.entry), 10);
+
+    // Buy zone: LONG = [entry, entry×1.02], SHORT = [entry×0.98, entry]
+    const zoneLow = isShort ? sig.entry * 0.98 : sig.entry;
+    const zoneHigh = isShort ? sig.entry : sig.entry * 1.02;
+    const buyZone = padLeft(`${formatPrice(zoneLow)} – ${formatPrice(zoneHigh)}`, 20);
+
     const stop = padLeft(formatPrice(sig.stop), 10);
-
-    // Extract target from reason
-    const targetLine = sig.reason?.find(r => r.includes('Target:'));
-    const targetMatch = targetLine?.match(/Target:\s*([\d.]+)/);
-    const target = targetMatch ? padLeft(`${targetMatch[1]}`, 10) : padLeft('—', 10);
-
     const risk = padLeft(formatPct(sig.risk_pct), 8);
-
-    // Extract R:R from reason
-    const rrLine = sig.reason?.find(r => r.includes('R:R'));
-    const rr = rrLine?.match(/R:R\s*=\s*([\d:]+)/)?.[1] ?? '—';
+    const rr = extractRR(sig.reason ?? []);
 
     const badgeStr = regimeBadge(sig.regimeState);
-    lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${entry}  ${red(stop)}  ${green(target)}  ${yellow(risk)}  ${cyan(rr)}`);
+    lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}`);
+
+    // Rationale + exit plan — DIM, indented, wrapped at 72 chars
+    const rationaleLines = generateRationale(sig);
+    for (const line of rationaleLines) {
+      lines.push(dim(`        ${line}`));
+    }
   }
 
   return lines.join('\n');
@@ -221,7 +423,28 @@ function renderFormingBreakouts(signals: AnnotatedSignal[]): string {
   lines.push(dim('  Ticker   Price        Breakout     Distance'));
   lines.push(dim('  ──────   ─────        ────────     ────────'));
 
-  for (const sig of signals) {
+  // Filter: suppress setups too far from breakout level (not actionable)
+  const MAX_BREAKOUT_DISTANCE_PCT = 8;
+  const filtered = signals.filter(sig => {
+    const distLine = sig.reason?.find(r => r.includes('Distance from breakout:'));
+    const distMatch = distLine?.match(/([\d.]+)%/);
+    if (!distMatch) return true;
+    return parseFloat(distMatch[1]) <= MAX_BREAKOUT_DISTANCE_PCT;
+  });
+
+  // Deduplicate by ticker — keep highest confidence per ticker
+  const seen = new Map<string, AnnotatedSignal>();
+  for (const sig of filtered) {
+    const existing = seen.get(sig.ticker);
+    if (!existing || sig.confidence > existing.confidence) {
+      seen.set(sig.ticker, sig);
+    }
+  }
+  const deduped = [...seen.values()];
+
+  if (deduped.length === 0) return '';
+
+  for (const sig of deduped) {
     const ticker = padRight(sig.ticker, 8);
     // Extract current price and distance from reason
     const priceLine = sig.reason?.find(r => r.includes('Current price:'));
@@ -251,8 +474,18 @@ function renderFormingPullbacks(signals: AnnotatedSignal[]): string {
   lines.push(dim('  Ticker   Price        SMA(20)      Dist to SMA'));
   lines.push(dim('  ──────   ─────        ──────       ───────────'));
 
+  // Deduplicate by ticker — keep highest confidence per ticker
+  const seenPullback = new Map<string, AnnotatedSignal>();
+  for (const sig of signals) {
+    const existing = seenPullback.get(sig.ticker);
+    if (!existing || sig.confidence > existing.confidence) {
+      seenPullback.set(sig.ticker, sig);
+    }
+  }
+  const dedupedPullbacks = [...seenPullback.values()];
+
   // Sort by distance to SMA(20) ascending
-  const sorted = [...signals].sort((a, b) => {
+  const sorted = [...dedupedPullbacks].sort((a, b) => {
     const distA = extractDistToSma(a);
     const distB = extractDistToSma(b);
     return Math.abs(distA) - Math.abs(distB);
@@ -472,6 +705,66 @@ export function renderOpenPositions(positions: PositionMetrics[]): string {
 }
 
 // ============================================================
+// Market Context Renderer
+// ============================================================
+
+/**
+ * Render the market context line showing regime, exposure, and slot usage.
+ * Returns empty string when marketRegime is undefined (--regime not passed).
+ */
+export function renderMarketContext(
+  marketRegime: MarketRegimeData | undefined,
+  openPositions: PositionMetrics[],
+): string {
+  if (!marketRegime) return '';
+
+  const tier = toExposureTier(marketRegime.market_regime);
+
+  // Trend arrows
+  const spyArrow = marketRegime.spy_trend === 1 ? '↑' : marketRegime.spy_trend === -1 ? '↓' : '—';
+  const qqqArrow = marketRegime.qqq_trend === 1 ? '↑' : marketRegime.qqq_trend === -1 ? '↓' : '—';
+
+  // If both trends are null, treat as unknown
+  if (marketRegime.spy_trend === null && marketRegime.qqq_trend === null && marketRegime.market_regime === 'unknown') {
+    return `  ${dim('⚪ Unclear — await confirmation')}  SPY ${spyArrow}  QQQ ${qqqArrow}`;
+  }
+
+  // Unknown regime: show unclear message
+  if (marketRegime.market_regime === 'unknown') {
+    return `  ${dim('⚪ Unclear — await confirmation')}  SPY ${spyArrow}  QQQ ${qqqArrow}`;
+  }
+
+  const slotsUsed = openPositions.length;
+  const slotsMax = tier.slots[1];
+
+  // Overexposed case
+  if (slotsUsed > slotsMax) {
+    return `  Market: ${bold(tier.label)}  SPY ${spyArrow}  QQQ ${qqqArrow}   Exposure: ${tier.range}  ${red('⚠ Overexposed')} (${slotsUsed}/${slotsMax} slots)`;
+  }
+
+  const slotsOpen = Math.max(0, slotsMax - slotsUsed);
+
+  // Progress bar: 10 chars total
+  const barWidth = 10;
+  const filled = slotsMax > 0 ? Math.round((slotsUsed / slotsMax) * barWidth) : 0;
+  const empty = barWidth - filled;
+  const bar = '█'.repeat(filled) + '░'.repeat(empty);
+
+  // Color based on fill percentage
+  const fillPct = slotsMax > 0 ? (slotsUsed / slotsMax) * 100 : 0;
+  let coloredBar: string;
+  if (fillPct >= 80) {
+    coloredBar = red(bar);
+  } else if (fillPct >= 40) {
+    coloredBar = cyan(bar);
+  } else {
+    coloredBar = yellow(bar);
+  }
+
+  return `  Market: ${bold(tier.label)}  SPY ${spyArrow}  QQQ ${qqqArrow}   Exposure: ${tier.range}  [ ${coloredBar}  ${slotsUsed}/${slotsMax} slots used · ${slotsOpen} available ]`;
+}
+
+// ============================================================
 // Main Formatter
 // ============================================================
 
@@ -481,6 +774,7 @@ export interface ScanSummaryData {
   total: number;
   scanned: number;
   openPositions?: PositionMetrics[];
+  marketRegime?: MarketRegimeData;
 }
 
 /**
@@ -489,7 +783,8 @@ export interface ScanSummaryData {
  */
 export function formatScanSummary(data: ScanSummaryData): string {
   const { signals, warnings, total } = data;
-  const groups = groupSignals(signals);
+  const resolved = resolveConflicts(signals);
+  const groups = groupSignals(resolved);
 
   const lines: string[] = [];
 
@@ -499,7 +794,13 @@ export function formatScanSummary(data: ScanSummaryData): string {
   lines.push('');
   lines.push(bold(`  📊 Daily Scan — ${dateStr}`));
 
+  // Market context line (only when regime data is present)
   const openPositions = data.openPositions ?? [];
+  const marketContextLine = renderMarketContext(data.marketRegime, openPositions);
+  if (marketContextLine) {
+    lines.push(marketContextLine);
+  }
+
   const headerParts = [`${total} tickers scanned`];
   if (openPositions.length > 0) {
     headerParts.push(`${openPositions.length} open position${openPositions.length === 1 ? '' : 's'}`);

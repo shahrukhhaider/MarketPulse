@@ -17,7 +17,7 @@ import { MovingAverageCrossoverStrategy } from './strategies/moving-average.js';
 import { RSIThresholdStrategy } from './strategies/rsi-threshold.js';
 import { PriceBreakoutStrategy } from './strategies/price-breakout.js';
 import { CompositeStrategyEngine } from './strategies/composite-engine.js';
-import { getDefaultCompositeConfig, isV2Config, isConsolidationBreakoutConfig, isTrendPullbackConfig, type CompositeStrategyParams, type PhasedStrategyParams, type ConsolidationBreakoutParams, type TrendPullbackParams } from './strategies/strategy-configs.js';
+import { getDefaultCompositeConfig, isV2Config, isConsolidationBreakoutConfig, isTrendPullbackConfig, type CompositeStrategyParams, type PhasedStrategyParams, type ConsolidationBreakoutParams, type TrendPullbackParams, DEFAULT_PEAD_CONFIG } from './strategies/strategy-configs.js';
 import { PhasedStrategyEngine } from './strategies/phased-engine.js';
 import { ConsolidationBreakoutEngine } from './strategies/consolidation-breakout-engine.js';
 import { TrendPullbackEngine } from './strategies/trend-pullback-engine.js';
@@ -38,6 +38,7 @@ import { evaluateV3Configuration, splitData } from './pipeline/walk-forward-vali
 import { StrategyRegistry } from './strategies/strategy-registry.js';
 import { ConsolidationBreakoutStrategy } from './strategies/consolidation-breakout-strategy.js';
 import { BearBreakdownStrategy } from './strategies/bear-breakdown-strategy.js';
+import { PostEarningsDriftStrategy } from './strategies/post-earnings-drift-strategy.js';
 import { createTuneHandler } from './commands/tune-command.js';
 import { createScanHandler } from './commands/scan-command.js';
 import { createChartHandler } from './commands/chart-command.js';
@@ -394,6 +395,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     'trend_pullback',
     'breakout_volume',
     'consolidation_breakout',
+    'post_earnings_drift',
   ];
 
   router.register('backtest', ['ticker', 'strategy'], async (opts) => {
@@ -1386,6 +1388,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   const strategyRegistry = new StrategyRegistry();
   strategyRegistry.register(new ConsolidationBreakoutStrategy());
   strategyRegistry.register(new BearBreakdownStrategy());
+  strategyRegistry.register(new PostEarningsDriftStrategy(dataDir));
 
   // --- New pipeline commands: tune, scan, chart ---
   const tuneHandler = createTuneHandler({ cachingProvider, registry: strategyRegistry, dataDir });
@@ -1569,6 +1572,7 @@ function getStrategyInstance(strategyType: StrategyType) {
       return new CompositeStrategyEngine(strategyType);
     case 'consolidation_breakout':
     case 'bear_breakdown':
+    case 'post_earnings_drift':
       // V3 engines are instantiated in the backtest handler's V3 path
       return undefined;
   }
@@ -1591,5 +1595,7 @@ function getDefaultParams(strategyType: StrategyType): StrategyParams {
       return { config: {} } as StrategyParams;
     case 'bear_breakdown':
       return { config: {} } as StrategyParams;
+    case 'post_earnings_drift':
+      return { config: DEFAULT_PEAD_CONFIG, earningsDates: [] } as StrategyParams;
   }
 }
