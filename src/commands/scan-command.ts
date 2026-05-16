@@ -78,6 +78,26 @@ export function sortBySignalPriority(signals: SignalOutput[]): SignalOutput[] {
 
 
 // ============================================================
+// RS Confidence Adjustment
+// ============================================================
+
+/**
+ * Adjust signal confidence based on RS Rating.
+ * RS ≥ 80: slight boost (market leader accelerating)
+ * RS 60–79: no change (average performer)
+ * RS 40–59: mild reduction (laggard)
+ * RS < 40: notable reduction (weak stock)
+ */
+function applyRsConfidenceAdjustment(confidence: number, rsRating: number): number {
+  let adjusted: number;
+  if (rsRating >= 80) adjusted = confidence * 1.05;
+  else if (rsRating >= 60) adjusted = confidence;
+  else if (rsRating >= 40) adjusted = confidence * 0.90;
+  else adjusted = confidence * 0.80;
+  return Math.max(0, Math.min(1, adjusted));
+}
+
+// ============================================================
 // Top-100 Ticker Resolution
 // ============================================================
 
@@ -237,9 +257,13 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         dataDir,
       });
 
-      // Annotate signals with regime state if available
+      // Annotate signals with regime state + RS confidence adjustment if available
       const annotatedSignals = regimeStateMap
-        ? result.signals.map(s => ({ ...s, regimeState: regimeStateMap!.get(s.ticker) }))
+        ? result.signals.map(s => {
+            const regimeState = regimeStateMap!.get(s.ticker);
+            const confidence = applyRsConfidenceAdjustment(s.confidence, regimeState?.rs_rating ?? 50);
+            return { ...s, confidence, regimeState };
+          })
         : result.signals;
 
       // Load and process open positions
@@ -336,9 +360,13 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     // Sort by signal priority
     const sorted = sortBySignalPriority(signals);
 
-    // Annotate signals with regime state if available
+    // Annotate signals with regime state + RS confidence adjustment if available
     const annotatedSignals = regimeStateMap
-      ? sorted.map(s => ({ ...s, regimeState: regimeStateMap!.get(s.ticker) }))
+      ? sorted.map(s => {
+          const regimeState = regimeStateMap!.get(s.ticker);
+          const confidence = applyRsConfidenceAdjustment(s.confidence, regimeState?.rs_rating ?? 50);
+          return { ...s, confidence, regimeState };
+        })
       : sorted;
 
     // Load and process open positions

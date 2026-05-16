@@ -29,6 +29,7 @@ export interface RegimeState {
   volatility_regime: VolatilityRegime;
   trend_strength: TrendStrength;
   regime_score: number;  // 0–100
+  rs_rating: number;     // 1–99 percentile rank vs universe (IBD-style weighted 12-month return)
   warnings: string[];
 }
 
@@ -154,11 +155,19 @@ export class RegimeDetector {
 
     // Compute per-ticker regime states
     const tickerStates: RegimeState[] = [];
+    const rawReturns: { ticker: string; raw: number }[] = [];
     for (const ticker of tickers) {
-      const state = await this.computeTickerState(ticker, marketResult.market_regime, warnings);
-      if (state) {
-        tickerStates.push(state);
+      const result = await this.computeTickerState(ticker, marketResult.market_regime, warnings);
+      if (result) {
+        tickerStates.push(result.state);
+        rawReturns.push({ ticker, raw: result.rawReturn });
       }
+    }
+
+    // Assign RS ratings (1–99 percentile rank across the scanned universe)
+    const rsMap = assignRsRatings(rawReturns);
+    for (const state of tickerStates) {
+      state.rs_rating = rsMap.get(state.ticker) ?? 50;
     }
 
     // Compute breadth from ticker states
@@ -275,7 +284,7 @@ export class RegimeDetector {
     ticker: string,
     marketRegime: MarketRegime,
     globalWarnings: string[]
-  ): Promise<RegimeState | null> {
+  ): Promise<{ state: RegimeState; rawReturn: number } | null> {
     const tickerWarnings: string[] = [];
 
     let dataPoints: HistoricalDataPoint[] | null = null;
@@ -304,14 +313,21 @@ export class RegimeDetector {
     // Compute regime score
     const regimeScore = computeRegimeScore(tickerRegime, marketRegime, volatilityRegime, trendStrength);
 
+    // Raw weighted return for RS Rating (ranked across universe in detectFresh)
+    const rawReturn = computeWeightedReturn(dataPoints);
+
     return {
-      ticker,
-      ticker_regime: tickerRegime,
-      market_regime: marketRegime,
-      volatility_regime: volatilityRegime,
-      trend_strength: trendStrength,
-      regime_score: regimeScore,
-      warnings: tickerWarnings,
+      state: {
+        ticker,
+        ticker_regime: tickerRegime,
+        market_regime: marketRegime,
+        volatility_regime: volatilityRegime,
+        trend_strength: trendStrength,
+        regime_score: regimeScore,
+        rs_rating: 0, // placeholder — assigned in detectFresh after universe ranking
+        warnings: tickerWarnings,
+      },
+      rawReturn,
     };
   }
 
@@ -475,6 +491,43 @@ export function computeRegimeScore(
 
   const score = (earned / available) * 100;
   return Math.max(0, Math.min(100, score));
+}
+
+// ============================================================
+// RS Rating Helpers
+// ============================================================
+
+/**
+ * Compute IBD-style weighted 12-month return.
+ * Last 3 months (≈63 bars) are weighted 2× relative to the prior 9 months.
+ * Formula: (recent_3mo_ratio)² × (prior_9mo_ratio) − 1
+ */
+function computeWeightedReturn(data: HistoricalDataPoint[]): number {
+  if (data.length < 2) return 0;
+  const now = data[data.length - 1].close;
+  const mo3Idx = Math.max(0, data.length - 63);
+  const mo12Idx = 0;
+  const mo3 = data[mo3Idx].close;
+  const mo12 = data[mo12Idx].close;
+  if (mo3 === 0 || mo12 === 0) return 0;
+  const recentRatio = now / mo3;
+  const olderRatio = mo3 / mo12;
+  return recentRatio * recentRatio * olderRatio - 1;
+}
+
+/**
+ * Rank tickers by raw weighted return and assign RS Rating 1–99.
+ * Worst performer → 1, best performer → 99.
+ */
+function assignRsRatings(rawReturns: { ticker: string; raw: number }[]): Map<string, number> {
+  const sorted = [...rawReturns].sort((a, b) => a.raw - b.raw);
+  const n = sorted.length;
+  const map = new Map<string, number>();
+  sorted.forEach((item, idx) => {
+    const rating = n === 1 ? 50 : Math.round((idx / (n - 1)) * 98) + 1;
+    map.set(item.ticker, rating);
+  });
+  return map;
 }
 
 // ============================================================

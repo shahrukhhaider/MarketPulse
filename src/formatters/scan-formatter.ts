@@ -70,6 +70,20 @@ function formatPct(pct: number): string {
 // ============================================================
 
 /**
+ * Format RS Rating as a colored label.
+ * Green ≥ 80 (leader), yellow 60–79 (average), dim < 60 (laggard).
+ * Returns empty string when no regime data is present.
+ */
+function rsLabel(regimeState: RegimeState | undefined): string {
+  if (!regimeState || regimeState.rs_rating === 0) return '';
+  const rs = regimeState.rs_rating;
+  const label = `RS ${rs}`;
+  if (rs >= 80) return green(label);
+  if (rs >= 60) return yellow(label);
+  return dim(label);
+}
+
+/**
  * Returns a regime badge string for display next to a ticker.
  * Returns empty string when no regime data is present (preserves existing layout).
  */
@@ -343,8 +357,8 @@ function renderActive(signals: AnnotatedSignal[]): string {
   lines.push('');
   lines.push(badge(BG_GREEN, 'ACTIVE') + '  Entry confirmed');
   lines.push('');
-  lines.push(dim('  Ticker   Side    Strategy              Buy Zone              Stop        Risk     R:R'));
-  lines.push(dim('  ──────   ────    ────────              ────────              ────        ────     ───'));
+  lines.push(dim('  Ticker   Side    Strategy              Buy Zone              Stop        Risk     R:R    RS'));
+  lines.push(dim('  ──────   ────    ────────              ────────              ────        ────     ───    ──'));
 
   for (const sig of signals) {
     const ticker = padRight(sig.ticker, 8);
@@ -369,7 +383,8 @@ function renderActive(signals: AnnotatedSignal[]): string {
     const rr = extractRR(sig.reason ?? []);
 
     const badgeStr = regimeBadge(sig.regimeState);
-    lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}`);
+    const rs = rsLabel(sig.regimeState);
+    lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}  ${rs}`);
 
     // Rationale + exit plan — DIM, indented, wrapped at 72 chars
     const rationaleLines = generateRationale(sig);
@@ -405,8 +420,9 @@ function renderNear(signals: AnnotatedSignal[]): string {
     }
 
     const badgeStr = regimeBadge(sig.regimeState);
+    const rs = rsLabel(sig.regimeState);
     lines.push(`  ${yellow(padRight(sig.ticker, 8))}${badgeStr} ${dim(strat)}`);
-    lines.push(`           Entry: ${formatPrice(sig.entry)}  Stop: ${red(formatPrice(sig.stop))}  Risk: ${formatPct(sig.risk_pct)}`);
+    lines.push(`           Entry: ${formatPrice(sig.entry)}  Stop: ${red(formatPrice(sig.stop))}  Risk: ${formatPct(sig.risk_pct)}  ${rs}`);
     lines.push(`           ${dim('→ ' + need)}`);
   }
 
