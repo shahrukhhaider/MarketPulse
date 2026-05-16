@@ -165,12 +165,13 @@ export function parseScanJson(filePath: string): ScanData {
 // --- HTTP Posting ---
 
 /**
- * Post a Slack Block Kit payload to the given webhook URL.
+ * Post a message string to the given Slack Workflow trigger URL.
+ * Sends { message: "..." } as the payload body.
  * Uses Node.js built-in fetch with a 10-second timeout via AbortController.
- * On success (HTTP 200 + body "ok"), logs to stderr.
- * On non-200 status or network/timeout error, throws a descriptive Error.
+ * On success (HTTP 2xx), logs to stderr.
+ * On non-2xx status or network/timeout error, throws a descriptive Error.
  */
-export async function postToSlack(webhookUrl: string, payload: SlackPayload): Promise<void> {
+export async function postToSlack(webhookUrl: string, message: string): Promise<void> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
@@ -178,23 +179,18 @@ export async function postToSlack(webhookUrl: string, payload: SlackPayload): Pr
     const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ message }),
       signal: controller.signal,
     });
 
     const body = await response.text();
 
-    if (response.status === 200 && body === 'ok') {
+    if (response.ok) {
       process.stderr.write('[slack-notify] Successfully posted to Slack\n');
       return;
     }
 
-    if (response.status !== 200) {
-      throw new Error(`Slack webhook returned HTTP ${response.status}: ${body}`);
-    }
-
-    // Status 200 but body is not "ok" — treat as success with a note
-    process.stderr.write('[slack-notify] Successfully posted to Slack\n');
+    throw new Error(`Slack webhook returned HTTP ${response.status}: ${body}`);
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error('Slack webhook request timed out after 10 seconds');
@@ -254,11 +250,8 @@ function trendArrow(trend: number | null): string {
  * Without explicit target, we'll show the risk percentage and skip R:R if not derivable.
  * Per the design, R:R ratio is shown — we'll compute it as 1/risk_pct (reward multiple).
  */
-function calculateRR(entry: number, stop: number, riskPct: number): string {
+function calculateRR(riskPct: number): string {
   if (riskPct === 0) return 'N/A';
-  // R:R as inverse of risk percentage (how many R's to target)
-  // A common interpretation: if risk is 3%, then 1R = 3%, so R:R = 1:1 means target = entry + risk
-  // We'll show a simple ratio based on available data
   const rr = Math.abs(1 / (riskPct / 100));
   return rr.toFixed(1);
 }
@@ -313,7 +306,7 @@ export function buildSlackPayload(data: ScanData): SlackPayload {
     const side = determineSide(s.strategy);
     const buyZone = `\`${formatPrice(s.entry)}\` – \`${formatPrice(s.stop)}\``;
     const risk = `\`${formatPct(s.risk_pct)}\``;
-    const rr = calculateRR(s.entry, s.stop, s.risk_pct);
+    const rr = calculateRR(s.risk_pct);
     return {
       type: 'section' as const,
       text: {
@@ -437,11 +430,87 @@ export function buildSlackPayload(data: ScanData): SlackPayload {
   return { blocks };
 }
 
+// --- Message Builder (plain mrkdwn string for Workflow triggers) ---
+
+/**
+ * Build a single mrkdwn-formatted message string from scan data.
+ * This is used for Slack Workflow triggers that accept a `message` variable.
+ */
+export function buildSlackMessage(data: ScanData): string {
+  const activeSignals = data.signals.filter(
+    (s) => s.signal === 'active' || s.signal === 'active_late'
+  );
+  const nearSignals = data.signals.filter((s) => s.signal === 'near');
+  const positions = data.openPositions;
+
+  // Header
+  const scanDate = activeSignals.length > 0
+    ? activeSignals[0].date
+    : nearSignals.length > 0
+      ? nearSignals[0].date
+      : new Date().toISOString().slice(0, 10);
+
+  const emoji = regimeEmoji(data.marketRegime.market_regime);
+  const spyArrow = trendArrow(data.marketRegime.spy_trend);
+  const qqqArrow = trendArrow(data.marketRegime.qqq_trend);
+
+  const sections: string[] = [];
+
+  // Header section
+  sections.push(`${emoji} *Daily Scan — ${scanDate}*\nSPY ${spyArrow}  QQQ ${qqqArrow}  ·  ${data.scanned} tickers scanned`);
+
+  // Active signals
+  if (activeSignals.length > 0) {
+    const lines: string[] = [`🎯 *Active Signals (${activeSignals.length})*`];
+    for (const s of activeSignals) {
+      const side = determineSide(s.strategy);
+      const sideIcon = side === 'BUY' ? '🟢' : '🔻';
+      const strategyDisplay = s.strategy.replace(/_/g, ' ');
+      lines.push(`${sideIcon} *${s.ticker}* ${side} · ${strategyDisplay}`);
+      lines.push(`      Entry ${formatPrice(s.entry)} → Stop ${formatPrice(s.stop)} · Risk ${formatPct(s.risk_pct)}`);
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  // Open positions
+  if (positions.length > 0) {
+    const lines: string[] = [`📊 *Open Positions (${positions.length})*`];
+    for (const p of positions) {
+      const currentPrice = p.current_price !== null ? formatPrice(p.current_price) : '—';
+      const pnl = p.pnl_pct !== null ? formatPct(p.pnl_pct) : '—';
+      const pnlIcon = p.pnl_pct !== null ? (p.pnl_pct >= 0 ? '📈' : '📉') : '➖';
+      const strategyDisplay = p.strategy.replace(/_/g, ' ');
+      lines.push(`${pnlIcon} *${p.ticker}* · ${strategyDisplay} · ${p.days_held}d`);
+      lines.push(`      Entry ${formatPrice(p.entry_price)} → Now ${currentPrice} · P&L ${pnl}`);
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  // Near signals
+  if (nearSignals.length > 0) {
+    const lines: string[] = [`👀 *Near Signals (${nearSignals.length})*`];
+    for (const s of nearSignals) {
+      const trigger = s.reason.length > 0 ? s.reason[0] : 'awaiting trigger';
+      const strategyDisplay = s.strategy.replace(/_/g, ' ');
+      lines.push(`⏳ *${s.ticker}* · ${strategyDisplay}`);
+      lines.push(`      Entry ${formatPrice(s.entry)} → Stop ${formatPrice(s.stop)} · ${trigger}`);
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  // Fallback
+  if (activeSignals.length === 0 && nearSignals.length === 0 && positions.length === 0) {
+    sections.push('😴 No actionable signals found.');
+  }
+
+  return sections.join('\n\n');
+}
+
 // --- Entry Point ---
 
 /**
  * Main entry point for the Slack notifier CLI.
- * Reads webhook URL, resolves scan JSON, builds payload, and posts to Slack.
+ * Reads webhook URL, resolves scan JSON, builds message, and posts to Slack.
  * Exits with code 0 on success or missing webhook, code 1 on errors.
  */
 async function main(): Promise<void> {
@@ -477,12 +546,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Step 4: Build payload
-  const payload = buildSlackPayload(scanData);
+  // Step 4: Build message
+  const message = buildSlackMessage(scanData);
 
   // Step 5: Post to Slack
   try {
-    await postToSlack(webhookUrl, payload);
+    await postToSlack(webhookUrl, message);
   } catch (err) {
     process.stderr.write(`[slack-notify] Error: ${(err as Error).message}\n`);
     process.exit(1);

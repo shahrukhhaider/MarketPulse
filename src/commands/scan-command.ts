@@ -191,7 +191,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     const tickersArg = opts['tickers'];
     const strategyName = opts['strategy'];
     const allowStale = opts['allow-stale'] !== undefined;
-    const regimeFlag = opts['regime'] !== undefined;
+    const regimeFlag = opts['no-regime'] === undefined; // regime runs by default; --no-regime disables it
 
     if (!tickersArg) {
       return errorResult('scan', 'MISSING_PARAM', 'Missing required parameter: --tickers');
@@ -211,7 +211,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       return errorResult('scan', 'MISSING_PARAM', 'No tickers specified');
     }
 
-    // Run regime detection if --regime flag is passed and regimeDetector is available
+    // Run regime detection by default (suppress with --no-regime)
     let regimeResult: RegimeResult | undefined;
     let regimeStateMap: Map<string, RegimeState> | undefined;
 
