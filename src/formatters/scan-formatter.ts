@@ -110,6 +110,7 @@ const STRATEGY_DIRECTION: Record<string, 'long' | 'short'> = {
   consolidation_breakout: 'long',
   trend_pullback: 'long',
   post_earnings_drift: 'long',
+  keltner_mean_reversion: 'long',
   bear_breakdown: 'short',
 };
 
@@ -318,6 +319,9 @@ function generateRationale(sig: AnnotatedSignal): string[] {
     case 'post_earnings_drift':
       rationaleText = `Gapped up on earnings and formed tight consolidation base. Breakout above base confirmed with volume. Buy zone ${buyZone}, stop at base low ${stop} (${risk} risk).`;
       break;
+    case 'keltner_mean_reversion':
+      rationaleText = `Uptrend intact above SMA. Price dipped below lower Keltner Band and reclaimed back above it — mean reversion entry. Buy zone ${buyZone}, stop ${stop} (${risk} risk).`;
+      break;
     default:
       return [];
   }
@@ -370,7 +374,9 @@ function renderActive(signals: AnnotatedSignal[]): string {
         ? 'Bear Breakdown'
         : sig.strategy === 'post_earnings_drift'
           ? 'PEAD Breakout'
-          : 'Consolidation';
+          : sig.strategy === 'keltner_mean_reversion'
+            ? 'Keltner MR'
+            : 'Consolidation';
     const strat = padRight(stratName, 20);
 
     // Buy zone: LONG = [entry, entry×1.02], SHORT = [entry×0.98, entry]
@@ -405,7 +411,11 @@ function renderNear(signals: AnnotatedSignal[]): string {
   lines.push('');
 
   for (const sig of signals) {
-    const strat = sig.strategy === 'trend_pullback' ? 'Trend Pullback' : 'Consolidation';
+    const strat = sig.strategy === 'trend_pullback'
+      ? 'Trend Pullback'
+      : sig.strategy === 'keltner_mean_reversion'
+        ? 'Keltner MR'
+        : 'Consolidation';
     // Extract the "Need:" line from reason
     const needLine = sig.reason?.find(r => r.includes('Need:'));
     let need: string;
