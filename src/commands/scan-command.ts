@@ -25,6 +25,7 @@ import type { RegimeResult, RegimeState } from '../indicators/regime-detector.js
 import { load as loadJournal } from '../journal/journal-store.js';
 import { JOURNAL_DEFAULTS } from '../journal/journal-types.js';
 import { EarningsDateProvider } from '../data/earnings-date-provider.js';
+import { DEFAULT_PEAD_CONFIG } from '../strategies/strategy-configs.js';
 import type { JournalEntry } from '../journal/journal-types.js';
 import { computePositionMetrics } from '../utils/position-metrics.js';
 import type { PositionMetrics } from '../utils/position-metrics.js';
@@ -281,44 +282,48 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
         // Determine which strategies to scan
         const strategiesToScan = strategyName === 'v3'
-          ? ['consolidation_breakout', 'trend_pullback', 'bear_breakdown']
+          ? ['consolidation_breakout', 'trend_pullback', 'bear_breakdown', 'post_earnings_drift']
           : [strategyName];
 
         for (const strat of strategiesToScan) {
-          // Load profile
-          const profileResult = loadStrategyProfile(ticker, strat, {
-            allowStale,
-            baseDir: dataDir,
-          });
+          let params: Record<string, number>;
+          let signalOptions: DetectSignalOptions | undefined;
 
-          if (!profileResult.success) {
-            if (profileResult.error.code === 'PROFILE_NOT_FOUND') {
-              warnings.push(
-                `[${ticker}/${strat}] Profile not found. Run: npm run v3 -- --ticker ${ticker}`
-              );
+          if (strat === 'post_earnings_drift') {
+            // PEAD uses universal defaults — no per-ticker tuning needed
+            params = DEFAULT_PEAD_CONFIG as unknown as Record<string, number>;
+            const earningsResult = await new EarningsDateProvider({ cacheDir: dataDir }).getEarningsDates(ticker);
+            signalOptions = { earningsDates: earningsResult.success ? earningsResult.data.dates : [] };
+          } else {
+            // Load profile
+            const profileResult = loadStrategyProfile(ticker, strat, {
+              allowStale,
+              baseDir: dataDir,
+            });
+
+            if (!profileResult.success) {
+              if (profileResult.error.code === 'PROFILE_NOT_FOUND') {
+                warnings.push(
+                  `[${ticker}/${strat}] Profile not found. Run: npm run v3 -- --ticker ${ticker}`
+                );
+                continue;
+              }
+
+              if (profileResult.error.code === 'PROFILE_EXPIRED' && !allowStale) {
+                warnings.push(
+                  `[${ticker}/${strat}] Profile expired. Retune with: npm run v3 -- --ticker ${ticker} --force, or use --allow-stale`
+                );
+                continue;
+              }
+
+              warnings.push(`[${ticker}/${strat}] ${profileResult.error.message}`);
               continue;
             }
 
-            if (profileResult.error.code === 'PROFILE_EXPIRED' && !allowStale) {
-              warnings.push(
-                `[${ticker}/${strat}] Profile expired. Retune with: npm run v3 -- --ticker ${ticker} --force, or use --allow-stale`
-              );
-              continue;
-            }
-
-            warnings.push(`[${ticker}/${strat}] ${profileResult.error.message}`);
-            continue;
+            params = profileResult.data.params;
           }
 
-          const profile = profileResult.data;
-
-          // Detect signal using profile params
-          // For PEAD strategy, pass earnings dates from cache
-          const options: DetectSignalOptions | undefined =
-            strat === 'post_earnings_drift'
-              ? { earningsDates: new EarningsDateProvider({ cacheDir: dataDir }).getEarningsDatesFromCache(ticker) }
-              : undefined;
-          const signal = detectSignal(dataPoints, profile.params, strat, options);
+          const signal = detectSignal(dataPoints, params, strat, signalOptions);
           signal.ticker = ticker;
           signals.push(signal);
         }

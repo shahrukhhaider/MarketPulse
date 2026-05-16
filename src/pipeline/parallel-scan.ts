@@ -20,6 +20,7 @@ import { WorkerPool } from './worker-pool.js';
 import type { WorkerTask, WorkerResult } from './worker-pool.js';
 import { fetchHistoricalDataStream } from '../data/data-fetcher.js';
 import { EarningsDateProvider } from '../data/earnings-date-provider.js';
+import { DEFAULT_PEAD_CONFIG } from '../strategies/strategy-configs.js';
 import { createProgressReporter } from '../formatters/progress-reporter.js';
 import type { HistoricalDataPoint } from '../types.js';
 
@@ -58,7 +59,7 @@ function generateTaskId(taskType: string, ticker: string, strategy: string): str
  */
 function resolveStrategies(strategyName: string): string[] {
   if (strategyName === 'v3') {
-    return ['consolidation_breakout', 'trend_pullback', 'bear_breakdown'];
+    return ['consolidation_breakout', 'trend_pullback', 'bear_breakdown', 'post_earnings_drift'];
   }
   return [strategyName];
 }
@@ -91,40 +92,44 @@ async function scanSingleTicker(options: ParallelScanOptions): Promise<ParallelS
     const strategies = resolveStrategies(options.strategyName);
 
     for (const strat of strategies) {
-      // Load profile
-      const profileResult = loadStrategyProfile(ticker, strat, {
-        allowStale: options.allowStale,
-        baseDir: options.dataDir,
-      });
+      let params: Record<string, number>;
+      let signalOptions: DetectSignalOptions | undefined;
 
-      if (!profileResult.success) {
-        if (profileResult.error.code === 'PROFILE_NOT_FOUND') {
-          warnings.push(
-            `[${ticker}/${strat}] Profile not found. Run: npm run v3 -- --ticker ${ticker}`,
-          );
+      if (strat === 'post_earnings_drift') {
+        // PEAD uses universal defaults — no per-ticker tuning needed
+        params = DEFAULT_PEAD_CONFIG as unknown as Record<string, number>;
+        const earningsResult = await new EarningsDateProvider({ cacheDir: options.dataDir }).getEarningsDates(ticker);
+        signalOptions = { earningsDates: earningsResult.success ? earningsResult.data.dates : [] };
+      } else {
+        // Load profile
+        const profileResult = loadStrategyProfile(ticker, strat, {
+          allowStale: options.allowStale,
+          baseDir: options.dataDir,
+        });
+
+        if (!profileResult.success) {
+          if (profileResult.error.code === 'PROFILE_NOT_FOUND') {
+            warnings.push(
+              `[${ticker}/${strat}] Profile not found. Run: npm run v3 -- --ticker ${ticker}`,
+            );
+            continue;
+          }
+
+          if (profileResult.error.code === 'PROFILE_EXPIRED' && !options.allowStale) {
+            warnings.push(
+              `[${ticker}/${strat}] Profile expired. Retune with: npm run v3 -- --ticker ${ticker} --force, or use --allow-stale`,
+            );
+            continue;
+          }
+
+          warnings.push(`[${ticker}/${strat}] ${profileResult.error.message}`);
           continue;
         }
 
-        if (profileResult.error.code === 'PROFILE_EXPIRED' && !options.allowStale) {
-          warnings.push(
-            `[${ticker}/${strat}] Profile expired. Retune with: npm run v3 -- --ticker ${ticker} --force, or use --allow-stale`,
-          );
-          continue;
-        }
-
-        warnings.push(`[${ticker}/${strat}] ${profileResult.error.message}`);
-        continue;
+        params = profileResult.data.params;
       }
 
-      const profile = profileResult.data;
-
-      // Detect signal using profile params on main thread
-      // For PEAD strategy, pass earnings dates from cache
-      const signalOptions: DetectSignalOptions | undefined =
-        strat === 'post_earnings_drift'
-          ? { earningsDates: new EarningsDateProvider({ cacheDir: options.dataDir }).getEarningsDatesFromCache(ticker) }
-          : undefined;
-      const signal = detectSignal(dataPoints, profile.params, strat, signalOptions);
+      const signal = detectSignal(dataPoints, params, strat, signalOptions);
       signal.ticker = ticker;
       signals.push(signal);
     }
@@ -248,32 +253,42 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
       let tickerDispatched = false;
 
       for (const strat of strategies) {
-        // Load profile on main thread (I/O-bound, lightweight)
-        const profileResult = loadStrategyProfile(fetchResult.ticker, strat, {
-          allowStale,
-          baseDir: dataDir,
-        });
+        let params: Record<string, number>;
+        let earningsDates: string[] | undefined;
 
-        if (!profileResult.success) {
-          if (profileResult.error.code === 'PROFILE_NOT_FOUND') {
-            warnings.push(
-              `[${fetchResult.ticker}/${strat}] Profile not found. Run: npm run v3 -- --ticker ${fetchResult.ticker}`,
-            );
+        if (strat === 'post_earnings_drift') {
+          // PEAD uses universal defaults — no per-ticker tuning needed
+          params = DEFAULT_PEAD_CONFIG as unknown as Record<string, number>;
+          const earningsResult = await new EarningsDateProvider({ cacheDir: dataDir }).getEarningsDates(fetchResult.ticker);
+          earningsDates = earningsResult.success ? earningsResult.data.dates : [];
+        } else {
+          // Load profile on main thread (I/O-bound, lightweight)
+          const profileResult = loadStrategyProfile(fetchResult.ticker, strat, {
+            allowStale,
+            baseDir: dataDir,
+          });
+
+          if (!profileResult.success) {
+            if (profileResult.error.code === 'PROFILE_NOT_FOUND') {
+              warnings.push(
+                `[${fetchResult.ticker}/${strat}] Profile not found. Run: npm run v3 -- --ticker ${fetchResult.ticker}`,
+              );
+              continue;
+            }
+
+            if (profileResult.error.code === 'PROFILE_EXPIRED' && !allowStale) {
+              warnings.push(
+                `[${fetchResult.ticker}/${strat}] Profile expired. Retune with: npm run v3 -- --ticker ${fetchResult.ticker} --force, or use --allow-stale`,
+              );
+              continue;
+            }
+
+            warnings.push(`[${fetchResult.ticker}/${strat}] ${profileResult.error.message}`);
             continue;
           }
 
-          if (profileResult.error.code === 'PROFILE_EXPIRED' && !allowStale) {
-            warnings.push(
-              `[${fetchResult.ticker}/${strat}] Profile expired. Retune with: npm run v3 -- --ticker ${fetchResult.ticker} --force, or use --allow-stale`,
-            );
-            continue;
-          }
-
-          warnings.push(`[${fetchResult.ticker}/${strat}] ${profileResult.error.message}`);
-          continue;
+          params = profileResult.data.params;
         }
-
-        const profile = profileResult.data;
 
         // Create and submit scan task to worker pool
         const taskId = generateTaskId('scan', fetchResult.ticker, strat);
@@ -283,10 +298,8 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
           ticker: fetchResult.ticker,
           data: fetchResult.data,
           strategy: strat,
-          params: profile.params,
-          earningsDates: strat === 'post_earnings_drift'
-            ? new EarningsDateProvider({ cacheDir: dataDir }).getEarningsDatesFromCache(fetchResult.ticker)
-            : undefined,
+          params,
+          earningsDates,
         };
 
         dispatchedTaskIds.add(taskId);

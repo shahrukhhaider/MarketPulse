@@ -709,59 +709,58 @@ export function renderOpenPositions(positions: PositionMetrics[]): string {
 // ============================================================
 
 /**
- * Render the market context line showing regime, exposure, and slot usage.
- * Returns empty string when marketRegime is undefined (--regime not passed).
+ * Render market context lines showing mood, regime, exposure, and slot usage.
+ * Returns empty array when marketRegime is undefined (--regime not passed).
+ * Returns 2 lines when mood data is present, 1 line as backward-compat fallback.
  */
 export function renderMarketContext(
   marketRegime: MarketRegimeData | undefined,
   openPositions: PositionMetrics[],
-): string {
-  if (!marketRegime) return '';
+): string[] {
+  if (!marketRegime) return [];
 
   const tier = toExposureTier(marketRegime.market_regime);
-
-  // Trend arrows
   const spyArrow = marketRegime.spy_trend === 1 ? '↑' : marketRegime.spy_trend === -1 ? '↓' : '—';
   const qqqArrow = marketRegime.qqq_trend === 1 ? '↑' : marketRegime.qqq_trend === -1 ? '↓' : '—';
 
-  // If both trends are null, treat as unknown
-  if (marketRegime.spy_trend === null && marketRegime.qqq_trend === null && marketRegime.market_regime === 'unknown') {
-    return `  ${dim('⚪ Unclear — await confirmation')}  SPY ${spyArrow}  QQQ ${qqqArrow}`;
-  }
-
-  // Unknown regime: show unclear message
   if (marketRegime.market_regime === 'unknown') {
-    return `  ${dim('⚪ Unclear — await confirmation')}  SPY ${spyArrow}  QQQ ${qqqArrow}`;
+    return [`  ${dim('⚪ Unclear — await confirmation')}  SPY ${spyArrow}  QQQ ${qqqArrow}`];
   }
 
   const slotsUsed = openPositions.length;
   const slotsMax = tier.slots[1];
-
-  // Overexposed case
-  if (slotsUsed > slotsMax) {
-    return `  Market: ${bold(tier.label)}  SPY ${spyArrow}  QQQ ${qqqArrow}   Exposure: ${tier.range}  ${red('⚠ Overexposed')} (${slotsUsed}/${slotsMax} slots)`;
-  }
-
   const slotsOpen = Math.max(0, slotsMax - slotsUsed);
-
-  // Progress bar: 10 chars total
   const barWidth = 10;
   const filled = slotsMax > 0 ? Math.round((slotsUsed / slotsMax) * barWidth) : 0;
-  const empty = barWidth - filled;
-  const bar = '█'.repeat(filled) + '░'.repeat(empty);
-
-  // Color based on fill percentage
+  const bar = '█'.repeat(filled) + '░'.repeat(barWidth - filled);
   const fillPct = slotsMax > 0 ? (slotsUsed / slotsMax) * 100 : 0;
-  let coloredBar: string;
-  if (fillPct >= 80) {
-    coloredBar = red(bar);
-  } else if (fillPct >= 40) {
-    coloredBar = cyan(bar);
-  } else {
-    coloredBar = yellow(bar);
+  const coloredBar = fillPct >= 80 ? red(bar) : fillPct >= 40 ? cyan(bar) : yellow(bar);
+
+  // Build exposure line
+  const exposureLine = slotsUsed > slotsMax
+    ? `  Market: ${bold(tier.label)}   Exposure: ${tier.range}  ${red('⚠ Overexposed')} (${slotsUsed}/${slotsMax} slots)`
+    : `  Market: ${bold(tier.label)}   Exposure: ${tier.range}  [ ${coloredBar}  ${slotsUsed}/${slotsMax} slots used · ${slotsOpen} available ]`;
+
+  // Mood line — rendered when mood data is present
+  const mood = marketRegime.market_mood;
+  if (mood && mood !== 'unknown') {
+    const moodEmoji = mood === 'risk-on' ? '🟢' : mood === 'caution' ? '🟡' : '🔴';
+    const moodLabel = mood === 'risk-on' ? 'Risk-On' : mood === 'caution' ? 'Caution' : 'Risk-Off';
+
+    const parts: string[] = [`  Mood: ${moodEmoji} ${bold(moodLabel)}`];
+    if (marketRegime.vix != null) {
+      parts.push(`VIX ${marketRegime.vix.toFixed(1)} (${marketRegime.vix_regime})`);
+    }
+    if (marketRegime.breadth_pct != null) {
+      parts.push(`Breadth ${Math.round(marketRegime.breadth_pct)}% (${marketRegime.breadth_label})`);
+    }
+    parts.push(`SPY ${spyArrow}  QQQ ${qqqArrow}`);
+
+    return [parts.join('    '), exposureLine];
   }
 
-  return `  Market: ${bold(tier.label)}  SPY ${spyArrow}  QQQ ${qqqArrow}   Exposure: ${tier.range}  [ ${coloredBar}  ${slotsUsed}/${slotsMax} slots used · ${slotsOpen} available ]`;
+  // Fallback: no mood data — single line (original format)
+  return [`  Market: ${bold(tier.label)}  SPY ${spyArrow}  QQQ ${qqqArrow}   Exposure: ${tier.range}  [ ${coloredBar}  ${slotsUsed}/${slotsMax} slots used · ${slotsOpen} available ]`];
 }
 
 // ============================================================
@@ -794,12 +793,10 @@ export function formatScanSummary(data: ScanSummaryData): string {
   lines.push('');
   lines.push(bold(`  📊 Daily Scan — ${dateStr}`));
 
-  // Market context line (only when regime data is present)
+  // Market context lines (only when regime data is present)
   const openPositions = data.openPositions ?? [];
-  const marketContextLine = renderMarketContext(data.marketRegime, openPositions);
-  if (marketContextLine) {
-    lines.push(marketContextLine);
-  }
+  const marketContextLines = renderMarketContext(data.marketRegime, openPositions);
+  lines.push(...marketContextLines);
 
   const headerParts = [`${total} tickers scanned`];
   if (openPositions.length > 0) {

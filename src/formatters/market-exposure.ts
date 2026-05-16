@@ -19,6 +19,12 @@ export interface MarketRegimeData {
   spy_trend: 1 | -1 | null;
   qqq_trend: 1 | -1 | null;
   market_regime: string;
+  // Market mood fields (present when regime detector runs with --regime flag)
+  vix?: number | null;
+  vix_regime?: string;
+  breadth_pct?: number | null;
+  breadth_label?: string;
+  market_mood?: string;
 }
 
 // ============================================================

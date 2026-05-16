@@ -18,6 +18,9 @@ export type TickerRegime = 'bullish' | 'bearish' | 'unknown';
 export type MarketRegime = 'bullish' | 'bearish' | 'neutral' | 'unknown';
 export type VolatilityRegime = 'high' | 'low' | 'normal' | 'unknown';
 export type TrendStrength = 'strong' | 'moderate' | 'weak' | 'unknown';
+export type VixRegime = 'low' | 'normal' | 'elevated' | 'high' | 'extreme' | 'unknown';
+export type BreadthLabel = 'broad' | 'mixed' | 'narrow' | 'unknown';
+export type MarketMood = 'risk-on' | 'caution' | 'risk-off' | 'unknown';
 
 export interface RegimeState {
   ticker: string;
@@ -40,6 +43,11 @@ export interface RegimeResult {
     spy_trend: 1 | -1 | null;
     qqq_trend: 1 | -1 | null;
     market_regime: MarketRegime;
+    vix: number | null;
+    vix_regime: VixRegime;
+    breadth_pct: number | null;
+    breadth_label: BreadthLabel;
+    market_mood: MarketMood;
   };
   tickers: RegimeState[];
   cachedAt: string;  // ISO date (YYYY-MM-DD)
@@ -57,6 +65,11 @@ interface RegimeCacheFile {
     spy_trend: 1 | -1 | null;
     qqq_trend: 1 | -1 | null;
     market_regime: MarketRegime;
+    vix: number | null;
+    vix_regime: VixRegime;
+    breadth_pct: number | null;
+    breadth_label: BreadthLabel;
+    market_mood: MarketMood;
   };
   tickers: RegimeState[];
   warnings: string[];
@@ -136,7 +149,7 @@ export class RegimeDetector {
     const warnings: string[] = [];
     const today = todayISO();
 
-    // Compute market regime (SPY/QQQ)
+    // Compute market regime (SPY/QQQ + VIX)
     const marketResult = await this.computeMarketRegime(warnings);
 
     // Compute per-ticker regime states
@@ -148,8 +161,21 @@ export class RegimeDetector {
       }
     }
 
+    // Compute breadth from ticker states
+    const bullishCount = tickerStates.filter(s => s.ticker_regime === 'bullish').length;
+    const breadthPct = tickerStates.length > 0
+      ? Math.round((bullishCount / tickerStates.length) * 100)
+      : null;
+    const breadthLabel = classifyBreadth(breadthPct);
+    const marketMood = classifyMarketMood(marketResult.vix_regime, marketResult.market_regime, breadthLabel);
+
     const result: RegimeResult = {
-      market: marketResult,
+      market: {
+        ...marketResult,
+        breadth_pct: breadthPct,
+        breadth_label: breadthLabel,
+        market_mood: marketMood,
+      },
       tickers: tickerStates,
       cachedAt: today,
       warnings,
@@ -169,9 +195,14 @@ export class RegimeDetector {
     spy_trend: 1 | -1 | null;
     qqq_trend: 1 | -1 | null;
     market_regime: MarketRegime;
+    vix: number | null;
+    vix_regime: VixRegime;
   }> {
-    const spyTrend = await this.fetchIndexTrend('SPY', warnings);
-    const qqqTrend = await this.fetchIndexTrend('QQQ', warnings);
+    const [spyTrend, qqqTrend, vix] = await Promise.all([
+      this.fetchIndexTrend('SPY', warnings),
+      this.fetchIndexTrend('QQQ', warnings),
+      this.fetchVix(warnings),
+    ]);
 
     let marketRegime: MarketRegime;
     if (spyTrend === null || qqqTrend === null) {
@@ -188,7 +219,25 @@ export class RegimeDetector {
       spy_trend: spyTrend,
       qqq_trend: qqqTrend,
       market_regime: marketRegime,
+      vix,
+      vix_regime: classifyVixRegime(vix),
     };
+  }
+
+  private async fetchVix(warnings: string[]): Promise<number | null> {
+    try {
+      const result = await this.cache.getHistoricalData('^VIX', '1mo', '1d');
+      if (!result.success) {
+        warnings.push(`^VIX: Failed to fetch — ${result.error}`);
+        return null;
+      }
+      const data = result.data.dataPoints;
+      if (data.length === 0) return null;
+      return data[data.length - 1].close;
+    } catch (err) {
+      warnings.push(`^VIX: Error — ${String(err)}`);
+      return null;
+    }
   }
 
   private async fetchIndexTrend(ticker: string, warnings: string[]): Promise<1 | -1 | null> {
@@ -426,6 +475,52 @@ export function computeRegimeScore(
 
   const score = (earned / available) * 100;
   return Math.max(0, Math.min(100, score));
+}
+
+// ============================================================
+// Market Mood Helpers
+// ============================================================
+
+function classifyVixRegime(vix: number | null): VixRegime {
+  if (vix === null) return 'unknown';
+  if (vix < 15) return 'low';
+  if (vix < 20) return 'normal';
+  if (vix < 25) return 'elevated';
+  if (vix <= 35) return 'high';
+  return 'extreme';
+}
+
+function classifyBreadth(pct: number | null): BreadthLabel {
+  if (pct === null) return 'unknown';
+  if (pct > 60) return 'broad';
+  if (pct >= 40) return 'mixed';
+  return 'narrow';
+}
+
+function classifyMarketMood(
+  vixRegime: VixRegime,
+  marketRegime: MarketRegime,
+  breadthLabel: BreadthLabel,
+): MarketMood {
+  const vixScore = (vixRegime === 'low' || vixRegime === 'normal') ? 1
+    : vixRegime === 'elevated' ? 0
+    : vixRegime === 'unknown' ? 0
+    : -1; // high or extreme
+
+  const regimeScore = marketRegime === 'bullish' ? 1
+    : marketRegime === 'neutral' ? 0
+    : marketRegime === 'unknown' ? 0
+    : -1; // bearish
+
+  const breadthScore = breadthLabel === 'broad' ? 1
+    : breadthLabel === 'mixed' ? 0
+    : breadthLabel === 'unknown' ? 0
+    : -1; // narrow
+
+  const total = vixScore + regimeScore + breadthScore;
+  if (total >= 2) return 'risk-on';
+  if (total >= 0) return 'caution';
+  return 'risk-off';
 }
 
 // ============================================================
