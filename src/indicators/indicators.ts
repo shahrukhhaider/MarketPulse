@@ -223,12 +223,37 @@ export function sma_slope(prices: number[], period: number): boolean | undefined
 }
 
 /**
- * Internal EMA (Exponential Moving Average) helper.
- * Computes the full EMA series for the given prices and period.
+ * Exponential Moving Average — returns the final EMA value.
+ * Seed: SMA of first `period` prices.
+ * Multiplier: 2 / (period + 1).
+ * Returns undefined if prices.length < period or period < 1.
+ */
+export function ema(prices: number[], period: number): number | undefined {
+  if (period < 1 || prices.length < period) return undefined;
+
+  const multiplier = 2 / (period + 1);
+
+  // Seed with SMA of first `period` values
+  let sum = 0;
+  for (let i = 0; i < period; i++) {
+    sum += prices[i];
+  }
+  let value = sum / period;
+
+  // Iteratively apply EMA formula for remaining values
+  for (let i = period; i < prices.length; i++) {
+    value = (prices[i] - value) * multiplier + value;
+  }
+
+  return value;
+}
+
+/**
+ * Internal EMA helper — computes the full EMA series.
  * Seeded with SMA of the first `period` values.
  * Returns undefined if prices.length < period.
  */
-function ema(prices: number[], period: number): number[] | undefined {
+function emaSeries(prices: number[], period: number): number[] | undefined {
   if (prices.length < period) return undefined;
 
   const multiplier = 2 / (period + 1);
@@ -368,8 +393,8 @@ export function macd(prices: number[]): { macdLine: number; signalLine: number; 
   const signalPeriod = 9;
 
   // Compute fast EMA(12) and slow EMA(26) over all prices
-  const fastEma = ema(prices, fastPeriod);
-  const slowEma = ema(prices, slowPeriod);
+  const fastEma = emaSeries(prices, fastPeriod);
+  const slowEma = emaSeries(prices, slowPeriod);
 
   if (fastEma === undefined || slowEma === undefined) return undefined;
 
@@ -390,7 +415,7 @@ export function macd(prices: number[]): { macdLine: number; signalLine: number; 
   }
 
   // Signal line = EMA(9) of MACD line values
-  const signalEma = ema(macdLine, signalPeriod);
+  const signalEma = emaSeries(macdLine, signalPeriod);
   if (signalEma === undefined) return undefined;
 
   // Return the latest values

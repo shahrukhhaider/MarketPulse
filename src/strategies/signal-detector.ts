@@ -1,16 +1,17 @@
 import type { HistoricalDataPoint } from '../types.js';
 import type { SignalOutput } from './strategy-registry.js';
-import type { ConsolidationBreakoutConfiguration, TrendPullbackConfiguration, BearBreakdownConfiguration, PostEarningsDriftConfiguration } from './strategy-configs.js';
+import type { ConsolidationBreakoutConfiguration, TrendPullbackConfiguration, BearBreakdownConfiguration, PostEarningsDriftConfiguration, KeltnerMeanReversionConfiguration } from './strategy-configs.js';
 import { DEFAULT_PEAD_CONFIG, mergePeadConfig } from './strategy-configs.js';
 import { ConsolidationBreakoutEngine } from './consolidation-breakout-engine.js';
 import { TrendPullbackEngine } from './trend-pullback-engine.js';
 import { BearBreakdownEngine } from './bear-breakdown-engine.js';
 import { PostEarningsDriftEngine } from './post-earnings-drift-engine.js';
+import { KeltnerMeanReversionEngine } from './keltner-mean-reversion-engine.js';
 import type { ConsolidationResult } from './post-earnings-drift-engine.js';
-import { buildConsolidationBreakoutConfig, buildTrendPullbackGridConfig, buildBearBreakdownConfig } from './parameter-grid.js';
+import { buildConsolidationBreakoutConfig, buildTrendPullbackGridConfig, buildBearBreakdownConfig, buildKeltnerMeanReversionConfig } from './parameter-grid.js';
 import { BreakoutContextAnalyzer } from '../indicators/breakout-context.js';
 import type { MarketRegime } from '../indicators/regime-detector.js';
-import { atr as computeAtr } from '../indicators/indicators.js';
+import { atr as computeAtr, sma } from '../indicators/indicators.js';
 import { computePeadConfidenceScore } from '../indicators/confidence-score.js';
 
 // ============================================================
@@ -62,6 +63,10 @@ export function detectSignal(
 
   if (strategy === 'post_earnings_drift') {
     return detectPostEarningsDriftSignal(data, params, options);
+  }
+
+  if (strategy === 'keltner_mean_reversion') {
+    return detectKeltnerMeanReversionSignal(data, params);
   }
 
   // Unknown strategy — return none
@@ -996,4 +1001,157 @@ function applyRegimeFilter(signal: SignalOutput, marketRegime: MarketRegime): Si
   }
 
   return signal;
+}
+
+// ============================================================
+// Keltner Mean Reversion Signal Detection
+// ============================================================
+
+/**
+ * Keltner Mean Reversion signal classification (four-state):
+ *
+ *   active  — dip occurred within reclaim_lookback AND current close > lowerBand (reclaim)
+ *   near    — current close is below the lower Keltner Band (dip in progress)
+ *   forming — price within band_proximity_pct of lower band (no dip yet)
+ *   none    — uptrend filter fails, insufficient data, or too far from band
+ *
+ * Priority order: active > near > forming > none
+ */
+function detectKeltnerMeanReversionSignal(
+  data: HistoricalDataPoint[],
+  params: Record<string, number>
+): SignalOutput {
+  const config: KeltnerMeanReversionConfiguration = buildKeltnerMeanReversionConfig(params);
+  const barIndex = data.length - 1;
+  const date = data.length > 0 ? data[barIndex].date : new Date().toISOString().slice(0, 10);
+
+  const noneOutput: SignalOutput = {
+    ticker: '',
+    strategy: 'keltner_mean_reversion',
+    signal: 'none',
+    date,
+    entry: 0,
+    stop: 0,
+    risk_pct: 0,
+    confidence: 0,
+    reason: [],
+  };
+
+  // Check minimum data requirements
+  const minBars = Math.max(config.ema_period, config.atr_period + 1, config.trend_filter_period);
+  if (data.length < minBars) {
+    noneOutput.reason = ['Insufficient data for signal detection'];
+    return noneOutput;
+  }
+
+  // ---- Step 1: Uptrend filter — close > SMA(trend_filter_period) ----
+  const closes = data.slice(0, barIndex + 1).map(d => d.close);
+  const currentClose = data[barIndex].close;
+  const trendSma = sma(closes, config.trend_filter_period);
+
+  if (trendSma === undefined || currentClose <= trendSma) {
+    noneOutput.reason = [
+      'Uptrend filter failed — price not above SMA(' + config.trend_filter_period + ')',
+      `Price: ${currentClose.toFixed(2)}`,
+      `SMA(${config.trend_filter_period}): ${trendSma?.toFixed(2) ?? 'N/A'}`,
+    ];
+    return noneOutput;
+  }
+
+  // ---- Step 2: Compute bands at current bar ----
+  const bands = KeltnerMeanReversionEngine.computeBands(data, barIndex, config);
+  if (bands === undefined) {
+    noneOutput.reason = ['Unable to compute Keltner Bands — insufficient data'];
+    return noneOutput;
+  }
+
+  // ---- Step 3: Priority classification (active > near > forming > none) ----
+
+  // Check NEAR first (current close below lower band = dip in progress)
+  if (currentClose < bands.lowerBand) {
+    return {
+      ticker: '',
+      strategy: 'keltner_mean_reversion',
+      signal: 'near',
+      date,
+      entry: 0,
+      stop: 0,
+      risk_pct: 0,
+      confidence: 0,
+      reason: ['Price below lower Keltner Band - dip in progress'],
+    };
+  }
+
+  // Check ACTIVE: dip occurred in lookback AND current close > lowerBand (reclaim)
+  const dip = KeltnerMeanReversionEngine.detectDip(data, barIndex, config);
+  if (dip.detected && currentClose > bands.lowerBand) {
+    // Use shouldEnter for entry/stop/risk computation
+    const entryResult = KeltnerMeanReversionEngine.shouldEnter(data, barIndex, config);
+
+    if (entryResult) {
+      const riskPct = (entryResult.entryPrice - entryResult.stopLossPrice) / entryResult.entryPrice * 100;
+      return {
+        ticker: '',
+        strategy: 'keltner_mean_reversion',
+        signal: 'active',
+        date,
+        entry: entryResult.entryPrice,
+        stop: entryResult.stopLossPrice,
+        risk_pct: riskPct,
+        confidence: entryResult.confidenceScore,
+        reason: [
+          'Keltner mean reversion entry — dip reclaimed',
+          `Entry: ${entryResult.entryPrice.toFixed(2)}`,
+          `Stop: ${entryResult.stopLossPrice.toFixed(2)}`,
+          `Target: ${entryResult.profitTargetPrice.toFixed(2)}`,
+          `Risk: ${riskPct.toFixed(2)}%`,
+          `R:R = 1:${config.r_multiple}`,
+        ],
+      };
+    }
+
+    // shouldEnter returned null (e.g., rValue <= 0 or stop computation failed)
+    // but dip + reclaim conditions are met — still report as active with basic info
+    return {
+      ticker: '',
+      strategy: 'keltner_mean_reversion',
+      signal: 'active',
+      date,
+      entry: currentClose,
+      stop: 0,
+      risk_pct: 0,
+      confidence: 0.6,
+      reason: [
+        'Keltner mean reversion entry — dip reclaimed',
+        `Entry: ${currentClose.toFixed(2)}`,
+        'Stop computation unavailable',
+      ],
+    };
+  }
+
+  // Check FORMING: no dip, but price within band_proximity_pct of lower band
+  const distanceToLowerBand = currentClose - bands.lowerBand;
+  const distancePct = (distanceToLowerBand / currentClose) * 100;
+
+  if (distancePct <= config.band_proximity_pct) {
+    return {
+      ticker: '',
+      strategy: 'keltner_mean_reversion',
+      signal: 'forming',
+      date,
+      entry: 0,
+      stop: 0,
+      risk_pct: 0,
+      confidence: 0,
+      reason: [`Price within ${distancePct.toFixed(1)}% of lower band`],
+    };
+  }
+
+  // NONE: uptrend passes but too far from band
+  noneOutput.reason = [
+    'Price too far from lower Keltner Band',
+    `Distance: ${distancePct.toFixed(1)}%`,
+    `Threshold: ${config.band_proximity_pct}%`,
+  ];
+  return noneOutput;
 }

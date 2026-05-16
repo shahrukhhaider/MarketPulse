@@ -1,14 +1,15 @@
 import type { HistoricalDataPoint, BacktestResult, PerformanceSummary, Trade } from '../types.js';
 import type { TuningPerformanceMetrics } from './tuning-engine.js';
-import type { ConsolidationBreakoutGridEntry, TrendPullbackGridEntry, BearBreakdownGridEntry } from '../strategies/parameter-grid.js';
-import { generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig, generateTrendPullbackGrid, buildTrendPullbackGridConfig, generateBearBreakdownGrid, buildBearBreakdownConfig, buildPostEarningsDriftConfig } from '../strategies/parameter-grid.js';
-import { splitData, evaluateV3Configuration, evaluateTrendPullbackConfiguration, evaluateBearBreakdownConfiguration } from './walk-forward-validator.js';
+import type { ConsolidationBreakoutGridEntry, TrendPullbackGridEntry, BearBreakdownGridEntry, KeltnerMeanReversionGridEntry } from '../strategies/parameter-grid.js';
+import { generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig, generateTrendPullbackGrid, buildTrendPullbackGridConfig, generateBearBreakdownGrid, buildBearBreakdownConfig, buildPostEarningsDriftConfig, generateKeltnerMeanReversionGrid, buildKeltnerMeanReversionConfig } from '../strategies/parameter-grid.js';
+import { splitData, evaluateV3Configuration, evaluateTrendPullbackConfiguration, evaluateBearBreakdownConfiguration, evaluateKeltnerMeanReversionConfiguration } from './walk-forward-validator.js';
 import { BacktestEngine } from './backtest-engine.js';
 import { ConsolidationBreakoutEngine } from '../strategies/consolidation-breakout-engine.js';
 import { TrendPullbackEngine } from '../strategies/trend-pullback-engine.js';
 import { BearBreakdownEngine } from '../strategies/bear-breakdown-engine.js';
 import { PostEarningsDriftEngine } from '../strategies/post-earnings-drift-engine.js';
-import type { ConsolidationBreakoutParams, TrendPullbackParams, BearBreakdownParams, PostEarningsDriftParams } from '../strategies/strategy-configs.js';
+import { KeltnerMeanReversionEngine } from '../strategies/keltner-mean-reversion-engine.js';
+import type { ConsolidationBreakoutParams, TrendPullbackParams, BearBreakdownParams, PostEarningsDriftParams, KeltnerMeanReversionParams } from '../strategies/strategy-configs.js';
 import { generateChartHtml, getChartFilePath } from '../formatters/chart-generator.js';
 import { writeFileSync } from 'node:fs';
 import { IndicatorCache, getDefaultCacheConfig } from '../indicators/indicator-cache.js';
@@ -20,7 +21,7 @@ import { EarningsDateProvider } from '../data/earnings-date-provider.js';
 
 export interface TuneResult {
   bestParams: Record<string, number>;
-  bestEntry: ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry;
+  bestEntry: ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry | KeltnerMeanReversionGridEntry;
   isMetrics: TuningPerformanceMetrics;
   oosMetrics: TuningPerformanceMetrics;
   configurationsEvaluated: number;
@@ -35,6 +36,7 @@ export interface V3TuneResult {
   consolidation_breakout: TuneResult | { error: string };
   trend_pullback: TuneResult | { error: string };
   bear_breakdown: TuneResult | { error: string };
+  keltner_mean_reversion: TuneResult | { error: string };
 }
 
 // ============================================================
@@ -51,6 +53,7 @@ export interface CombinedPerformanceMetrics {
   perStrategy: {
     consolidation_breakout: PerformanceSummary;
     trend_pullback: PerformanceSummary;
+    keltner_mean_reversion?: PerformanceSummary;
   };
 }
 
@@ -61,6 +64,7 @@ export interface CombinedPerformanceMetrics {
 export interface V3BacktestResult {
   consolidation_breakout: BacktestResult;
   trend_pullback: BacktestResult;
+  keltner_mean_reversion?: BacktestResult;
   combined: CombinedPerformanceMetrics;
 }
 
@@ -97,22 +101,24 @@ export function tuneParams(
   // Step 2 & 3: Generate grid entries lazily and evaluate each on IS data.
   // Only keep entries that pass the filter to avoid storing millions of results.
   const filtered: Array<{
-    entry: ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry;
+    entry: ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry | KeltnerMeanReversionGridEntry;
     isMetrics: TuningPerformanceMetrics;
   }> = [];
 
   let configurationsEvaluated = 0;
 
-  const grid: Iterable<ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry> =
+  const grid: Iterable<ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry | KeltnerMeanReversionGridEntry> =
     strategy === 'consolidation_breakout'
       ? generateConsolidationBreakoutGrid()
       : strategy === 'trend_pullback'
         ? generateTrendPullbackGrid()
         : strategy === 'bear_breakdown'
           ? generateBearBreakdownGrid()
-          : [];
+          : strategy === 'keltner_mean_reversion'
+            ? generateKeltnerMeanReversionGrid()
+            : [];
 
-  if (strategy !== 'consolidation_breakout' && strategy !== 'trend_pullback' && strategy !== 'bear_breakdown') {
+  if (strategy !== 'consolidation_breakout' && strategy !== 'trend_pullback' && strategy !== 'bear_breakdown' && strategy !== 'keltner_mean_reversion') {
     return { error: `Unsupported strategy for tuneParams: ${strategy}` };
   }
 
@@ -123,8 +129,10 @@ export function tuneParams(
       metrics = evaluateV3Configuration(entry as ConsolidationBreakoutGridEntry, isData, isCache);
     } else if (strategy === 'trend_pullback') {
       metrics = evaluateTrendPullbackConfiguration(entry as TrendPullbackGridEntry, isData, isCache);
-    } else {
+    } else if (strategy === 'bear_breakdown') {
       metrics = evaluateBearBreakdownConfiguration(entry as BearBreakdownGridEntry, isData, isCache);
+    } else {
+      metrics = evaluateKeltnerMeanReversionConfiguration(entry as KeltnerMeanReversionGridEntry, isData, isCache);
     }
 
     // Step 4: Filter inline — only keep entries that pass IS metrics thresholds
@@ -155,8 +163,10 @@ export function tuneParams(
     bestOosMetrics = evaluateV3Configuration(bestEntry as ConsolidationBreakoutGridEntry, oosData, oosCache);
   } else if (strategy === 'trend_pullback') {
     bestOosMetrics = evaluateTrendPullbackConfiguration(bestEntry as TrendPullbackGridEntry, oosData, oosCache);
-  } else {
+  } else if (strategy === 'bear_breakdown') {
     bestOosMetrics = evaluateBearBreakdownConfiguration(bestEntry as BearBreakdownGridEntry, oosData, oosCache);
+  } else {
+    bestOosMetrics = evaluateKeltnerMeanReversionConfiguration(bestEntry as KeltnerMeanReversionGridEntry, oosData, oosCache);
   }
 
   // Step 7: Return TuneResult
@@ -185,11 +195,13 @@ export function tuneV3(data: HistoricalDataPoint[]): V3TuneResult {
   const cbResult = tuneParams(data, 'consolidation_breakout', {});
   const tpResult = tuneParams(data, 'trend_pullback', {});
   const bbResult = tuneParams(data, 'bear_breakdown', {});
+  const kmrResult = tuneParams(data, 'keltner_mean_reversion', {});
 
   return {
     consolidation_breakout: cbResult,
     trend_pullback: tpResult,
     bear_breakdown: bbResult,
+    keltner_mean_reversion: kmrResult,
   };
 }
 
@@ -247,6 +259,15 @@ export function runBacktest(
     return backtestEngine.runV2(data, engine, peadParams);
   }
 
+  if (strategy === 'keltner_mean_reversion') {
+    const config = buildKeltnerMeanReversionConfig(params);
+    const kmrParams: KeltnerMeanReversionParams = { config };
+    const engine = new KeltnerMeanReversionEngine();
+    engine.reset();
+    const backtestEngine = new BacktestEngine();
+    return backtestEngine.runV2(data, engine, kmrParams);
+  }
+
   throw new Error(`Unsupported strategy for runBacktest: ${strategy}`);
 }
 
@@ -292,15 +313,23 @@ export function renderChart(
 export function backtestV3(
   data: HistoricalDataPoint[],
   cbParams: Record<string, number>,
-  tpParams: Record<string, number>
+  tpParams: Record<string, number>,
+  kmrParams?: Record<string, number>
 ): V3BacktestResult {
   const cbResult = runBacktest(data, 'consolidation_breakout', cbParams);
   const tpResult = runBacktest(data, 'trend_pullback', tpParams);
-  const combined = computeCombinedMetrics(cbResult, tpResult, data);
+
+  let kmrResult: BacktestResult | undefined;
+  if (kmrParams && Object.keys(kmrParams).length > 0) {
+    kmrResult = runBacktest(data, 'keltner_mean_reversion', kmrParams);
+  }
+
+  const combined = computeCombinedMetrics(cbResult, tpResult, data, kmrResult);
 
   return {
     consolidation_breakout: cbResult,
     trend_pullback: tpResult,
+    keltner_mean_reversion: kmrResult,
     combined,
   };
 }
@@ -323,11 +352,13 @@ export function backtestV3(
 export function computeCombinedMetrics(
   cbResult: BacktestResult,
   tpResult: BacktestResult,
-  _data: HistoricalDataPoint[]
+  _data: HistoricalDataPoint[],
+  kmrResult?: BacktestResult
 ): CombinedPerformanceMetrics {
   const cbTrades = cbResult.performanceSummary.trades;
   const tpTrades = tpResult.performanceSummary.trades;
-  const allTrades: Trade[] = [...cbTrades, ...tpTrades];
+  const kmrTrades = kmrResult ? kmrResult.performanceSummary.trades : [];
+  const allTrades: Trade[] = [...cbTrades, ...tpTrades, ...kmrTrades];
 
   const numberOfTrades = allTrades.length;
 
@@ -345,8 +376,13 @@ export function computeCombinedMetrics(
   for (const trade of tpTrades) {
     tpCumulative *= 1 + trade.profitLossPercent / 100;
   }
-  // Combined return: average of both streams (equal capital allocation)
-  const totalReturnPercent = ((cbCumulative + tpCumulative) / 2 - 1) * 100;
+  let kmrCumulative = 1;
+  for (const trade of kmrTrades) {
+    kmrCumulative *= 1 + trade.profitLossPercent / 100;
+  }
+  // Combined return: average of all active streams (equal capital allocation)
+  const streamCount = kmrTrades.length > 0 ? 3 : 2;
+  const totalReturnPercent = ((cbCumulative + tpCumulative + (kmrTrades.length > 0 ? kmrCumulative : 0)) / streamCount - 1) * 100;
 
   // Max drawdown: computed from combined equity curve
   // Sort all trades by buy signal timestamp to create a time-ordered combined equity curve
@@ -402,6 +438,7 @@ export function computeCombinedMetrics(
     perStrategy: {
       consolidation_breakout: cbResult.performanceSummary,
       trend_pullback: tpResult.performanceSummary,
+      keltner_mean_reversion: kmrResult?.performanceSummary,
     },
   };
 }

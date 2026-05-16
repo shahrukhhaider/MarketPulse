@@ -284,7 +284,7 @@ async function handleV3Tune(
       dataResult = await cachingProvider.getHistoricalData(ticker, '5y');
 
       if (!dataResult.success) {
-        failed += 3;
+        failed += 4;
         summaries.push({
           ticker,
           strategy: 'consolidation_breakout',
@@ -302,6 +302,13 @@ async function handleV3Tune(
         summaries.push({
           ticker,
           strategy: 'bear_breakdown',
+          status: 'error',
+          profile_saved: false,
+          error_message: dataResult.error,
+        });
+        summaries.push({
+          ticker,
+          strategy: 'keltner_mean_reversion',
           status: 'error',
           profile_saved: false,
           error_message: dataResult.error,
@@ -332,6 +339,12 @@ async function handleV3Tune(
       );
       summaries.push(bbSummary);
 
+      // Process keltner_mean_reversion result
+      const kmrSummary = buildV3StrategySummary(
+        ticker, 'keltner_mean_reversion', v3Result.keltner_mean_reversion, shouldSave, dataDir
+      );
+      summaries.push(kmrSummary);
+
       // Update counters based on individual strategy results
       if (cbSummary.status === 'success') succeeded++;
       else if (cbSummary.status === 'error') failed++;
@@ -345,9 +358,13 @@ async function handleV3Tune(
       else if (bbSummary.status === 'error') failed++;
       else skipped++;
 
+      if (kmrSummary.status === 'success') succeeded++;
+      else if (kmrSummary.status === 'error') failed++;
+      else skipped++;
+
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      failed += 3;
+      failed += 4;
       summaries.push({
         ticker,
         strategy: 'consolidation_breakout',
@@ -369,12 +386,19 @@ async function handleV3Tune(
         profile_saved: false,
         error_message: message,
       });
+      summaries.push({
+        ticker,
+        strategy: 'keltner_mean_reversion',
+        status: 'error',
+        profile_saved: false,
+        error_message: message,
+      });
     }
   }
 
   const batchResult: TuneBatchResult = {
     summaries,
-    total: tickers.length * 3,
+    total: tickers.length * 4,
     succeeded,
     failed,
     skipped,

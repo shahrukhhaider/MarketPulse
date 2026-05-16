@@ -45,6 +45,7 @@ export interface ChartGeneratorInput {
 export interface CombinedChartInput {
   cbResult: BacktestResult;
   tpResult: BacktestResult;
+  kmrResult?: BacktestResult;
   dataPoints: HistoricalDataPoint[];
   combinedMetrics: CombinedPerformanceMetrics;
 }
@@ -146,7 +147,8 @@ export function buildMarkers(
  */
 export function buildCombinedMarkers(
   cbResult: BacktestResult,
-  tpResult: BacktestResult
+  tpResult: BacktestResult,
+  kmrResult?: BacktestResult
 ): Array<{ time: string; position: string; color: string; shape: string; text: string }> {
   const markers: Array<{ time: string; position: string; color: string; shape: string; text: string }> = [];
 
@@ -184,6 +186,26 @@ export function buildCombinedMarkers(
       shape: 'arrowDown',
       text: 'SELL',
     });
+  }
+
+  // Keltner Mean Reversion markers: BUY=#ab47bc (purple), SELL=#ec407a (pink)
+  if (kmrResult) {
+    for (const trade of kmrResult.performanceSummary.trades) {
+      markers.push({
+        time: trade.buySignal.timestamp,
+        position: 'belowBar',
+        color: '#ab47bc',
+        shape: 'arrowUp',
+        text: 'BUY',
+      });
+      markers.push({
+        time: trade.sellSignal.timestamp,
+        position: 'aboveBar',
+        color: '#ec407a',
+        shape: 'arrowDown',
+        text: 'SELL',
+      });
+    }
   }
 
   markers.sort((a, b) => a.time.localeCompare(b.time));
@@ -505,10 +527,10 @@ ${tradeDetailHtml}
  * a legend identifying strategy colors, combined performance metrics, and per-strategy breakdowns.
  */
 export function generateCombinedChartHtml(input: CombinedChartInput): string {
-  const { cbResult, tpResult, dataPoints, combinedMetrics } = input;
+  const { cbResult, tpResult, kmrResult, dataPoints, combinedMetrics } = input;
   const ticker = cbResult.ticker || tpResult.ticker || 'Unknown';
   const period = cbResult.period || tpResult.period || '';
-  const title = `${ticker} Combined V3 Backtest — Consolidation Breakout + Trend Pullback (${period})`;
+  const title = `${ticker} Combined V3 Backtest — CB + TP + KMR (${period})`;
 
   if (dataPoints.length < 2) {
     return renderCombinedInsufficientDataHtml(title, ticker);
@@ -516,7 +538,7 @@ export function generateCombinedChartHtml(input: CombinedChartInput): string {
 
   const candlestickData = buildCandlestickData(dataPoints);
   const volumeData = buildVolumeData(dataPoints);
-  const markers = buildCombinedMarkers(cbResult, tpResult);
+  const markers = buildCombinedMarkers(cbResult, tpResult, kmrResult);
   const combinedMetricsHtml = renderCombinedMetricsSection(combinedMetrics, dataPoints);
   const perStrategyHtml = renderPerStrategyBreakdown(combinedMetrics);
   const legendHtml = renderStrategyLegend();
@@ -572,6 +594,14 @@ function renderStrategyLegend(): string {
       <span class="legend-color" style="background: #ffa726;"></span>
       <span class="legend-label">Trend Pullback — SELL</span>
     </div>
+    <div class="legend-item">
+      <span class="legend-color" style="background: #ab47bc;"></span>
+      <span class="legend-label">Keltner Mean Reversion — BUY</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-color" style="background: #ec407a;"></span>
+      <span class="legend-label">Keltner Mean Reversion — SELL</span>
+    </div>
   </div>
 </section>`;
 }
@@ -608,6 +638,22 @@ function renderCombinedMetricsSection(metrics: CombinedPerformanceMetrics, dataP
 function renderPerStrategyBreakdown(metrics: CombinedPerformanceMetrics): string {
   const cb = metrics.perStrategy.consolidation_breakout;
   const tp = metrics.perStrategy.trend_pullback;
+  const kmr = metrics.perStrategy.keltner_mean_reversion;
+
+  let kmrHtml = '';
+  if (kmr) {
+    kmrHtml = `
+    <div class="strategy-block">
+      <h3>Keltner Mean Reversion</h3>
+      <div class="metrics-grid">
+        <div class="metric"><span class="metric-label">Total Return</span><span class="metric-value">${formatMetric(kmr.totalReturnPercent)}%</span></div>
+        <div class="metric"><span class="metric-label">Trades</span><span class="metric-value">${formatMetric(kmr.numberOfTrades)}</span></div>
+        <div class="metric"><span class="metric-label">Win Rate</span><span class="metric-value">${formatMetric(kmr.winRate)}</span></div>
+        <div class="metric"><span class="metric-label">Max Drawdown</span><span class="metric-value">${formatMetric(kmr.maxDrawdownPercent)}%</span></div>
+        <div class="metric"><span class="metric-label">Sharpe Ratio</span><span class="metric-value">${formatMetric(kmr.sharpeRatio)}</span></div>
+      </div>
+    </div>`;
+  }
 
   return `<section id="per-strategy-section">
   <h2>Per-Strategy Breakdown</h2>
@@ -631,7 +677,7 @@ function renderPerStrategyBreakdown(metrics: CombinedPerformanceMetrics): string
         <div class="metric"><span class="metric-label">Max Drawdown</span><span class="metric-value">${formatMetric(tp.maxDrawdownPercent)}%</span></div>
         <div class="metric"><span class="metric-label">Sharpe Ratio</span><span class="metric-value">${formatMetric(tp.sharpeRatio)}</span></div>
       </div>
-    </div>
+    </div>${kmrHtml}
   </div>
 </section>`;
 }

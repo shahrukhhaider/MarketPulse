@@ -306,7 +306,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
         // Determine which strategies to scan
         const strategiesToScan = strategyName === 'v3'
-          ? ['consolidation_breakout', 'trend_pullback', 'bear_breakdown', 'post_earnings_drift']
+          ? ['consolidation_breakout', 'trend_pullback', 'bear_breakdown', 'post_earnings_drift', 'keltner_mean_reversion']
           : [strategyName];
 
         for (const strat of strategiesToScan) {

@@ -11,7 +11,7 @@ import type {
   PerformanceSummary,
   Trade,
 } from '../types.js';
-import type { PhasedStrategyParams, ConsolidationBreakoutParams, TrendPullbackParams, BearBreakdownParams, PostEarningsDriftParams } from '../strategies/strategy-configs.js';
+import type { PhasedStrategyParams, ConsolidationBreakoutParams, TrendPullbackParams, BearBreakdownParams, PostEarningsDriftParams, KeltnerMeanReversionParams } from '../strategies/strategy-configs.js';
 
 export function convertHistoricalData(
   dataPoints: HistoricalDataPoint[],
@@ -237,7 +237,7 @@ export class BacktestEngine {
   runV2(
     dataPoints: HistoricalDataPoint[],
     engine: V2CompatibleEngine,
-    params: PhasedStrategyParams | ConsolidationBreakoutParams | TrendPullbackParams | BearBreakdownParams | PostEarningsDriftParams,
+    params: PhasedStrategyParams | ConsolidationBreakoutParams | TrendPullbackParams | BearBreakdownParams | PostEarningsDriftParams | KeltnerMeanReversionParams,
     period: string = '1y'
   ): BacktestResult {
     engine.reset();

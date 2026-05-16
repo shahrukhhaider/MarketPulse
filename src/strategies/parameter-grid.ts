@@ -1,4 +1,4 @@
-import type { StrategyConfiguration, PhasedStrategyConfiguration, ConsolidationBreakoutConfiguration, TrendPullbackConfiguration, BearBreakdownConfiguration, PostEarningsDriftConfiguration } from './strategy-configs.js';
+import type { StrategyConfiguration, PhasedStrategyConfiguration, ConsolidationBreakoutConfiguration, TrendPullbackConfiguration, BearBreakdownConfiguration, PostEarningsDriftConfiguration, KeltnerMeanReversionConfiguration } from './strategy-configs.js';
 import { mergePeadConfig, validatePeadConfig } from './strategy-configs.js';
 import type { TimeHorizon, TunableStrategy } from '../pipeline/tuning-engine.js';
 import { resolveWeightPreset } from '../indicators/confidence-score.js';
@@ -35,6 +35,11 @@ export interface BearBreakdownGridEntry {
 export interface PostEarningsDriftGridEntry {
   params: Record<string, number>;
   config: PostEarningsDriftConfiguration;
+}
+
+export interface KeltnerMeanReversionGridEntry {
+  params: Record<string, number>;
+  config: KeltnerMeanReversionConfiguration;
 }
 
 /**
@@ -807,6 +812,65 @@ export function* generatePostEarningsDriftGrid(): Generator<PostEarningsDriftGri
     });
 
     const config = buildPostEarningsDriftConfig(params);
+    yield { params, config };
+  }
+}
+
+/**
+ * Return the keltner-mean-reversion parameter space with 9 tunable parameters.
+ * Total combinations: 4 × 4 × 4 × 3 × 3 × 4 × 4 × 3 × 4 = 110,592
+ */
+export function getKeltnerMeanReversionParameterSpace(): ParameterSpace {
+  return {
+    ema_period: [10, 20, 30, 50],
+    atr_period: [5, 10, 14, 20],
+    band_multiplier: [1.5, 2.0, 2.5, 3.0],
+    trend_filter_period: [20, 50, 100],
+    reclaim_lookback: [2, 5, 10],
+    stop_atr_multiple: [1.0, 1.5, 2.0, 3.0],
+    r_multiple: [1.5, 2.0, 2.5, 3.0],
+    max_risk_pct: [3, 5, 8],
+    band_proximity_pct: [2, 3, 5, 8],
+  };
+}
+
+/**
+ * Map a flat parameter combination to a KeltnerMeanReversionConfiguration.
+ * All fields map directly from the flat params record (no nesting).
+ */
+export function buildKeltnerMeanReversionConfig(
+  params: Record<string, number>
+): KeltnerMeanReversionConfiguration {
+  return {
+    ema_period: params.ema_period,
+    atr_period: params.atr_period,
+    band_multiplier: params.band_multiplier,
+    trend_filter_period: params.trend_filter_period,
+    reclaim_lookback: params.reclaim_lookback,
+    stop_atr_multiple: params.stop_atr_multiple,
+    r_multiple: params.r_multiple,
+    max_risk_pct: params.max_risk_pct,
+    band_proximity_pct: params.band_proximity_pct,
+  };
+}
+
+/**
+ * Generate the full keltner-mean-reversion parameter grid using Cartesian product.
+ *
+ * Returns a generator to avoid materializing all entries in memory at once.
+ */
+export function* generateKeltnerMeanReversionGrid(): Generator<KeltnerMeanReversionGridEntry> {
+  const space = getKeltnerMeanReversionParameterSpace();
+  const paramNames = Object.keys(space);
+  const paramArrays = paramNames.map(name => space[name]);
+
+  for (const values of cartesianProductGen(paramArrays)) {
+    const params: Record<string, number> = {};
+    paramNames.forEach((name, i) => {
+      params[name] = values[i];
+    });
+
+    const config = buildKeltnerMeanReversionConfig(params);
     yield { params, config };
   }
 }

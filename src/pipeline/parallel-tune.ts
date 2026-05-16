@@ -142,7 +142,7 @@ function processTickerResult(
   let failed = 0;
   let skipped = 0;
 
-  // Build summaries for both strategies
+  // Build summaries for all strategies
   const cbSummary = buildStrategySummary(
     ticker, 'consolidation_breakout', v3Result.consolidation_breakout, options.shouldSave, options.dataDir,
   );
@@ -158,6 +158,11 @@ function processTickerResult(
   );
   summaries.push(bbSummary);
 
+  const kmrSummary = buildStrategySummary(
+    ticker, 'keltner_mean_reversion', v3Result.keltner_mean_reversion, options.shouldSave, options.dataDir,
+  );
+  summaries.push(kmrSummary);
+
   // Update counters
   if (cbSummary.status === 'success') succeeded++;
   else if (cbSummary.status === 'error') failed++;
@@ -171,21 +176,28 @@ function processTickerResult(
   else if (bbSummary.status === 'error') failed++;
   else skipped++;
 
+  if (kmrSummary.status === 'success') succeeded++;
+  else if (kmrSummary.status === 'error') failed++;
+  else skipped++;
+
   // Run backtest + chart on main thread if enabled and at least one strategy succeeded
   if (options.runBacktest) {
     const cbResult = v3Result.consolidation_breakout;
     const tpResult = v3Result.trend_pullback;
+    const kmrResult = v3Result.keltner_mean_reversion;
 
     const hasCbParams = !('error' in cbResult);
     const hasTpParams = !('error' in tpResult);
+    const hasKmrParams = !('error' in kmrResult);
 
     if (hasCbParams || hasTpParams) {
       try {
         const cbParams = hasCbParams ? cbResult.bestParams : {};
         const tpParams = hasTpParams ? tpResult.bestParams : {};
+        const kmrParams = hasKmrParams ? kmrResult.bestParams : {};
 
         if (hasCbParams && hasTpParams) {
-          const btResult = backtestV3(data, cbParams, tpParams);
+          const btResult = backtestV3(data, cbParams, tpParams, kmrParams);
           // Render chart for the combined backtest (use consolidation_breakout result for chart)
           renderChart(btResult.consolidation_breakout, data, options.dataDir, ticker);
         }

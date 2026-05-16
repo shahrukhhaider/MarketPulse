@@ -17,7 +17,7 @@ import { MovingAverageCrossoverStrategy } from './strategies/moving-average.js';
 import { RSIThresholdStrategy } from './strategies/rsi-threshold.js';
 import { PriceBreakoutStrategy } from './strategies/price-breakout.js';
 import { CompositeStrategyEngine } from './strategies/composite-engine.js';
-import { getDefaultCompositeConfig, isV2Config, isConsolidationBreakoutConfig, isTrendPullbackConfig, type CompositeStrategyParams, type PhasedStrategyParams, type ConsolidationBreakoutParams, type TrendPullbackParams, DEFAULT_PEAD_CONFIG } from './strategies/strategy-configs.js';
+import { getDefaultCompositeConfig, isV2Config, isConsolidationBreakoutConfig, isTrendPullbackConfig, type CompositeStrategyParams, type PhasedStrategyParams, type ConsolidationBreakoutParams, type TrendPullbackParams, DEFAULT_PEAD_CONFIG, DEFAULT_KMR_CONFIG } from './strategies/strategy-configs.js';
 import { PhasedStrategyEngine } from './strategies/phased-engine.js';
 import { ConsolidationBreakoutEngine } from './strategies/consolidation-breakout-engine.js';
 import { TrendPullbackEngine } from './strategies/trend-pullback-engine.js';
@@ -39,6 +39,7 @@ import { StrategyRegistry } from './strategies/strategy-registry.js';
 import { ConsolidationBreakoutStrategy } from './strategies/consolidation-breakout-strategy.js';
 import { BearBreakdownStrategy } from './strategies/bear-breakdown-strategy.js';
 import { PostEarningsDriftStrategy } from './strategies/post-earnings-drift-strategy.js';
+import { KeltnerMeanReversionStrategy } from './strategies/keltner-mean-reversion-strategy.js';
 import { createTuneHandler } from './commands/tune-command.js';
 import { createScanHandler } from './commands/scan-command.js';
 import { createChartHandler } from './commands/chart-command.js';
@@ -396,6 +397,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     'breakout_volume',
     'consolidation_breakout',
     'post_earnings_drift',
+    'keltner_mean_reversion',
   ];
 
   router.register('backtest', ['ticker', 'strategy'], async (opts) => {
@@ -430,20 +432,26 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         // Load profiles for both strategies to get params
         const cbProfile = loadStrategyProfile(ticker, 'consolidation_breakout', { allowStale: true, baseDir: dataDir });
         const tpProfile = loadStrategyProfile(ticker, 'trend_pullback', { allowStale: true, baseDir: dataDir });
+        const kmrProfile = loadStrategyProfile(ticker, 'keltner_mean_reversion', { allowStale: true, baseDir: dataDir });
 
         // Use profile params if available, otherwise use empty params (will use defaults from grid)
         const cbParams: Record<string, number> = cbProfile.success ? cbProfile.data.params : {};
         const tpParams: Record<string, number> = tpProfile.success ? tpProfile.data.params : {};
+        const kmrParams: Record<string, number> = kmrProfile.success ? kmrProfile.data.params : {};
 
-        const v3Result: V3BacktestResult = backtestV3(dataPoints, cbParams, tpParams);
+        const v3Result: V3BacktestResult = backtestV3(dataPoints, cbParams, tpParams, kmrParams);
         v3Result.consolidation_breakout.ticker = ticker;
         v3Result.trend_pullback.ticker = ticker;
+        if (v3Result.keltner_mean_reversion) {
+          v3Result.keltner_mean_reversion.ticker = ticker;
+        }
 
         if (opts['chart'] !== undefined) {
           const chartFilePath = getChartFilePath(dataDir, ticker);
           const html = generateCombinedChartHtml({
             cbResult: v3Result.consolidation_breakout,
             tpResult: v3Result.trend_pullback,
+            kmrResult: v3Result.keltner_mean_reversion,
             dataPoints,
             combinedMetrics: v3Result.combined,
           });
@@ -1007,15 +1015,18 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         let cbBestParams: Record<string, number> = {};
         let tpBestParams: Record<string, number> = {};
         let bbBestParams: Record<string, number> = {};
+        let kmrBestParams: Record<string, number> = {};
         let cbTuneResult: V3TuneResult['consolidation_breakout'] = { error: 'skipped' };
         let tpTuneResult: V3TuneResult['trend_pullback'] = { error: 'skipped' };
         let bbTuneResult: V3TuneResult['bear_breakdown'] = { error: 'skipped' };
+        let kmrTuneResult: V3TuneResult['keltner_mean_reversion'] = { error: 'skipped' };
         let tuningSkipped = false;
 
         if (!forceTune) {
           const cbProfile = loadStrategyProfile(ticker, 'consolidation_breakout', { baseDir: dataDir });
           const tpProfile = loadStrategyProfile(ticker, 'trend_pullback', { baseDir: dataDir });
           const bbProfile = loadStrategyProfile(ticker, 'bear_breakdown', { baseDir: dataDir });
+          const kmrProfile = loadStrategyProfile(ticker, 'keltner_mean_reversion', { baseDir: dataDir });
 
           if (cbProfile.success && tpProfile.success) {
             // Both core profiles are fresh — skip tuning
@@ -1023,6 +1034,9 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
             tpBestParams = tpProfile.data.params;
             if (bbProfile.success) {
               bbBestParams = bbProfile.data.params;
+            }
+            if (kmrProfile.success) {
+              kmrBestParams = kmrProfile.data.params;
             }
             tuningSkipped = true;
           }
@@ -1035,16 +1049,21 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           cbTuneResult = v3TuneResult.consolidation_breakout;
           tpTuneResult = v3TuneResult.trend_pullback;
           bbTuneResult = v3TuneResult.bear_breakdown;
+          kmrTuneResult = v3TuneResult.keltner_mean_reversion;
 
           cbBestParams = !('error' in cbTuneResult) ? cbTuneResult.bestParams : {};
           tpBestParams = !('error' in tpTuneResult) ? tpTuneResult.bestParams : {};
           bbBestParams = !('error' in bbTuneResult) ? bbTuneResult.bestParams : {};
+          kmrBestParams = !('error' in kmrTuneResult) ? kmrTuneResult.bestParams : {};
         }
 
         // Step 3: Backtest both strategies with their best params
-        const v3BacktestResult: V3BacktestResult = backtestV3(dataPoints, cbBestParams, tpBestParams);
+        const v3BacktestResult: V3BacktestResult = backtestV3(dataPoints, cbBestParams, tpBestParams, kmrBestParams);
         v3BacktestResult.consolidation_breakout.ticker = ticker;
         v3BacktestResult.trend_pullback.ticker = ticker;
+        if (v3BacktestResult.keltner_mean_reversion) {
+          v3BacktestResult.keltner_mean_reversion.ticker = ticker;
+        }
 
         // Step 4: Build tuning summary data
         const riskProfile = (opts['risk'] as RiskProfile) ?? 'low';
@@ -1058,6 +1077,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           consolidation_breakout: tuningSkipped ? 'used_cached_profile' : cbTuneResult,
           trend_pullback: tuningSkipped ? 'used_cached_profile' : tpTuneResult,
           bear_breakdown: tuningSkipped ? 'used_cached_profile' : bbTuneResult,
+          keltner_mean_reversion: tuningSkipped ? 'used_cached_profile' : kmrTuneResult,
           computed_at: new Date().toISOString(),
           v3: true,
         };
@@ -1067,6 +1087,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         const html = generateCombinedChartHtml({
           cbResult: v3BacktestResult.consolidation_breakout,
           tpResult: v3BacktestResult.trend_pullback,
+          kmrResult: v3BacktestResult.keltner_mean_reversion,
           dataPoints,
           combinedMetrics: v3BacktestResult.combined,
         });
@@ -1138,6 +1159,26 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
             saveStrategyProfile(bbProfile, dataDir);
           }
 
+          if (Object.keys(kmrBestParams).length > 0) {
+            const kmrOos = !('error' in kmrTuneResult) ? kmrTuneResult.oosMetrics : null;
+            const kmrProfile: StrategyProfile = {
+              ticker,
+              strategy: 'keltner_mean_reversion',
+              params: kmrBestParams,
+              walk_forward_metrics: {
+                return: kmrOos ? kmrOos.totalReturnPercent : 0,
+                benchmark: 0,
+                win_rate: kmrOos ? kmrOos.winRate : 0,
+                trades: kmrOos ? kmrOos.tradeCount : 0,
+                max_drawdown: kmrOos ? kmrOos.maxDrawdownPercent : 0,
+                sharpe: kmrOos ? kmrOos.sharpeRatio : 0,
+              },
+              last_tuned_at: lastTunedAt,
+              valid_until: validUntil,
+            };
+            saveStrategyProfile(kmrProfile, dataDir);
+          }
+
           profileSaved = true;
         }
 
@@ -1147,6 +1188,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
             consolidation_breakout: cbBestParams,
             trend_pullback: tpBestParams,
             bear_breakdown: bbBestParams,
+            keltner_mean_reversion: kmrBestParams,
           },
           profile_saved: profileSaved,
           backtest: {
@@ -1389,6 +1431,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   strategyRegistry.register(new ConsolidationBreakoutStrategy());
   strategyRegistry.register(new BearBreakdownStrategy());
   strategyRegistry.register(new PostEarningsDriftStrategy(dataDir));
+  strategyRegistry.register(new KeltnerMeanReversionStrategy());
 
   // --- New pipeline commands: tune, scan, chart ---
   const tuneHandler = createTuneHandler({ cachingProvider, registry: strategyRegistry, dataDir });
@@ -1597,5 +1640,7 @@ function getDefaultParams(strategyType: StrategyType): StrategyParams {
       return { config: {} } as StrategyParams;
     case 'post_earnings_drift':
       return { config: DEFAULT_PEAD_CONFIG, earningsDates: [] } as StrategyParams;
+    case 'keltner_mean_reversion':
+      return { config: DEFAULT_KMR_CONFIG } as StrategyParams;
   }
 }

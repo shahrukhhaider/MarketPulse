@@ -384,6 +384,40 @@ export function mergePeadConfig(partial?: Partial<PostEarningsDriftConfiguration
 }
 
 // ============================================================
+// V3 Keltner Mean Reversion Strategy Types
+// ============================================================
+
+export interface KeltnerMeanReversionConfiguration {
+  ema_period: number;           // EMA period for midline (default: 20)
+  atr_period: number;           // ATR period for band width (default: 14)
+  band_multiplier: number;      // Band width multiplier (default: 2.0)
+  trend_filter_period: number;  // SMA period for uptrend filter (default: 50)
+  reclaim_lookback: number;     // Bars to look back for dip detection (default: 5)
+  stop_atr_multiple: number;    // ATR multiple for stop-loss (default: 1.5)
+  r_multiple: number;           // Risk-reward multiple for profit target (default: 2.0)
+  max_risk_pct: number;         // Maximum acceptable risk percentage (default: 5.0)
+  band_proximity_pct: number;   // Distance threshold for "forming" state (default: 3.0)
+}
+
+export interface KeltnerMeanReversionParams {
+  config: KeltnerMeanReversionConfiguration;
+  primaryDataPoints?: HistoricalDataPoint[];
+  cache?: IndicatorCache;
+}
+
+export const DEFAULT_KMR_CONFIG: KeltnerMeanReversionConfiguration = {
+  ema_period: 20,
+  atr_period: 14,
+  band_multiplier: 2.0,
+  trend_filter_period: 50,
+  reclaim_lookback: 5,
+  stop_atr_multiple: 1.5,
+  r_multiple: 2.0,
+  max_risk_pct: 5.0,
+  band_proximity_pct: 3.0,
+};
+
+// ============================================================
 // Configuration Detection Helpers
 // ============================================================
 

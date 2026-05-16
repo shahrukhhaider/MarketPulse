@@ -1,12 +1,13 @@
 import type { HistoricalDataPoint } from '../types.js';
-import type { GridEntry, ConsolidationBreakoutGridEntry, TrendPullbackGridEntry, BearBreakdownGridEntry } from '../strategies/parameter-grid.js';
+import type { GridEntry, ConsolidationBreakoutGridEntry, TrendPullbackGridEntry, BearBreakdownGridEntry, KeltnerMeanReversionGridEntry } from '../strategies/parameter-grid.js';
 import type { TunableStrategy, TuningPerformanceMetrics } from './tuning-engine.js';
 import { BacktestEngine, convertHistoricalData } from './backtest-engine.js';
 import { CompositeStrategyEngine } from '../strategies/composite-engine.js';
 import { ConsolidationBreakoutEngine } from '../strategies/consolidation-breakout-engine.js';
 import { TrendPullbackEngine } from '../strategies/trend-pullback-engine.js';
 import { BearBreakdownEngine } from '../strategies/bear-breakdown-engine.js';
-import type { CompositeStrategyParams, ConsolidationBreakoutParams, TrendPullbackParams, BearBreakdownParams } from '../strategies/strategy-configs.js';
+import { KeltnerMeanReversionEngine } from '../strategies/keltner-mean-reversion-engine.js';
+import type { CompositeStrategyParams, ConsolidationBreakoutParams, TrendPullbackParams, BearBreakdownParams, KeltnerMeanReversionParams } from '../strategies/strategy-configs.js';
 import type { IndicatorCache } from '../indicators/indicator-cache.js';
 
 export type { TuningPerformanceMetrics } from './tuning-engine.js';
@@ -212,6 +213,53 @@ export function evaluateBearBreakdownConfiguration(
   engine.reset();
 
   const params: BearBreakdownParams = { config: entry.config, cache };
+
+  const backtestEngine = new BacktestEngine();
+  const result = backtestEngine.runV2(dataPoints, engine, params);
+
+  const { performanceSummary } = result;
+  const trades = performanceSummary.trades;
+
+  // Compute profit factor from the trade list
+  let profitFactor: number;
+  if (trades.length === 0) {
+    profitFactor = 0;
+  } else {
+    let grossProfits = 0;
+    let grossLosses = 0;
+    for (const trade of trades) {
+      if (trade.profitLossPercent > 0) {
+        grossProfits += trade.profitLossPercent;
+      } else if (trade.profitLossPercent < 0) {
+        grossLosses += Math.abs(trade.profitLossPercent);
+      }
+    }
+    profitFactor = grossLosses === 0 ? Infinity : grossProfits / grossLosses;
+  }
+
+  return {
+    totalReturnPercent: performanceSummary.totalReturnPercent,
+    sharpeRatio: performanceSummary.sharpeRatio,
+    maxDrawdownPercent: performanceSummary.maxDrawdownPercent,
+    winRate: performanceSummary.winRate,
+    tradeCount: performanceSummary.numberOfTrades,
+    profitFactor,
+  };
+}
+
+/**
+ * Evaluate a single KeltnerMeanReversionGridEntry on the given data
+ * and compute TuningPerformanceMetrics including profit factor.
+ */
+export function evaluateKeltnerMeanReversionConfiguration(
+  entry: KeltnerMeanReversionGridEntry,
+  dataPoints: HistoricalDataPoint[],
+  cache?: IndicatorCache
+): TuningPerformanceMetrics {
+  const engine = new KeltnerMeanReversionEngine();
+  engine.reset();
+
+  const params: KeltnerMeanReversionParams = { config: entry.config, cache };
 
   const backtestEngine = new BacktestEngine();
   const result = backtestEngine.runV2(dataPoints, engine, params);

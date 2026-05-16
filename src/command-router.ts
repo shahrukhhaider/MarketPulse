@@ -40,6 +40,7 @@ const VALID_STRATEGY_TYPES: StrategyType[] = [
   'moving_average_crossover',
   'rsi_threshold',
   'price_breakout',
+  'keltner_mean_reversion',
 ];
 
 // ============================================================

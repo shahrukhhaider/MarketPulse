@@ -1,4 +1,4 @@
-import type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams, TrendPullbackParams, BearBreakdownParams, PostEarningsDriftParams } from './strategies/strategy-configs.js';
+import type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams, TrendPullbackParams, BearBreakdownParams, PostEarningsDriftParams, KeltnerMeanReversionParams } from './strategies/strategy-configs.js';
 
 // ============================================================
 // Strategy Parameter Interfaces
@@ -29,7 +29,8 @@ export type StrategyParams =
   | ConsolidationBreakoutParams
   | TrendPullbackParams
   | BearBreakdownParams
-  | PostEarningsDriftParams;
+  | PostEarningsDriftParams
+  | KeltnerMeanReversionParams;
 
 // ============================================================
 // Strategy Types and Configuration
@@ -44,9 +45,10 @@ export type StrategyType =
   | 'breakout_volume'
   | 'consolidation_breakout'
   | 'bear_breakdown'
-  | 'post_earnings_drift';
+  | 'post_earnings_drift'
+  | 'keltner_mean_reversion';
 
-export type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams, TrendPullbackParams, BearBreakdownParams, PostEarningsDriftParams } from './strategies/strategy-configs.js';
+export type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams, TrendPullbackParams, BearBreakdownParams, PostEarningsDriftParams, KeltnerMeanReversionParams } from './strategies/strategy-configs.js';
 
 export interface StrategyConfig {
   type: StrategyType;
