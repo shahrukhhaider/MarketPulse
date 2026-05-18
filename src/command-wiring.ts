@@ -433,17 +433,22 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         const cbProfile = loadStrategyProfile(ticker, 'consolidation_breakout', { allowStale: true, baseDir: dataDir });
         const tpProfile = loadStrategyProfile(ticker, 'trend_pullback', { allowStale: true, baseDir: dataDir });
         const kmrProfile = loadStrategyProfile(ticker, 'keltner_mean_reversion', { allowStale: true, baseDir: dataDir });
+        const bbProfile = loadStrategyProfile(ticker, 'bear_breakdown', { allowStale: true, baseDir: dataDir });
 
         // Use profile params if available, otherwise use empty params (will use defaults from grid)
         const cbParams: Record<string, number> = cbProfile.success ? cbProfile.data.params : {};
         const tpParams: Record<string, number> = tpProfile.success ? tpProfile.data.params : {};
         const kmrParams: Record<string, number> = kmrProfile.success ? kmrProfile.data.params : {};
+        const bbParams: Record<string, number> = bbProfile.success ? bbProfile.data.params : {};
 
-        const v3Result: V3BacktestResult = backtestV3(dataPoints, cbParams, tpParams, kmrParams);
+        const v3Result: V3BacktestResult = backtestV3(dataPoints, cbParams, tpParams, kmrParams, bbParams);
         v3Result.consolidation_breakout.ticker = ticker;
         v3Result.trend_pullback.ticker = ticker;
         if (v3Result.keltner_mean_reversion) {
           v3Result.keltner_mean_reversion.ticker = ticker;
+        }
+        if (v3Result.bear_breakdown) {
+          v3Result.bear_breakdown.ticker = ticker;
         }
 
         if (opts['chart'] !== undefined) {
@@ -452,6 +457,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
             cbResult: v3Result.consolidation_breakout,
             tpResult: v3Result.trend_pullback,
             kmrResult: v3Result.keltner_mean_reversion,
+            bbResult: v3Result.bear_breakdown,
             dataPoints,
             combinedMetrics: v3Result.combined,
           });
@@ -1058,11 +1064,14 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         }
 
         // Step 3: Backtest both strategies with their best params
-        const v3BacktestResult: V3BacktestResult = backtestV3(dataPoints, cbBestParams, tpBestParams, kmrBestParams);
+        const v3BacktestResult: V3BacktestResult = backtestV3(dataPoints, cbBestParams, tpBestParams, kmrBestParams, bbBestParams);
         v3BacktestResult.consolidation_breakout.ticker = ticker;
         v3BacktestResult.trend_pullback.ticker = ticker;
         if (v3BacktestResult.keltner_mean_reversion) {
           v3BacktestResult.keltner_mean_reversion.ticker = ticker;
+        }
+        if (v3BacktestResult.bear_breakdown) {
+          v3BacktestResult.bear_breakdown.ticker = ticker;
         }
 
         // Step 4: Build tuning summary data
@@ -1088,6 +1097,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           cbResult: v3BacktestResult.consolidation_breakout,
           tpResult: v3BacktestResult.trend_pullback,
           kmrResult: v3BacktestResult.keltner_mean_reversion,
+          bbResult: v3BacktestResult.bear_breakdown,
           dataPoints,
           combinedMetrics: v3BacktestResult.combined,
         });

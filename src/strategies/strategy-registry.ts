@@ -11,6 +11,7 @@ export interface SignalOutput {
   risk_pct: number;
   confidence: number;
   reason: string[];
+  confluence?: number;  // [0.0, 1.0] — cross-strategy directional agreement score
   contextMetrics?: {
     near_count_5d: number;
     near_count_10d: number;

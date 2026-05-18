@@ -84,6 +84,19 @@ function rsLabel(regimeState: RegimeState | undefined): string {
 }
 
 /**
+ * Format confluence score as a color-coded label.
+ * Green for ≥0.7 (high agreement), yellow for (0.3, 0.7) (neutral), red for ≤0.3 (conflict).
+ * Returns empty string when confluence is undefined (backward compatibility).
+ */
+export function confluenceLabel(confluence: number | undefined): string {
+  if (confluence === undefined) return '';
+  const label = `C:${confluence.toFixed(1)}`;
+  if (confluence >= 0.7) return green(label);
+  if (confluence > 0.3) return yellow(label);
+  return red(label);
+}
+
+/**
  * Returns a regime badge string for display next to a ticker.
  * Returns empty string when no regime data is present (preserves existing layout).
  */
@@ -390,7 +403,7 @@ function renderActive(signals: AnnotatedSignal[]): string {
 
     const badgeStr = regimeBadge(sig.regimeState);
     const rs = rsLabel(sig.regimeState);
-    lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}  ${rs}`);
+    lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}  ${rs}${confluenceLabel(sig.confluence) ? '  ' + confluenceLabel(sig.confluence) : ''}`);
 
     // Rationale + exit plan — DIM, indented, wrapped at 72 chars
     const rationaleLines = generateRationale(sig);
@@ -431,7 +444,7 @@ function renderNear(signals: AnnotatedSignal[]): string {
 
     const badgeStr = regimeBadge(sig.regimeState);
     const rs = rsLabel(sig.regimeState);
-    lines.push(`  ${yellow(padRight(sig.ticker, 8))}${badgeStr} ${dim(strat)}`);
+    lines.push(`  ${yellow(padRight(sig.ticker, 8))}${badgeStr} ${dim(strat)}${confluenceLabel(sig.confluence) ? '  ' + confluenceLabel(sig.confluence) : ''}`);
     lines.push(`           Entry: ${formatPrice(sig.entry)}  Stop: ${red(formatPrice(sig.stop))}  Risk: ${formatPct(sig.risk_pct)}  ${rs}`);
     lines.push(`           ${dim('→ ' + need)}`);
   }

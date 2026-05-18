@@ -185,19 +185,22 @@ function processTickerResult(
     const cbResult = v3Result.consolidation_breakout;
     const tpResult = v3Result.trend_pullback;
     const kmrResult = v3Result.keltner_mean_reversion;
+    const bbResult = v3Result.bear_breakdown;
 
     const hasCbParams = !('error' in cbResult);
     const hasTpParams = !('error' in tpResult);
     const hasKmrParams = !('error' in kmrResult);
+    const hasBbParams = !('error' in bbResult);
 
     if (hasCbParams || hasTpParams) {
       try {
         const cbParams = hasCbParams ? cbResult.bestParams : {};
         const tpParams = hasTpParams ? tpResult.bestParams : {};
         const kmrParams = hasKmrParams ? kmrResult.bestParams : {};
+        const bbParams = hasBbParams ? bbResult.bestParams : {};
 
         if (hasCbParams && hasTpParams) {
-          const btResult = backtestV3(data, cbParams, tpParams, kmrParams);
+          const btResult = backtestV3(data, cbParams, tpParams, kmrParams, bbParams);
           // Render chart for the combined backtest (use consolidation_breakout result for chart)
           renderChart(btResult.consolidation_breakout, data, options.dataDir, ticker);
         }

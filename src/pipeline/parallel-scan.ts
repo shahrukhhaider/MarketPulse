@@ -23,6 +23,7 @@ import { EarningsDateProvider } from '../data/earnings-date-provider.js';
 import { DEFAULT_PEAD_CONFIG } from '../strategies/strategy-configs.js';
 import { createProgressReporter } from '../formatters/progress-reporter.js';
 import type { HistoricalDataPoint } from '../types.js';
+import { computeConfluence } from '../indicators/confluence-calculator.js';
 
 // ============================================================
 // Options and Result Interfaces
@@ -136,6 +137,14 @@ async function scanSingleTicker(options: ParallelScanOptions): Promise<ParallelS
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     warnings.push(`[${ticker}] Error: ${message}`);
+  }
+
+  // Compute and attach confluence for v3 scans
+  if (options.strategyName === 'v3' && signals.length > 0) {
+    const result = computeConfluence(signals);
+    for (const sig of signals) {
+      sig.confluence = result.score;
+    }
   }
 
   // Sort by signal priority
@@ -336,6 +345,23 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
 
   // Print final summary
   progress.printSummary();
+
+  // Compute and attach confluence for v3 scans
+  if (strategyName === 'v3' && signals.length > 0) {
+    const byTicker = new Map<string, SignalOutput[]>();
+    for (const sig of signals) {
+      const group = byTicker.get(sig.ticker) ?? [];
+      group.push(sig);
+      byTicker.set(sig.ticker, group);
+    }
+
+    for (const [, tickerSignals] of byTicker) {
+      const result = computeConfluence(tickerSignals);
+      for (const sig of tickerSignals) {
+        sig.confluence = result.score;
+      }
+    }
+  }
 
   // Sort results by signal priority before returning (same ordering as sequential)
   const sorted = sortBySignalPriority(signals);

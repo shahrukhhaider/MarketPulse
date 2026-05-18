@@ -54,6 +54,7 @@ export interface CombinedPerformanceMetrics {
     consolidation_breakout: PerformanceSummary;
     trend_pullback: PerformanceSummary;
     keltner_mean_reversion?: PerformanceSummary;
+    bear_breakdown?: PerformanceSummary;
   };
 }
 
@@ -65,6 +66,7 @@ export interface V3BacktestResult {
   consolidation_breakout: BacktestResult;
   trend_pullback: BacktestResult;
   keltner_mean_reversion?: BacktestResult;
+  bear_breakdown: BacktestResult;
   combined: CombinedPerformanceMetrics;
 }
 
@@ -314,7 +316,8 @@ export function backtestV3(
   data: HistoricalDataPoint[],
   cbParams: Record<string, number>,
   tpParams: Record<string, number>,
-  kmrParams?: Record<string, number>
+  kmrParams?: Record<string, number>,
+  bbParams?: Record<string, number>
 ): V3BacktestResult {
   const cbResult = runBacktest(data, 'consolidation_breakout', cbParams);
   const tpResult = runBacktest(data, 'trend_pullback', tpParams);
@@ -324,12 +327,15 @@ export function backtestV3(
     kmrResult = runBacktest(data, 'keltner_mean_reversion', kmrParams);
   }
 
-  const combined = computeCombinedMetrics(cbResult, tpResult, data, kmrResult);
+  const bbResult = runBacktest(data, 'bear_breakdown', bbParams ?? {});
+
+  const combined = computeCombinedMetrics(cbResult, tpResult, data, kmrResult, bbResult);
 
   return {
     consolidation_breakout: cbResult,
     trend_pullback: tpResult,
     keltner_mean_reversion: kmrResult,
+    bear_breakdown: bbResult,
     combined,
   };
 }
@@ -353,12 +359,14 @@ export function computeCombinedMetrics(
   cbResult: BacktestResult,
   tpResult: BacktestResult,
   _data: HistoricalDataPoint[],
-  kmrResult?: BacktestResult
+  kmrResult?: BacktestResult,
+  bbResult?: BacktestResult
 ): CombinedPerformanceMetrics {
   const cbTrades = cbResult.performanceSummary.trades;
   const tpTrades = tpResult.performanceSummary.trades;
   const kmrTrades = kmrResult ? kmrResult.performanceSummary.trades : [];
-  const allTrades: Trade[] = [...cbTrades, ...tpTrades, ...kmrTrades];
+  const bbTrades = bbResult ? bbResult.performanceSummary.trades : [];
+  const allTrades: Trade[] = [...cbTrades, ...tpTrades, ...kmrTrades, ...bbTrades];
 
   const numberOfTrades = allTrades.length;
 
@@ -380,9 +388,16 @@ export function computeCombinedMetrics(
   for (const trade of kmrTrades) {
     kmrCumulative *= 1 + trade.profitLossPercent / 100;
   }
+  let bbCumulative = 1;
+  for (const trade of bbTrades) {
+    bbCumulative *= 1 + trade.profitLossPercent / 100;
+  }
   // Combined return: average of all active streams (equal capital allocation)
-  const streamCount = kmrTrades.length > 0 ? 3 : 2;
-  const totalReturnPercent = ((cbCumulative + tpCumulative + (kmrTrades.length > 0 ? kmrCumulative : 0)) / streamCount - 1) * 100;
+  let streamCount = 2; // CB + TP always active
+  let streamSum = cbCumulative + tpCumulative;
+  if (kmrTrades.length > 0) { streamCount++; streamSum += kmrCumulative; }
+  if (bbTrades.length > 0) { streamCount++; streamSum += bbCumulative; }
+  const totalReturnPercent = (streamSum / streamCount - 1) * 100;
 
   // Max drawdown: computed from combined equity curve
   // Sort all trades by buy signal timestamp to create a time-ordered combined equity curve
@@ -439,6 +454,7 @@ export function computeCombinedMetrics(
       consolidation_breakout: cbResult.performanceSummary,
       trend_pullback: tpResult.performanceSummary,
       keltner_mean_reversion: kmrResult?.performanceSummary,
+      bear_breakdown: bbResult?.performanceSummary,
     },
   };
 }

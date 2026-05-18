@@ -29,6 +29,7 @@ import { DEFAULT_PEAD_CONFIG } from '../strategies/strategy-configs.js';
 import type { JournalEntry } from '../journal/journal-types.js';
 import { computePositionMetrics } from '../utils/position-metrics.js';
 import type { PositionMetrics } from '../utils/position-metrics.js';
+import { computeConfluence } from '../indicators/confluence-calculator.js';
 
 // ============================================================
 // Dependencies
@@ -72,7 +73,14 @@ export function sortBySignalPriority(signals: SignalOutput[]): SignalOutput[] {
       return priorityA - priorityB;
     }
     // Secondary sort: higher confidence first
-    return b.confidence - a.confidence;
+    const confDiff = b.confidence - a.confidence;
+    if (confDiff !== 0) {
+      return confDiff;
+    }
+    // Tertiary sort: higher confluence first; undefined sorts after defined
+    const confA = a.confluence ?? -1;
+    const confB = b.confluence ?? -1;
+    return confB - confA;
   });
 }
 
@@ -266,6 +274,22 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
           })
         : result.signals;
 
+      // Compute confluence for v3 scans (multiple strategies)
+      if (strategyName === 'v3') {
+        const byTicker = new Map<string, SignalOutput[]>();
+        for (const sig of annotatedSignals) {
+          const group = byTicker.get(sig.ticker) ?? [];
+          group.push(sig);
+          byTicker.set(sig.ticker, group);
+        }
+        for (const [, tickerSignals] of byTicker) {
+          const confluenceResult = computeConfluence(tickerSignals);
+          for (const sig of tickerSignals) {
+            sig.confluence = confluenceResult.score;
+          }
+        }
+      }
+
       // Load and process open positions
       // Price data reuse happens transparently via the caching provider
       const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
@@ -354,6 +378,22 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
         warnings.push(`[${ticker}] Error: ${message}`);
+      }
+    }
+
+    // Compute confluence for v3 scans (multiple strategies)
+    if (strategyName === 'v3') {
+      const byTicker = new Map<string, SignalOutput[]>();
+      for (const sig of signals) {
+        const group = byTicker.get(sig.ticker) ?? [];
+        group.push(sig);
+        byTicker.set(sig.ticker, group);
+      }
+      for (const [, tickerSignals] of byTicker) {
+        const confluenceResult = computeConfluence(tickerSignals);
+        for (const sig of tickerSignals) {
+          sig.confluence = confluenceResult.score;
+        }
       }
     }
 
