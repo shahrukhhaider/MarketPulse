@@ -777,14 +777,14 @@ export function renderMarketContext(
 
   // Build exposure line
   const exposureLine = slotsUsed > slotsMax
-    ? `  Market: ${bold(tier.label)}   Exposure: ${tier.range}  ${red('⚠ Overexposed')} (${slotsUsed}/${slotsMax} slots)`
-    : `  Market: ${bold(tier.label)}   Exposure: ${tier.range}  [ ${coloredBar}  ${slotsUsed}/${slotsMax} slots used · ${slotsOpen} available ]`;
+    ? `  Market Trend: ${bold(tier.label)}   Exposure: ${tier.range}  ${red('⚠ Overexposed')} (${slotsUsed}/${slotsMax} slots)`
+    : `  Market Trend: ${bold(tier.label)}   Exposure: ${tier.range}  [ ${coloredBar}  ${slotsUsed} trade slots used · ${slotsOpen} available ]`;
 
   // Mood line — rendered when mood data is present
   const mood = marketRegime.market_mood;
   if (mood && mood !== 'unknown') {
-    const moodEmoji = mood === 'risk-on' ? '🟢' : mood === 'caution' ? '🟡' : '🔴';
-    const moodLabel = mood === 'risk-on' ? 'Risk-On' : mood === 'caution' ? 'Caution' : 'Risk-Off';
+    const moodEmoji = mood === 'bullish' ? '🟢' : mood === 'neutral' ? '🟡' : '🔴';
+    const moodLabel = mood === 'bullish' ? 'Bullish' : mood === 'neutral' ? 'Neutral' : 'Bearish';
 
     const parts: string[] = [`  Mood: ${moodEmoji} ${bold(moodLabel)}`];
     if (marketRegime.vix != null) {
@@ -799,7 +799,7 @@ export function renderMarketContext(
   }
 
   // Fallback: no mood data — single line (original format)
-  return [`  Market: ${bold(tier.label)}  SPY ${spyArrow}  QQQ ${qqqArrow}   Exposure: ${tier.range}  [ ${coloredBar}  ${slotsUsed}/${slotsMax} slots used · ${slotsOpen} available ]`];
+  return [`  Market Trend: ${bold(tier.label)}  SPY ${spyArrow}  QQQ ${qqqArrow}   Exposure: ${tier.range}  [ ${coloredBar}  ${slotsUsed} trade slots used · ${slotsOpen} available ]`];
 }
 
 // ============================================================

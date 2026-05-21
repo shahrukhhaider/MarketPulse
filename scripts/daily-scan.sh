@@ -23,5 +23,6 @@ $NODE dist/src/cli.js scan --tickers top100 --strategy v3 --allow-stale --summar
 
 echo "[$(date)] Scan complete. Results: $LOG_FILE" >> "$LOG_DIR/cron.log"
 
-# Post to Slack (non-blocking)
-$NODE dist/src/slack-notify.js "$LOG_FILE" 2>> "$LOG_DIR/cron.log" || echo "[$(date)] Slack notify failed (exit $?)" >> "$LOG_DIR/cron.log"
+# Update journal — check stop/target hits on open positions
+echo "[$(date)] Updating journal outcomes..." >> "$LOG_DIR/cron.log"
+$NODE dist/src/cli.js journal-update 2>> "$LOG_DIR/cron.log" || echo "[$(date)] Journal update failed (exit $?)" >> "$LOG_DIR/cron.log"

@@ -20,7 +20,7 @@ export type VolatilityRegime = 'high' | 'low' | 'normal' | 'unknown';
 export type TrendStrength = 'strong' | 'moderate' | 'weak' | 'unknown';
 export type VixRegime = 'low' | 'normal' | 'elevated' | 'high' | 'extreme' | 'unknown';
 export type BreadthLabel = 'broad' | 'mixed' | 'narrow' | 'unknown';
-export type MarketMood = 'risk-on' | 'caution' | 'risk-off' | 'unknown';
+export type MarketMood = 'bullish' | 'neutral' | 'bearish' | 'unknown';
 
 export interface RegimeState {
   ticker: string;
@@ -571,9 +571,9 @@ function classifyMarketMood(
     : -1; // narrow
 
   const total = vixScore + regimeScore + breadthScore;
-  if (total >= 2) return 'risk-on';
-  if (total >= 0) return 'caution';
-  return 'risk-off';
+  if (total >= 2) return 'bullish';
+  if (total >= 0) return 'neutral';
+  return 'bearish';
 }
 
 // ============================================================

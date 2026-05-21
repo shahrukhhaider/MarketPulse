@@ -27,7 +27,8 @@
     "journal:record": "node dist/src/cli.js journal-record",
     "journal:update": "node dist/src/cli.js journal-update",
     "regime": "node dist/src/cli.js regime",
-    "pipeline": "./scripts/daily-pipeline.sh"
+    "pipeline": "./scripts/daily-pipeline.sh",
+    "notify": "./scripts/notify.sh"
   },
   "dependencies": {
     "yahoo-finance2": "^3.14.0"
