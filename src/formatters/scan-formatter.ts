@@ -377,42 +377,133 @@ function renderActive(signals: AnnotatedSignal[]): string {
   lines.push(dim('  Ticker   Side    Strategy              Buy Zone              Stop        Risk     R:R    RS'));
   lines.push(dim('  ──────   ────    ────────              ────────              ────        ────     ───    ──'));
 
+  // Group signals by ticker to merge multi-strategy confluences
+  const byTicker = new Map<string, AnnotatedSignal[]>();
   for (const sig of signals) {
-    const ticker = padRight(sig.ticker, 8);
-    const isShort = sig.strategy === 'bear_breakdown';
-    const side = isShort ? red(padRight('SHORT', 7)) : green(padRight('BUY', 7));
-    const stratName = sig.strategy === 'trend_pullback'
-      ? 'Trend Pullback'
-      : sig.strategy === 'bear_breakdown'
-        ? 'Bear Breakdown'
-        : sig.strategy === 'post_earnings_drift'
-          ? 'PEAD Breakout'
-          : sig.strategy === 'keltner_mean_reversion'
-            ? 'Keltner MR'
-            : 'Consolidation';
-    const strat = padRight(stratName, 20);
+    const group = byTicker.get(sig.ticker) ?? [];
+    group.push(sig);
+    byTicker.set(sig.ticker, group);
+  }
 
-    // Buy zone: LONG = [entry, entry×1.02], SHORT = [entry×0.98, entry]
-    const zoneLow = isShort ? sig.entry * 0.98 : sig.entry;
-    const zoneHigh = isShort ? sig.entry : sig.entry * 1.02;
-    const buyZone = padLeft(`${formatPrice(zoneLow)} – ${formatPrice(zoneHigh)}`, 20);
-
-    const stop = padLeft(formatPrice(sig.stop), 10);
-    const risk = padLeft(formatPct(sig.risk_pct), 8);
-    const rr = extractRR(sig.reason ?? []);
-
-    const badgeStr = regimeBadge(sig.regimeState);
-    const rs = rsLabel(sig.regimeState);
-    lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}  ${rs}${confluenceLabel(sig.confluence) ? '  ' + confluenceLabel(sig.confluence) : ''}`);
-
-    // Rationale + exit plan — DIM, indented, wrapped at 72 chars
-    const rationaleLines = generateRationale(sig);
-    for (const line of rationaleLines) {
-      lines.push(dim(`        ${line}`));
+  for (const [, tickerSignals] of byTicker) {
+    if (tickerSignals.length === 1) {
+      // Single strategy — render normally
+      const sig = tickerSignals[0];
+      lines.push(renderActiveSignalLine(sig));
+      const rationaleLines = generateRationale(sig);
+      for (const line of rationaleLines) {
+        lines.push(dim(`        ${line}`));
+      }
+    } else {
+      // Multiple strategies — merge into combined entry
+      lines.push(renderMergedSignalBlock(tickerSignals));
     }
   }
 
   return lines.join('\n');
+}
+
+/**
+ * Render a single active signal line (unchanged from original behavior).
+ */
+function renderActiveSignalLine(sig: AnnotatedSignal): string {
+  const ticker = padRight(sig.ticker, 8);
+  const isShort = sig.strategy === 'bear_breakdown';
+  const side = isShort ? red(padRight('SHORT', 7)) : green(padRight('BUY', 7));
+  const stratName = formatStrategyName(sig.strategy);
+  const strat = padRight(stratName, 20);
+
+  const zoneLow = isShort ? sig.entry * 0.98 : sig.entry;
+  const zoneHigh = isShort ? sig.entry : sig.entry * 1.02;
+  const buyZone = padLeft(`${formatPrice(zoneLow)} – ${formatPrice(zoneHigh)}`, 20);
+
+  const stop = padLeft(formatPrice(sig.stop), 10);
+  const risk = padLeft(formatPct(sig.risk_pct), 8);
+  const rr = extractRR(sig.reason ?? []);
+
+  const badgeStr = regimeBadge(sig.regimeState);
+  const rs = rsLabel(sig.regimeState);
+  return `  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}  ${rs}${confluenceLabel(sig.confluence) ? '  ' + confluenceLabel(sig.confluence) : ''}`;
+}
+
+/**
+ * Render a merged block for multiple strategies on the same ticker.
+ * Shows combined strategy names, shared buy zone, stop range, and risk range.
+ */
+function renderMergedSignalBlock(signals: AnnotatedSignal[]): string {
+  const lines: string[] = [];
+  const sig = signals[0]; // Use first for ticker/direction/regime info
+  const ticker = padRight(sig.ticker, 8);
+  const isShort = sig.strategy === 'bear_breakdown';
+
+  // Combine strategy names
+  const stratNames = signals.map(s => formatStrategyName(s.strategy));
+  const combinedStrat = stratNames.join(' + ');
+
+  // Buy zone (use widest range across all signals)
+  const zoneLows = signals.map(s => isShort ? s.entry * 0.98 : s.entry);
+  const zoneHighs = signals.map(s => isShort ? s.entry : s.entry * 1.02);
+  const zoneLow = Math.min(...zoneLows);
+  const zoneHigh = Math.max(...zoneHighs);
+
+  // Stop range
+  const stops = signals.map(s => s.stop).sort((a, b) => a - b);
+  const stopMin = stops[0];
+  const stopMax = stops[stops.length - 1];
+
+  // Risk range
+  const risks = signals.map(s => s.risk_pct).sort((a, b) => a - b);
+  const riskMin = risks[0];
+  const riskMax = risks[risks.length - 1];
+
+  // R:R range
+  const rrs = signals.map(s => extractRR(s.reason ?? []));
+
+  const side = isShort ? red(padRight('SHORT', 7)) : green(padRight('BUY', 7));
+  const badgeStr = regimeBadge(sig.regimeState);
+  const rs = rsLabel(sig.regimeState);
+  const conf = confluenceLabel(sig.confluence);
+
+  // Header line
+  lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${combinedStrat}${conf ? '  ' + conf : ''}`);
+
+  // Details
+  const buyZoneStr = `${formatPrice(zoneLow)} – ${formatPrice(zoneHigh)}`;
+  const stopStr = stopMin === stopMax
+    ? formatPrice(stopMin)
+    : `${formatPrice(stopMin)} – ${formatPrice(stopMax)}`;
+  const riskStr = riskMin === riskMax
+    ? formatPct(riskMin)
+    : `${formatPct(riskMin)} – ${formatPct(riskMax)}`;
+  const rrStr = [...new Set(rrs)].join(' / ');
+
+  lines.push(dim(`        Buy zone: ${buyZoneStr}  Stop: ${red(stopStr)}  Risk: ${yellow(riskStr)}  R:R ${cyan(rrStr)}  ${rs}`));
+
+  // Individual strategy rationales (condensed)
+  for (const s of signals) {
+    const stratLabel = formatStrategyName(s.strategy);
+    const rationaleLines = generateRationale(s);
+    if (rationaleLines.length > 0) {
+      lines.push(dim(`        [${stratLabel}] ${rationaleLines[0]}`));
+      for (let i = 1; i < rationaleLines.length; i++) {
+        lines.push(dim(`        ${rationaleLines[i]}`));
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function formatStrategyName(strategy: string): string {
+  return strategy === 'trend_pullback'
+    ? 'Trend Pullback'
+    : strategy === 'bear_breakdown'
+      ? 'Bear Breakdown'
+      : strategy === 'post_earnings_drift'
+        ? 'PEAD Breakout'
+        : strategy === 'keltner_mean_reversion'
+          ? 'Keltner MR'
+          : 'Consolidation';
 }
 
 function renderNear(signals: AnnotatedSignal[]): string {

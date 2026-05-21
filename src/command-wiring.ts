@@ -1580,29 +1580,29 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
 /**
  * Resolve the --ticker argument for the v3 command.
- * Supports: single ticker, comma-separated list, or 'top100' keyword.
+ * Supports: single ticker, comma-separated list, or 'watchlist' keyword.
  */
 function resolveV3TickerList(tickerArg: string, dataDir: string): string[] | { error: string } {
-  if (tickerArg.toLowerCase() === 'top100') {
+  if (tickerArg.toLowerCase() === 'watchlist' || tickerArg.toLowerCase() === 'top100') {
     try {
-      // Look for top100.json in the data/ directory relative to CWD (project root)
+      // Look for watchlist.json in the data/ directory relative to CWD (project root)
       // Fallback: also check relative to dataDir
-      let top100Path = path.join(process.cwd(), 'data', 'top100.json');
+      let watchlistPath = path.join(process.cwd(), 'data', 'watchlist.json');
       try {
-        readFileSync(top100Path, 'utf-8');
+        readFileSync(watchlistPath, 'utf-8');
       } catch {
         // Fallback to dataDir-relative path (for compatibility with tune-command)
-        top100Path = path.join(dataDir, 'data', 'top100.json');
+        watchlistPath = path.join(dataDir, 'data', 'watchlist.json');
       }
-      const content = readFileSync(top100Path, 'utf-8');
+      const content = readFileSync(watchlistPath, 'utf-8');
       const parsed = JSON.parse(content) as { tickers?: string[] };
       if (!Array.isArray(parsed.tickers) || parsed.tickers.length === 0) {
-        return { error: `top100.json at ${top100Path} is missing or has empty 'tickers' array` };
+        return { error: `watchlist.json at ${watchlistPath} is missing or has empty 'tickers' array` };
       }
       return parsed.tickers.map((t: string) => t.toUpperCase());
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      return { error: `Failed to load top100.json: ${message}` };
+      return { error: `Failed to load watchlist.json: ${message}` };
     }
   }
 

@@ -30,21 +30,21 @@ export interface RegimeCommandDeps {
 // ============================================================
 
 function resolveTickerList(tickersArg: string | undefined, dataDir: string): string[] | { error: string } {
-  // If no tickers specified, default to top100
-  const effectiveArg = tickersArg ?? 'top100';
+  // If no tickers specified, default to watchlist
+  const effectiveArg = tickersArg ?? 'watchlist';
 
-  if (effectiveArg.toLowerCase() === 'top100') {
+  if (effectiveArg.toLowerCase() === 'watchlist' || effectiveArg.toLowerCase() === 'top100') {
     try {
-      const top100Path = join(dataDir, 'data', 'top100.json');
-      const content = readFileSync(top100Path, 'utf-8');
+      const watchlistPath = join(dataDir, 'data', 'watchlist.json');
+      const content = readFileSync(watchlistPath, 'utf-8');
       const parsed = JSON.parse(content) as { tickers?: string[] };
       if (!Array.isArray(parsed.tickers) || parsed.tickers.length === 0) {
-        return { error: `top100.json at ${top100Path} is missing or has empty 'tickers' array` };
+        return { error: `watchlist.json at ${watchlistPath} is missing or has empty 'tickers' array` };
       }
       return parsed.tickers.map((t: string) => t.toUpperCase());
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      return { error: `Failed to load top100.json: ${message}` };
+      return { error: `Failed to load watchlist.json: ${message}` };
     }
   }
 
