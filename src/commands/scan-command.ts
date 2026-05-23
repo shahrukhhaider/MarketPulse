@@ -30,6 +30,7 @@ import type { JournalEntry } from '../journal/journal-types.js';
 import { computePositionMetrics } from '../utils/position-metrics.js';
 import type { PositionMetrics } from '../utils/position-metrics.js';
 import { computeConfluence } from '../indicators/confluence-calculator.js';
+import { computeStats } from '../journal/journal-reporter.js';
 
 // ============================================================
 // Dependencies
@@ -294,6 +295,15 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       // Price data reuse happens transparently via the caching provider
       const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
 
+      // Compute journal total P&L from closed trades
+      const journalPath2 = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
+      const journalLoadResult2 = loadJournal(journalPath2);
+      let journalPnl2: number | null = null;
+      if (journalLoadResult2.success && journalLoadResult2.data.length > 0) {
+        const stats = computeStats(journalLoadResult2.data);
+        journalPnl2 = stats.total_pnl;
+      }
+
       const output: Record<string, unknown> = {
         signals: annotatedSignals,
         warnings: [...result.warnings, ...positionsResult.warnings],
@@ -301,6 +311,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         scanned: result.scanned,
         skipped: result.skipped,
         openPositions: positionsResult.openPositions,
+        journalPnl: journalPnl2,
       };
 
       if (regimeResult) {
@@ -413,6 +424,15 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     // Price data reuse happens transparently via the caching provider
     const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
 
+    // Compute journal total P&L from closed trades
+    const journalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
+    const journalLoadResult = loadJournal(journalPath);
+    let journalPnl: number | null = null;
+    if (journalLoadResult.success && journalLoadResult.data.length > 0) {
+      const stats = computeStats(journalLoadResult.data);
+      journalPnl = stats.total_pnl;
+    }
+
     const output: Record<string, unknown> = {
       signals: annotatedSignals,
       warnings: [...warnings, ...positionsResult.warnings],
@@ -420,6 +440,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       scanned: signals.length,
       skipped: tickers.length - signals.length,
       openPositions: positionsResult.openPositions,
+      journalPnl,
     };
 
     if (regimeResult) {

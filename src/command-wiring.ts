@@ -47,6 +47,7 @@ import { createScanChartHandler } from './commands/scan-chart-command.js';
 import { parallelTune } from './pipeline/parallel-tune.js';
 import { createJournalStatusHandler, createJournalRecordHandler, createJournalUpdateHandler } from './commands/journal-command.js';
 import { createRegimeHandler } from './commands/regime-command.js';
+import { createSignalHistoryHandler } from './signal-history/signal-history-command.js';
 import { RegimeDetector } from './indicators/regime-detector.js';
 
 export interface WiringOptions {
@@ -1559,6 +1560,10 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   router.register('journal-status', [], journalStatusHandler);
   router.register('journal-record', [], journalRecordHandler);
   router.register('journal-update', [], journalUpdateHandler);
+
+  // --- Signal history command ---
+  const signalHistoryHandler = createSignalHistoryHandler({ dataDir });
+  router.register('signal-history', [], signalHistoryHandler);
 
   return {
     router,

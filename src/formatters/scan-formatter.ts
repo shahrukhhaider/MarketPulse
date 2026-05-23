@@ -10,6 +10,7 @@ import type { RegimeState } from '../indicators/regime-detector.js';
 import type { PositionMetrics } from '../utils/position-metrics.js';
 import { toExposureTier } from './market-exposure.js';
 import type { MarketRegimeData } from './market-exposure.js';
+import { narrateSignal } from './signal-narrator.js';
 
 // ============================================================
 // ANSI Color Helpers
@@ -94,6 +95,34 @@ export function confluenceLabel(confluence: number | undefined): string {
   if (confluence >= 0.7) return green(label);
   if (confluence > 0.3) return yellow(label);
   return red(label);
+}
+
+/**
+ * Compute composite sort score: rvol × confidence.
+ * Returns 0 when rvol is null/undefined or confidence is 0.
+ */
+export function computeCompositeScore(
+  rvol: number | null | undefined,
+  confidence: number
+): number {
+  return (rvol ?? 0) * confidence;
+}
+
+/**
+ * Format RVOL as a colored terminal badge.
+ * - rvol >= 2.0: green
+ * - 1.0 <= rvol < 2.0: default color
+ * - rvol < 1.0: dim
+ * - rvol > 99.9: capped at "99.9×"
+ * - null/undefined: returns empty string (no badge)
+ */
+export function formatRvolBadge(rvol: number | null | undefined): string {
+  if (rvol == null) return '';
+  const capped = rvol > 99.9 ? 99.9 : rvol;
+  const label = `Vol: ${capped.toFixed(1)}×`;
+  if (rvol >= 2.0) return green(label);
+  if (rvol >= 1.0) return label;
+  return dim(label);
 }
 
 /**
@@ -269,6 +298,26 @@ function groupSignals(signals: AnnotatedSignal[]): GroupedSignals {
   return groups;
 }
 
+/**
+ * Sort signals by quality: confluence (desc) → RS rating (desc) → risk (asc, tighter is better).
+ */
+function sortByQuality(signals: AnnotatedSignal[]): AnnotatedSignal[] {
+  return [...signals].sort((a, b) => {
+    // 1. Confluence descending (higher = more strategies agree)
+    const confA = a.confluence ?? 0;
+    const confB = b.confluence ?? 0;
+    if (confB !== confA) return confB - confA;
+
+    // 2. RS rating descending (higher = stronger relative strength)
+    const rsA = a.regimeState?.rs_rating ?? 0;
+    const rsB = b.regimeState?.rs_rating ?? 0;
+    if (rsB !== rsA) return rsB - rsA;
+
+    // 3. Risk ascending (lower = tighter stop, less downside)
+    return a.risk_pct - b.risk_pct;
+  });
+}
+
 // ============================================================
 // Section Renderers
 // ============================================================
@@ -385,14 +434,65 @@ function renderActive(signals: AnnotatedSignal[]): string {
     byTicker.set(sig.ticker, group);
   }
 
-  for (const [, tickerSignals] of byTicker) {
+  // Sort ticker groups by composite score desc → confluence desc → RS desc → risk asc
+  const sortedGroups = [...byTicker.entries()].sort((a, b) => {
+    const bestA = a[1].reduce((best, s) => {
+      const scoreS = computeCompositeScore(s.rvol, s.confidence);
+      const scoreBest = computeCompositeScore(best.rvol, best.confidence);
+      return scoreS > scoreBest ? s : best;
+    }, a[1][0]);
+    const bestB = b[1].reduce((best, s) => {
+      const scoreS = computeCompositeScore(s.rvol, s.confidence);
+      const scoreBest = computeCompositeScore(best.rvol, best.confidence);
+      return scoreS > scoreBest ? s : best;
+    }, b[1][0]);
+
+    // Primary: composite score descending
+    const scoreA = computeCompositeScore(bestA.rvol, bestA.confidence);
+    const scoreB = computeCompositeScore(bestB.rvol, bestB.confidence);
+    if (scoreB !== scoreA) return scoreB - scoreA;
+
+    // Tiebreaker 1: confluence descending
+    const confA = bestA.confluence ?? 0;
+    const confB = bestB.confluence ?? 0;
+    if (confB !== confA) return confB - confA;
+
+    // Tiebreaker 2: RS rating descending
+    const rsA = bestA.regimeState?.rs_rating ?? 0;
+    const rsB = bestB.regimeState?.rs_rating ?? 0;
+    if (rsB !== rsA) return rsB - rsA;
+
+    // Tiebreaker 3: risk_pct ascending
+    return bestA.risk_pct - bestB.risk_pct;
+  });
+
+  for (const [, tickerSignals] of sortedGroups) {
     if (tickerSignals.length === 1) {
       // Single strategy — render normally
       const sig = tickerSignals[0];
       lines.push(renderActiveSignalLine(sig));
-      const rationaleLines = generateRationale(sig);
-      for (const line of rationaleLines) {
-        lines.push(dim(`        ${line}`));
+      const targetStr = extractTarget(sig.reason ?? []);
+      const targetNum = parseFloat(targetStr);
+      const narrative = narrateSignal({
+        ticker: sig.ticker,
+        strategy: sig.strategy,
+        signal: sig.signal,
+        entry: sig.entry,
+        stop: sig.stop,
+        target: isNaN(targetNum) ? undefined : targetNum,
+        reason: sig.reason,
+      });
+      if (narrative) {
+        lines.push(dim(`        ${narrative}`));
+        const rationaleLines = generateRationale(sig);
+        for (const line of rationaleLines) {
+          lines.push(dim(`        ${line}`));
+        }
+      } else {
+        const rationaleLines = generateRationale(sig);
+        for (const line of rationaleLines) {
+          lines.push(dim(`        ${line}`));
+        }
       }
     } else {
       // Multiple strategies — merge into combined entry
@@ -423,7 +523,9 @@ function renderActiveSignalLine(sig: AnnotatedSignal): string {
 
   const badgeStr = regimeBadge(sig.regimeState);
   const rs = rsLabel(sig.regimeState);
-  return `  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}  ${rs}${confluenceLabel(sig.confluence) ? '  ' + confluenceLabel(sig.confluence) : ''}`;
+  const confLabel = confluenceLabel(sig.confluence);
+  const rvolBadge = formatRvolBadge(sig.rvol);
+  return `  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}  ${rs}${confLabel ? '  ' + confLabel : ''}${rvolBadge ? ' ' + rvolBadge : ''}`;
 }
 
 /**
@@ -465,7 +567,8 @@ function renderMergedSignalBlock(signals: AnnotatedSignal[]): string {
   const conf = confluenceLabel(sig.confluence);
 
   // Header line
-  lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${combinedStrat}${conf ? '  ' + conf : ''}`);
+  const rvolBadge = formatRvolBadge(sig.rvol);
+  lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${combinedStrat}${conf ? '  ' + conf : ''}${rvolBadge ? ' ' + rvolBadge : ''}`);
 
   // Details
   const buyZoneStr = `${formatPrice(zoneLow)} – ${formatPrice(zoneHigh)}`;
@@ -520,22 +623,39 @@ function renderNear(signals: AnnotatedSignal[]): string {
       : sig.strategy === 'keltner_mean_reversion'
         ? 'Keltner MR'
         : 'Consolidation';
-    // Extract the "Need:" line from reason
-    const needLine = sig.reason?.find(r => r.includes('Need:'));
+
+    // Try narrative first; fall back to existing reason-extraction logic
+    const narrative = narrateSignal({
+      ticker: sig.ticker,
+      strategy: sig.strategy,
+      signal: sig.signal,
+      entry: sig.entry,
+      stop: sig.stop,
+      target: undefined,
+      reason: sig.reason,
+    });
+
     let need: string;
-    if (needLine) {
-      need = needLine.replace('Need: ', '');
-    } else if (sig.strategy === 'consolidation_breakout') {
-      need = `close above breakout level (${formatPrice(sig.entry)})`;
-    } else if (sig.strategy === 'trend_pullback') {
-      need = 'close > SMA(10) with volume expansion';
+    if (narrative) {
+      need = narrative;
     } else {
-      need = 'trigger pending';
+      // Fallback: extract the "Need:" line from reason
+      const needLine = sig.reason?.find(r => r.includes('Need:'));
+      if (needLine) {
+        need = needLine.replace('Need: ', '');
+      } else if (sig.strategy === 'consolidation_breakout') {
+        need = `close above breakout level (${formatPrice(sig.entry)})`;
+      } else if (sig.strategy === 'trend_pullback') {
+        need = 'close > SMA(10) with volume expansion';
+      } else {
+        need = 'trigger pending';
+      }
     }
 
     const badgeStr = regimeBadge(sig.regimeState);
     const rs = rsLabel(sig.regimeState);
-    lines.push(`  ${yellow(padRight(sig.ticker, 8))}${badgeStr} ${dim(strat)}${confluenceLabel(sig.confluence) ? '  ' + confluenceLabel(sig.confluence) : ''}`);
+    const rvolBadge = formatRvolBadge(sig.rvol);
+    lines.push(`  ${yellow(padRight(sig.ticker, 8))}${badgeStr} ${dim(strat)}${confluenceLabel(sig.confluence) ? '  ' + confluenceLabel(sig.confluence) : ''}${rvolBadge ? ' ' + rvolBadge : ''}`);
     lines.push(`           Entry: ${formatPrice(sig.entry)}  Stop: ${red(formatPrice(sig.stop))}  Risk: ${formatPct(sig.risk_pct)}  ${rs}`);
     lines.push(`           ${dim('→ ' + need)}`);
   }
@@ -904,6 +1024,7 @@ export interface ScanSummaryData {
   scanned: number;
   openPositions?: PositionMetrics[];
   marketRegime?: MarketRegimeData;
+  journalPnl?: number | null;
 }
 
 /**
@@ -914,6 +1035,29 @@ export function formatScanSummary(data: ScanSummaryData): string {
   const { signals, warnings, total } = data;
   const resolved = resolveConflicts(signals);
   const groups = groupSignals(resolved);
+
+  // Sort and limit each category to top 10
+  const MAX_PER_CATEGORY = 10;
+  groups.active = sortByQuality(groups.active).slice(0, MAX_PER_CATEGORY);
+  groups.near = [...groups.near].sort((a, b) => {
+    // Primary: composite score descending
+    const scoreA = computeCompositeScore(a.rvol, a.confidence);
+    const scoreB = computeCompositeScore(b.rvol, b.confidence);
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    // Tiebreaker 1: confluence descending
+    const confA = a.confluence ?? 0;
+    const confB = b.confluence ?? 0;
+    if (confB !== confA) return confB - confA;
+    // Tiebreaker 2: RS rating descending
+    const rsA = a.regimeState?.rs_rating ?? 0;
+    const rsB = b.regimeState?.rs_rating ?? 0;
+    if (rsB !== rsA) return rsB - rsA;
+    // Tiebreaker 3: risk ascending (tighter stop = better)
+    return a.risk_pct - b.risk_pct;
+  }).slice(0, MAX_PER_CATEGORY);
+  groups.forming_breakout = sortByQuality(groups.forming_breakout).slice(0, MAX_PER_CATEGORY);
+  groups.forming_pullback = sortByQuality(groups.forming_pullback).slice(0, MAX_PER_CATEGORY);
+  groups.forming_breakdown = sortByQuality(groups.forming_breakdown).slice(0, MAX_PER_CATEGORY);
 
   const lines: string[] = [];
 
@@ -931,6 +1075,12 @@ export function formatScanSummary(data: ScanSummaryData): string {
   const headerParts = [`${total} tickers scanned`];
   if (openPositions.length > 0) {
     headerParts.push(`${openPositions.length} open position${openPositions.length === 1 ? '' : 's'}`);
+  }
+  if (data.journalPnl != null) {
+    const pnlAbs = Math.abs(data.journalPnl);
+    const pnlStr = data.journalPnl >= 0 ? `+$${pnlAbs.toFixed(2)}` : `-$${pnlAbs.toFixed(2)}`;
+    const colored = data.journalPnl >= 0 ? green(pnlStr) : red(pnlStr);
+    headerParts.push(`P&L ${colored}`);
   }
   lines.push(dim(`  ${headerParts.join(' · ')}`));
 

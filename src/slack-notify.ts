@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { narrateSignal } from './formatters/signal-narrator.js';
 
 // --- Block Kit Types ---
 
@@ -31,6 +32,7 @@ export interface Signal {
   date: string;
   entry: number;
   stop: number;
+  target?: number;
   risk_pct: number;
   confidence: number;
   reason: string[];
@@ -54,6 +56,11 @@ export interface MarketRegime {
   spy_trend: number | null;
   qqq_trend: number | null;
   market_regime: 'bullish' | 'bearish' | 'unknown';
+  vix?: number | null;
+  vix_regime?: string;
+  breadth_pct?: number | null;
+  breadth_label?: string;
+  market_mood?: string;
 }
 
 // --- Formatting functions ---
@@ -266,11 +273,25 @@ export function buildSlackPayload(data: ScanData): SlackPayload {
   const BUDGET = MAX_BLOCKS - RESERVED_BLOCKS;
 
   // --- Classify signals ---
-  const activeSignals = data.signals.filter(
+  const activeSignalsRaw = data.signals.filter(
     (s) => s.signal === 'active' || s.signal === 'active_late'
   );
-  const nearSignals = data.signals.filter((s) => s.signal === 'near');
+  const nearSignalsRaw = data.signals.filter((s) => s.signal === 'near');
   const positions = data.openPositions;
+
+  // --- Sort by quality (confluence desc → confidence desc → risk asc) and limit to 10 ---
+  const MAX_PER_CATEGORY = 10;
+  const sortSignals = (signals: Signal[]): Signal[] =>
+    [...signals].sort((a, b) => {
+      const confA = (a as any).confluence ?? 0;
+      const confB = (b as any).confluence ?? 0;
+      if (confB !== confA) return confB - confA;
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      return a.risk_pct - b.risk_pct;
+    });
+
+  const activeSignals = sortSignals(activeSignalsRaw).slice(0, MAX_PER_CATEGORY);
+  const nearSignals = sortSignals(nearSignalsRaw).slice(0, MAX_PER_CATEGORY);
 
   // --- Header block ---
   const scanDate = activeSignals.length > 0
@@ -288,15 +309,40 @@ export function buildSlackPayload(data: ScanData): SlackPayload {
     },
   };
 
-  // --- Context block (SPY/QQQ trends + scanned count) ---
+  // --- Context block (mood + market context) ---
   const spyArrow = trendArrow(data.marketRegime.spy_trend);
   const qqqArrow = trendArrow(data.marketRegime.qqq_trend);
+
+  const moodEmoji = data.marketRegime.market_mood === 'bullish' ? '🟢'
+    : data.marketRegime.market_mood === 'neutral' ? '🟡' : '🔴';
+  const moodLabel = data.marketRegime.market_mood === 'bullish' ? 'Bullish'
+    : data.marketRegime.market_mood === 'neutral' ? 'Neutral' : 'Bearish';
+
+  const contextParts: string[] = [`Mood: ${moodEmoji} ${moodLabel}`];
+  if (data.marketRegime.vix != null) {
+    contextParts.push(`VIX ${data.marketRegime.vix.toFixed(1)} (${data.marketRegime.vix_regime})`);
+  }
+  if (data.marketRegime.breadth_pct != null) {
+    contextParts.push(`Breadth ${Math.round(data.marketRegime.breadth_pct)}% (${data.marketRegime.breadth_label})`);
+  }
+  contextParts.push(`SPY ${spyArrow}  QQQ ${qqqArrow}`);
+
+  const summaryParts = [`${data.total} tickers scanned`];
+  if (data.openPositions.length > 0) {
+    summaryParts.push(`${data.openPositions.length} open position${data.openPositions.length === 1 ? '' : 's'}`);
+  }
+  if ((data as any).journalPnl != null) {
+    const pnl = (data as any).journalPnl as number;
+    const pnlStr = pnl >= 0 ? `+$${Math.abs(pnl).toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
+    summaryParts.push(`P&L ${pnlStr}`);
+  }
+
   const contextBlock: Block = {
     type: 'context',
     elements: [
       {
         type: 'mrkdwn',
-        text: `SPY ${spyArrow}  QQQ ${qqqArrow}  |  ${data.scanned} tickers scanned`,
+        text: `${contextParts.join('    ')}\n${summaryParts.join(' · ')}`,
       },
     ],
   };
@@ -307,11 +353,18 @@ export function buildSlackPayload(data: ScanData): SlackPayload {
     const buyZone = `\`${formatPrice(s.entry)}\` – \`${formatPrice(s.stop)}\``;
     const risk = `\`${formatPct(s.risk_pct)}\``;
     const rr = calculateRR(s.risk_pct);
+    const rvol = (s as any).rvol ?? null;
+    const rvolBadge = rvol != null ? `  Vol: ${rvol.toFixed(1)}×` : '';
+    let text = `*${s.ticker}* ${side} · ${s.strategy}\nZone: ${buyZone}  Risk: ${risk}  R:R \`${rr}\`${rvolBadge}`;
+    const narrative = narrateSignal({ ticker: s.ticker, strategy: s.strategy, signal: s.signal === 'active_late' ? 'active' : s.signal, entry: s.entry, stop: s.stop, target: s.target, reason: s.reason });
+    if (narrative) {
+      text += `\n${narrative}`;
+    }
     return {
       type: 'section' as const,
       text: {
         type: 'mrkdwn' as const,
-        text: `*${s.ticker}* ${side} · ${s.strategy}\nZone: ${buyZone}  Risk: ${risk}  R:R \`${rr}\``,
+        text,
       },
     };
   });
@@ -329,12 +382,15 @@ export function buildSlackPayload(data: ScanData): SlackPayload {
   });
 
   const nearBlocks: Block[] = nearSignals.map((s) => {
-    const trigger = s.reason.length > 0 ? s.reason[0] : 'awaiting trigger';
+    const narrative = narrateSignal({ ticker: s.ticker, strategy: s.strategy, signal: s.signal, entry: s.entry, stop: s.stop, target: s.target, reason: s.reason });
+    const trigger = narrative || (s.reason.length > 0 ? s.reason[0] : 'awaiting trigger');
+    const rvol = (s as any).rvol ?? null;
+    const rvolBadge = rvol != null ? `  Vol: ${rvol.toFixed(1)}×` : '';
     return {
       type: 'section' as const,
       text: {
         type: 'mrkdwn' as const,
-        text: `*${s.ticker}* · ${s.strategy}\nEntry: \`${formatPrice(s.entry)}\`  Stop: \`${formatPrice(s.stop)}\`  _${trigger}_`,
+        text: `*${s.ticker}* · ${s.strategy}\nEntry: \`${formatPrice(s.entry)}\`  Stop: \`${formatPrice(s.stop)}\`  _${trigger}_${rvolBadge}`,
       },
     };
   });
@@ -437,10 +493,20 @@ export function buildSlackPayload(data: ScanData): SlackPayload {
  * This is used for Slack Workflow triggers that accept a `message` variable.
  */
 export function buildSlackMessage(data: ScanData): string {
-  const activeSignals = data.signals.filter(
+  const MAX_PER_CATEGORY = 10;
+  const sortSigs = (signals: Signal[]): Signal[] =>
+    [...signals].sort((a, b) => {
+      const confA = (a as any).confluence ?? 0;
+      const confB = (b as any).confluence ?? 0;
+      if (confB !== confA) return confB - confA;
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      return a.risk_pct - b.risk_pct;
+    });
+
+  const activeSignals = sortSigs(data.signals.filter(
     (s) => s.signal === 'active' || s.signal === 'active_late'
-  );
-  const nearSignals = data.signals.filter((s) => s.signal === 'near');
+  )).slice(0, MAX_PER_CATEGORY);
+  const nearSignals = sortSigs(data.signals.filter((s) => s.signal === 'near')).slice(0, MAX_PER_CATEGORY);
   const positions = data.openPositions;
 
   // Header
@@ -457,7 +523,31 @@ export function buildSlackMessage(data: ScanData): string {
   const sections: string[] = [];
 
   // Header section
-  sections.push(`${emoji} *Daily Scan — ${scanDate}*\nSPY ${spyArrow}  QQQ ${qqqArrow}  ·  ${data.scanned} tickers scanned`);
+  const moodEmoji2 = data.marketRegime.market_mood === 'bullish' ? '🟢'
+    : data.marketRegime.market_mood === 'neutral' ? '🟡' : '🔴';
+  const moodLabel2 = data.marketRegime.market_mood === 'bullish' ? 'Bullish'
+    : data.marketRegime.market_mood === 'neutral' ? 'Neutral' : 'Bearish';
+
+  const headerParts: string[] = [`Mood: ${moodEmoji2} ${moodLabel2}`];
+  if (data.marketRegime.vix != null) {
+    headerParts.push(`VIX ${data.marketRegime.vix.toFixed(1)} (${data.marketRegime.vix_regime})`);
+  }
+  if (data.marketRegime.breadth_pct != null) {
+    headerParts.push(`Breadth ${Math.round(data.marketRegime.breadth_pct)}% (${data.marketRegime.breadth_label})`);
+  }
+  headerParts.push(`SPY ${spyArrow}  QQQ ${qqqArrow}`);
+
+  const summaryParts2 = [`${data.total} tickers scanned`];
+  if (data.openPositions.length > 0) {
+    summaryParts2.push(`${data.openPositions.length} open position${data.openPositions.length === 1 ? '' : 's'}`);
+  }
+  if ((data as any).journalPnl != null) {
+    const pnl = (data as any).journalPnl as number;
+    const pnlStr = pnl >= 0 ? `+$${Math.abs(pnl).toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
+    summaryParts2.push(`P&L ${pnlStr}`);
+  }
+
+  sections.push(`${emoji} *Daily Scan — ${scanDate}*\n${headerParts.join('    ')}\n${summaryParts2.join(' · ')}`);
 
   // Active signals
   if (activeSignals.length > 0) {
@@ -466,8 +556,14 @@ export function buildSlackMessage(data: ScanData): string {
       const side = determineSide(s.strategy);
       const sideIcon = side === 'BUY' ? '🟢' : '🔻';
       const strategyDisplay = s.strategy.replace(/_/g, ' ');
-      lines.push(`${sideIcon} *${s.ticker}* ${side} · ${strategyDisplay}`);
+      const rvol = (s as any).rvol ?? null;
+      const rvolBadge = rvol != null ? `  Vol: ${rvol.toFixed(1)}×` : '';
+      lines.push(`${sideIcon} *${s.ticker}* ${side} · ${strategyDisplay}${rvolBadge}`);
       lines.push(`      Entry ${formatPrice(s.entry)} → Stop ${formatPrice(s.stop)} · Risk ${formatPct(s.risk_pct)}`);
+      const narrative = narrateSignal({ ticker: s.ticker, strategy: s.strategy, signal: s.signal === 'active_late' ? 'active' : s.signal, entry: s.entry, stop: s.stop, target: s.target, reason: s.reason });
+      if (narrative) {
+        lines.push(`      ${narrative}`);
+      }
     }
     sections.push(lines.join('\n'));
   }
@@ -490,9 +586,12 @@ export function buildSlackMessage(data: ScanData): string {
   if (nearSignals.length > 0) {
     const lines: string[] = [`👀 *Near Signals (${nearSignals.length})*`];
     for (const s of nearSignals) {
-      const trigger = s.reason.length > 0 ? s.reason[0] : 'awaiting trigger';
+      const narrative = narrateSignal({ ticker: s.ticker, strategy: s.strategy, signal: s.signal, entry: s.entry, stop: s.stop, target: s.target, reason: s.reason });
+      const trigger = narrative || (s.reason.length > 0 ? s.reason[0] : 'awaiting trigger');
       const strategyDisplay = s.strategy.replace(/_/g, ' ');
-      lines.push(`⏳ *${s.ticker}* · ${strategyDisplay}`);
+      const rvol = (s as any).rvol ?? null;
+      const rvolBadge = rvol != null ? `  Vol: ${rvol.toFixed(1)}×` : '';
+      lines.push(`⏳ *${s.ticker}* · ${strategyDisplay}${rvolBadge}`);
       lines.push(`      Entry ${formatPrice(s.entry)} → Stop ${formatPrice(s.stop)} · ${trigger}`);
     }
     sections.push(lines.join('\n'));

@@ -24,6 +24,7 @@ import { DEFAULT_PEAD_CONFIG } from '../strategies/strategy-configs.js';
 import { createProgressReporter } from '../formatters/progress-reporter.js';
 import type { HistoricalDataPoint } from '../types.js';
 import { computeConfluence } from '../indicators/confluence-calculator.js';
+import { computeRvol } from './rvol.js';
 
 // ============================================================
 // Options and Result Interfaces
@@ -134,6 +135,12 @@ async function scanSingleTicker(options: ParallelScanOptions): Promise<ParallelS
       signal.ticker = ticker;
       signals.push(signal);
     }
+
+    // Compute and attach RVOL for all signals from this ticker
+    const rvol = computeRvol(dataPoints);
+    for (const sig of signals) {
+      sig.rvol = rvol;
+    }
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     warnings.push(`[${ticker}] Error: ${message}`);
@@ -207,8 +214,8 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
 
     // Track dispatched tasks for completion tracking
     const dispatchedTaskIds = new Set<string>();
-    // Map taskId → { ticker, strategy } for result processing
-    const taskMeta = new Map<string, { ticker: string; strategy: string }>();
+    // Map taskId → { ticker, strategy, rvol } for result processing
+    const taskMeta = new Map<string, { ticker: string; strategy: string; rvol: number | null }>();
 
     // Register result-collecting listener BEFORE dispatching tasks.
     // This prevents a race condition where workers complete tasks during
@@ -225,6 +232,7 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
         const meta = taskMeta.get(result.taskId);
         if (meta) {
           signalOutput.ticker = meta.ticker;
+          signalOutput.rvol = meta.rvol;
         }
         signals.push(signalOutput);
         scannedCount++;
@@ -260,6 +268,9 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
 
       const strategies = resolveStrategies(strategyName);
       let tickerDispatched = false;
+
+      // Compute RVOL on main thread from fetched data (workers don't return raw bars)
+      const tickerRvol = computeRvol(fetchResult.data);
 
       for (const strat of strategies) {
         let params: Record<string, number>;
@@ -312,7 +323,7 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
         };
 
         dispatchedTaskIds.add(taskId);
-        taskMeta.set(taskId, { ticker: fetchResult.ticker, strategy: strat });
+        taskMeta.set(taskId, { ticker: fetchResult.ticker, strategy: strat, rvol: tickerRvol });
         tickerDispatched = true;
         pool.submit(task);
       }

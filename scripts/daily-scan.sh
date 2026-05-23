@@ -22,6 +22,9 @@ $NODE dist/src/cli.js scan --tickers watchlist --strategy v3 --allow-stale --sum
 
 echo "[$(date)] Scan complete. Results: $LOG_FILE" >> "$LOG_DIR/cron.log"
 
+# Signal history upsert
+$NODE dist/src/cli.js signal-history --scan-output "$LOG_FILE" 2>> "$LOG_DIR/cron.log" || echo "[$(date)] Signal history upsert failed" >> "$LOG_DIR/cron.log"
+
 # Update journal — check stop/target hits on open positions
 echo "[$(date)] Updating journal outcomes..." >> "$LOG_DIR/cron.log"
 $NODE dist/src/cli.js journal-update >> "$LOG_DIR/cron.log" 2>&1 || echo "[$(date)] Journal update failed (exit $?)" >> "$LOG_DIR/cron.log"
