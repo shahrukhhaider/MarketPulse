@@ -355,7 +355,11 @@ export function buildSlackPayload(data: ScanData): SlackPayload {
     const rr = calculateRR(s.risk_pct);
     const rvol = (s as any).rvol ?? null;
     const rvolBadge = rvol != null ? `  Vol: ${rvol.toFixed(1)}×` : '';
-    let text = `*${s.ticker}* ${side} · ${s.strategy}\nZone: ${buyZone}  Risk: ${risk}  R:R \`${rr}\`${rvolBadge}`;
+    const candlestickPatterns = (s as any).candlestickPatterns as string[] | undefined;
+    const candleBadge = candlestickPatterns && candlestickPatterns.length > 0
+      ? `  🕯 ${candlestickPatterns.join(', ')}`
+      : '';
+    let text = `*${s.ticker}* ${side} · ${s.strategy}\nZone: ${buyZone}  Risk: ${risk}  R:R \`${rr}\`${rvolBadge}${candleBadge}`;
     const narrative = narrateSignal({ ticker: s.ticker, strategy: s.strategy, signal: s.signal === 'active_late' ? 'active' : s.signal, entry: s.entry, stop: s.stop, target: s.target, reason: s.reason });
     if (narrative) {
       text += `\n${narrative}`;
@@ -558,7 +562,11 @@ export function buildSlackMessage(data: ScanData): string {
       const strategyDisplay = s.strategy.replace(/_/g, ' ');
       const rvol = (s as any).rvol ?? null;
       const rvolBadge = rvol != null ? `  Vol: ${rvol.toFixed(1)}×` : '';
-      lines.push(`${sideIcon} *${s.ticker}* ${side} · ${strategyDisplay}${rvolBadge}`);
+      const candlestickPatterns = (s as any).candlestickPatterns as string[] | undefined;
+      const candleBadge = candlestickPatterns && candlestickPatterns.length > 0
+        ? `  🕯 ${candlestickPatterns.join(', ')}`
+        : '';
+      lines.push(`${sideIcon} *${s.ticker}* ${side} · ${strategyDisplay}${rvolBadge}${candleBadge}`);
       lines.push(`      Entry ${formatPrice(s.entry)} → Stop ${formatPrice(s.stop)} · Risk ${formatPct(s.risk_pct)}`);
       const narrative = narrateSignal({ ticker: s.ticker, strategy: s.strategy, signal: s.signal === 'active_late' ? 'active' : s.signal, entry: s.entry, stop: s.stop, target: s.target, reason: s.reason });
       if (narrative) {

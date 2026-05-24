@@ -101,7 +101,7 @@ function extractActiveSignals(signals: AnnotatedSignal[]): ActiveSignal[] {
     .filter((s) => ACTIVE_CLASSIFICATIONS.has(s.signal))
     .map((s) => {
       const target = s.entry + (s.entry - s.stop) * 2;
-      return {
+      const record: ActiveSignal = {
         ticker: s.ticker,
         strategy: s.strategy,
         entry: s.entry,
@@ -112,6 +112,13 @@ function extractActiveSignals(signals: AnnotatedSignal[]): ActiveSignal[] {
         rationale: s.reason,
         rvol: s.rvol ?? null,
       };
+      if (s.candlestickPatterns !== undefined) {
+        record.candlestickPatterns = s.candlestickPatterns;
+      }
+      if (s.candlestickAdjustment !== undefined) {
+        record.candlestickAdjustment = s.candlestickAdjustment;
+      }
+      return record;
     });
 }
 

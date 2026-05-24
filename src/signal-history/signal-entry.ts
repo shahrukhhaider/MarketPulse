@@ -17,6 +17,8 @@ export interface ActiveSignal {
   rs_rating: number;
   rationale: string[];
   rvol: number | null;
+  candlestickPatterns?: string[];
+  candlestickAdjustment?: number;
 }
 
 export interface NearSignal {

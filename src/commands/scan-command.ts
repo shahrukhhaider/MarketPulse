@@ -31,6 +31,8 @@ import { computePositionMetrics } from '../utils/position-metrics.js';
 import type { PositionMetrics } from '../utils/position-metrics.js';
 import { computeConfluence } from '../indicators/confluence-calculator.js';
 import { computeStats } from '../journal/journal-reporter.js';
+import { scoreCandlesticks } from '../indicators/candlestick-scorer.js';
+import type { Bar } from '../indicators/candlestick-scorer.js';
 
 // ============================================================
 // Dependencies
@@ -104,6 +106,35 @@ function applyRsConfidenceAdjustment(confidence: number, rsRating: number): numb
   else if (rsRating >= 40) adjusted = confidence * 0.90;
   else adjusted = confidence * 0.80;
   return Math.max(0, Math.min(1, adjusted));
+}
+
+// ============================================================
+// Candlestick Confidence Adjustment
+// ============================================================
+
+/**
+ * Apply candlestick pattern adjustment to an active signal.
+ * Only applies to signals with signal === 'active'; all others pass through unchanged.
+ * On scorer error, retains original confidence and omits candlestick fields.
+ * When patterns detected: sets candlestickPatterns and candlestickAdjustment on signal.
+ * When no patterns: returns signal unchanged (fields remain undefined).
+ */
+function applyCandlestickAdjustment(signal: SignalOutput, bars: Bar[]): SignalOutput {
+  if (signal.signal !== 'active') return signal;
+  try {
+    const result = scoreCandlesticks(bars, signal.strategy);
+    if (result.patterns.length === 0) return signal;
+    const adjusted = Math.max(0, Math.min(1, signal.confidence * result.adjustment));
+    return {
+      ...signal,
+      confidence: adjusted,
+      candlestickPatterns: result.patterns,
+      candlestickAdjustment: result.adjustment,
+    };
+  } catch {
+    // Retain original confidence on error
+    return signal;
+  }
 }
 
 // ============================================================
@@ -275,10 +306,33 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
           })
         : result.signals;
 
+      // Apply candlestick adjustment to active signals (after RS adjustment, before sorting)
+      // Fetch last 3 bars per ticker from cache for the scorer
+      const tickerBarsCache = new Map<string, Bar[]>();
+      for (const sig of annotatedSignals) {
+        if (sig.signal !== 'active') continue;
+        if (!tickerBarsCache.has(sig.ticker)) {
+          try {
+            const dataResult = await cachingProvider.getHistoricalData(sig.ticker, '1y');
+            if (dataResult.success && dataResult.data.dataPoints.length > 0) {
+              const dp = dataResult.data.dataPoints;
+              tickerBarsCache.set(sig.ticker, dp.slice(-3).map(p => ({ open: p.open, high: p.high, low: p.low, close: p.close })));
+            }
+          } catch {
+            // On fetch error, skip candlestick adjustment for this ticker
+          }
+        }
+      }
+      const candlestickAnnotatedSignals = annotatedSignals.map(s => {
+        const bars = tickerBarsCache.get(s.ticker);
+        if (!bars) return s;
+        return applyCandlestickAdjustment(s, bars);
+      });
+
       // Compute confluence for v3 scans (multiple strategies)
       if (strategyName === 'v3') {
         const byTicker = new Map<string, SignalOutput[]>();
-        for (const sig of annotatedSignals) {
+        for (const sig of candlestickAnnotatedSignals) {
           const group = byTicker.get(sig.ticker) ?? [];
           group.push(sig);
           byTicker.set(sig.ticker, group);
@@ -305,7 +359,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       }
 
       const output: Record<string, unknown> = {
-        signals: annotatedSignals,
+        signals: candlestickAnnotatedSignals,
         warnings: [...result.warnings, ...positionsResult.warnings],
         total: result.total,
         scanned: result.scanned,
@@ -420,6 +474,29 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         })
       : sorted;
 
+    // Apply candlestick adjustment to active signals (after RS adjustment)
+    // Fetch last 3 bars per ticker from cache for the scorer
+    const seqTickerBarsCache = new Map<string, Bar[]>();
+    for (const sig of annotatedSignals) {
+      if (sig.signal !== 'active') continue;
+      if (!seqTickerBarsCache.has(sig.ticker)) {
+        try {
+          const dataResult = await cachingProvider.getHistoricalData(sig.ticker, '1y');
+          if (dataResult.success && dataResult.data.dataPoints.length > 0) {
+            const dp = dataResult.data.dataPoints;
+            seqTickerBarsCache.set(sig.ticker, dp.slice(-3).map(p => ({ open: p.open, high: p.high, low: p.low, close: p.close })));
+          }
+        } catch {
+          // On fetch error, skip candlestick adjustment for this ticker
+        }
+      }
+    }
+    const candlestickAnnotatedSignals = annotatedSignals.map(s => {
+      const bars = seqTickerBarsCache.get(s.ticker);
+      if (!bars) return s;
+      return applyCandlestickAdjustment(s, bars);
+    });
+
     // Load and process open positions
     // Price data reuse happens transparently via the caching provider
     const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
@@ -434,7 +511,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     }
 
     const output: Record<string, unknown> = {
-      signals: annotatedSignals,
+      signals: candlestickAnnotatedSignals,
       warnings: [...warnings, ...positionsResult.warnings],
       total: tickers.length,
       scanned: signals.length,

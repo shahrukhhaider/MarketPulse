@@ -71,6 +71,15 @@ function formatPct(pct: number): string {
 // ============================================================
 
 /**
+ * Format detected candlestick patterns as a cyan badge.
+ * Returns empty string when no patterns are present.
+ */
+export function candlestickBadge(patterns: string[] | undefined): string {
+  if (!patterns || patterns.length === 0) return '';
+  return cyan(`🕯 ${patterns.join(', ')}`);
+}
+
+/**
  * Format RS Rating as a colored label.
  * Green ≥ 80 (leader), yellow 60–79 (average), dim < 60 (laggard).
  * Returns empty string when no regime data is present.
@@ -525,7 +534,8 @@ function renderActiveSignalLine(sig: AnnotatedSignal): string {
   const rs = rsLabel(sig.regimeState);
   const confLabel = confluenceLabel(sig.confluence);
   const rvolBadge = formatRvolBadge(sig.rvol);
-  return `  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}  ${rs}${confLabel ? '  ' + confLabel : ''}${rvolBadge ? ' ' + rvolBadge : ''}`;
+  const candleBadge = candlestickBadge(sig.candlestickPatterns);
+  return `  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}  ${rs}${confLabel ? '  ' + confLabel : ''}${rvolBadge ? ' ' + rvolBadge : ''}${candleBadge ? ' ' + candleBadge : ''}`;
 }
 
 /**
@@ -568,7 +578,8 @@ function renderMergedSignalBlock(signals: AnnotatedSignal[]): string {
 
   // Header line
   const rvolBadge = formatRvolBadge(sig.rvol);
-  lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${combinedStrat}${conf ? '  ' + conf : ''}${rvolBadge ? ' ' + rvolBadge : ''}`);
+  const candleBadge = candlestickBadge(sig.candlestickPatterns);
+  lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${combinedStrat}${conf ? '  ' + conf : ''}${rvolBadge ? ' ' + rvolBadge : ''}${candleBadge ? ' ' + candleBadge : ''}`);
 
   // Details
   const buyZoneStr = `${formatPrice(zoneLow)} – ${formatPrice(zoneHigh)}`;

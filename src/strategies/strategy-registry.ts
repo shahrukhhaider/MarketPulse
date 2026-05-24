@@ -21,6 +21,8 @@ export interface SignalOutput {
     breakout_level: number | null;
     structure_valid: boolean;
   };
+  candlestickPatterns?: string[];   // detected pattern names from candlestick scorer
+  candlestickAdjustment?: number;   // applied multiplier [0.85, 1.15]
 }
 
 export interface TunableStrategyInterface {
