@@ -118,6 +118,10 @@ function extractActiveSignals(signals: AnnotatedSignal[]): ActiveSignal[] {
       if (s.candlestickAdjustment !== undefined) {
         record.candlestickAdjustment = s.candlestickAdjustment;
       }
+      if (s.lineage) {
+        record.daysInState = s.lineage.daysInState;
+        record.progressionPath = s.lineage.progressionPath;
+      }
       return record;
     });
 }

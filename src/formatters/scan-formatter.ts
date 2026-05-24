@@ -8,6 +8,7 @@
 import type { SignalOutput } from '../strategies/strategy-registry.js';
 import type { RegimeState } from '../indicators/regime-detector.js';
 import type { PositionMetrics } from '../utils/position-metrics.js';
+import type { SignalLineage } from '../indicators/signal-lineage.js';
 import { toExposureTier } from './market-exposure.js';
 import type { MarketRegimeData } from './market-exposure.js';
 import { narrateSignal } from './signal-narrator.js';
@@ -77,6 +78,24 @@ function formatPct(pct: number): string {
 export function candlestickBadge(patterns: string[] | undefined): string {
   if (!patterns || patterns.length === 0) return '';
   return cyan(`🕯 ${patterns.join(', ')}`);
+}
+
+/**
+ * Format lineage context as inline badges for active signals.
+ * Shows Day N (dim), ↗ (green) for textbook progression,
+ * ⚠ Prior attempt Nd ago (yellow), ⚠ Regime shift (yellow).
+ * Returns empty string when lineage is undefined.
+ */
+export function lineageBadges(lineage: SignalLineage | undefined): string {
+  if (!lineage) return '';
+  const badges: string[] = [];
+  badges.push(dim(`Day ${lineage.daysInState}`));
+  if (lineage.textbookProgression) badges.push(green('↗'));
+  if (lineage.priorFailedAttempt) {
+    badges.push(yellow(`⚠ Prior attempt ${lineage.priorAttemptDaysAgo}d ago`));
+  }
+  if (lineage.regimeShift) badges.push(yellow('⚠ Regime shift'));
+  return badges.join(' ');
 }
 
 /**
@@ -535,7 +554,8 @@ function renderActiveSignalLine(sig: AnnotatedSignal): string {
   const confLabel = confluenceLabel(sig.confluence);
   const rvolBadge = formatRvolBadge(sig.rvol);
   const candleBadge = candlestickBadge(sig.candlestickPatterns);
-  return `  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}  ${rs}${confLabel ? '  ' + confLabel : ''}${rvolBadge ? ' ' + rvolBadge : ''}${candleBadge ? ' ' + candleBadge : ''}`;
+  const linBadge = lineageBadges(sig.lineage);
+  return `  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${strat} ${buyZone}  ${red(stop)}  ${yellow(risk)}  ${cyan(rr)}  ${rs}${confLabel ? '  ' + confLabel : ''}${rvolBadge ? ' ' + rvolBadge : ''}${candleBadge ? ' ' + candleBadge : ''}${linBadge ? ' ' + linBadge : ''}`;
 }
 
 /**
@@ -579,7 +599,8 @@ function renderMergedSignalBlock(signals: AnnotatedSignal[]): string {
   // Header line
   const rvolBadge = formatRvolBadge(sig.rvol);
   const candleBadge = candlestickBadge(sig.candlestickPatterns);
-  lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${combinedStrat}${conf ? '  ' + conf : ''}${rvolBadge ? ' ' + rvolBadge : ''}${candleBadge ? ' ' + candleBadge : ''}`);
+  const linBadge = lineageBadges(sig.lineage);
+  lines.push(`  ${isShort ? red(ticker) : green(ticker)}${badgeStr} ${side}${combinedStrat}${conf ? '  ' + conf : ''}${rvolBadge ? ' ' + rvolBadge : ''}${candleBadge ? ' ' + candleBadge : ''}${linBadge ? ' ' + linBadge : ''}`);
 
   // Details
   const buyZoneStr = `${formatPrice(zoneLow)} – ${formatPrice(zoneHigh)}`;

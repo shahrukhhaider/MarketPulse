@@ -33,6 +33,8 @@ import { computeConfluence } from '../indicators/confluence-calculator.js';
 import { computeStats } from '../journal/journal-reporter.js';
 import { scoreCandlesticks } from '../indicators/candlestick-scorer.js';
 import type { Bar } from '../indicators/candlestick-scorer.js';
+import { computeLineage } from '../indicators/signal-lineage.js';
+import type { SignalLineage } from '../indicators/signal-lineage.js';
 
 // ============================================================
 // Dependencies
@@ -329,10 +331,31 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         return applyCandlestickAdjustment(s, bars);
       });
 
+      // Apply signal lineage adjustment to active signals (after candlestick adjustment)
+      const historyPath = join(dataDir, '.stock-tracker', 'signal-history.ndjson');
+      const today = new Date().toISOString().slice(0, 10);
+      const currentMood = regimeResult?.market?.market_mood ?? 'unknown';
+
+      const lineageAnnotatedSignals = candlestickAnnotatedSignals.map(s => {
+        if (s.signal !== 'active' && s.signal !== 'active_late') return s;
+
+        const lineage = computeLineage({
+          ticker: s.ticker,
+          strategy: s.strategy,
+          currentState: 'active',
+          currentMood,
+          historyPath,
+          today,
+        });
+
+        const adjusted = Math.max(0, Math.min(1, s.confidence * lineage.adjustment));
+        return { ...s, confidence: adjusted, lineage };
+      });
+
       // Compute confluence for v3 scans (multiple strategies)
       if (strategyName === 'v3') {
         const byTicker = new Map<string, SignalOutput[]>();
-        for (const sig of candlestickAnnotatedSignals) {
+        for (const sig of lineageAnnotatedSignals) {
           const group = byTicker.get(sig.ticker) ?? [];
           group.push(sig);
           byTicker.set(sig.ticker, group);
@@ -359,7 +382,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       }
 
       const output: Record<string, unknown> = {
-        signals: candlestickAnnotatedSignals,
+        signals: lineageAnnotatedSignals,
         warnings: [...result.warnings, ...positionsResult.warnings],
         total: result.total,
         scanned: result.scanned,
@@ -497,6 +520,27 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       return applyCandlestickAdjustment(s, bars);
     });
 
+    // Apply signal lineage adjustment to active signals (after candlestick adjustment)
+    const seqHistoryPath = join(dataDir, '.stock-tracker', 'signal-history.ndjson');
+    const seqToday = new Date().toISOString().slice(0, 10);
+    const seqCurrentMood = regimeResult?.market?.market_mood ?? 'unknown';
+
+    const lineageAnnotatedSignals = candlestickAnnotatedSignals.map(s => {
+      if (s.signal !== 'active' && s.signal !== 'active_late') return s;
+
+      const lineage = computeLineage({
+        ticker: s.ticker,
+        strategy: s.strategy,
+        currentState: 'active',
+        currentMood: seqCurrentMood,
+        historyPath: seqHistoryPath,
+        today: seqToday,
+      });
+
+      const adjusted = Math.max(0, Math.min(1, s.confidence * lineage.adjustment));
+      return { ...s, confidence: adjusted, lineage };
+    });
+
     // Load and process open positions
     // Price data reuse happens transparently via the caching provider
     const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
@@ -511,7 +555,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     }
 
     const output: Record<string, unknown> = {
-      signals: candlestickAnnotatedSignals,
+      signals: lineageAnnotatedSignals,
       warnings: [...warnings, ...positionsResult.warnings],
       total: tickers.length,
       scanned: signals.length,

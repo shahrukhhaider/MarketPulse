@@ -19,6 +19,8 @@ export interface ActiveSignal {
   rvol: number | null;
   candlestickPatterns?: string[];
   candlestickAdjustment?: number;
+  daysInState?: number;
+  progressionPath?: string;
 }
 
 export interface NearSignal {
