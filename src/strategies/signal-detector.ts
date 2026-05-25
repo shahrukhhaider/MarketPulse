@@ -7,6 +7,7 @@ import { TrendPullbackEngine } from './trend-pullback-engine.js';
 import { BearBreakdownEngine } from './bear-breakdown-engine.js';
 import { PostEarningsDriftEngine } from './post-earnings-drift-engine.js';
 import { KeltnerMeanReversionEngine } from './keltner-mean-reversion-engine.js';
+import { VduEngine } from './vdu-engine.js';
 import type { ConsolidationResult } from './post-earnings-drift-engine.js';
 import { buildConsolidationBreakoutConfig, buildTrendPullbackGridConfig, buildBearBreakdownConfig, buildKeltnerMeanReversionConfig } from './parameter-grid.js';
 import { BreakoutContextAnalyzer } from '../indicators/breakout-context.js';
@@ -67,6 +68,11 @@ export function detectSignal(
 
   if (strategy === 'keltner_mean_reversion') {
     return detectKeltnerMeanReversionSignal(data, params);
+  }
+
+  if (strategy === 'volume_dry_up') {
+    const vduEngine = new VduEngine();
+    return vduEngine.detectSignal(data, params);
   }
 
   // Unknown strategy — return none

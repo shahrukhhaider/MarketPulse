@@ -61,7 +61,7 @@ function generateTaskId(taskType: string, ticker: string, strategy: string): str
  */
 function resolveStrategies(strategyName: string): string[] {
   if (strategyName === 'v3') {
-    return ['consolidation_breakout', 'trend_pullback', 'bear_breakdown', 'post_earnings_drift', 'keltner_mean_reversion'];
+    return ['consolidation_breakout', 'trend_pullback', 'bear_breakdown', 'post_earnings_drift', 'keltner_mean_reversion', 'volume_dry_up'];
   }
   return [strategyName];
 }

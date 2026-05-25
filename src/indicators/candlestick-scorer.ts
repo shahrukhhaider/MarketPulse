@@ -33,7 +33,8 @@ export type CandlestickStrategy =
   | 'keltner_mean_reversion'
   | 'consolidation_breakout'
   | 'post_earnings_drift'
-  | 'bear_breakdown';
+  | 'bear_breakdown'
+  | 'volume_dry_up';
 
 /** Result returned by the scorer */
 export interface CandlestickScorerResult {
@@ -65,6 +66,7 @@ const VALID_STRATEGIES: Set<string> = new Set([
   'consolidation_breakout',
   'post_earnings_drift',
   'bear_breakdown',
+  'volume_dry_up',
 ]);
 
 /**
@@ -99,11 +101,11 @@ const PATTERN_APPLICABILITY: Record<CandlestickPattern, Set<string>> = {
   bullish_engulfing: new Set(['trend_pullback', 'keltner_mean_reversion', 'consolidation_breakout', 'post_earnings_drift', 'bear_breakdown']),
   morning_star: new Set(['trend_pullback', 'keltner_mean_reversion', 'bear_breakdown']),
   dragonfly_doji: new Set(['trend_pullback', 'keltner_mean_reversion', 'bear_breakdown']),
-  bullish_marubozu: new Set(['consolidation_breakout', 'bear_breakdown']),
-  bearish_engulfing: new Set(['trend_pullback', 'keltner_mean_reversion', 'consolidation_breakout', 'post_earnings_drift', 'bear_breakdown']),
+  bullish_marubozu: new Set(['consolidation_breakout', 'bear_breakdown', 'volume_dry_up']),
+  bearish_engulfing: new Set(['trend_pullback', 'keltner_mean_reversion', 'consolidation_breakout', 'post_earnings_drift', 'bear_breakdown', 'volume_dry_up']),
   shooting_star: new Set(['trend_pullback', 'consolidation_breakout', 'post_earnings_drift', 'bear_breakdown']),
   bearish_marubozu: new Set(['consolidation_breakout', 'bear_breakdown']),
-  doji: new Set(['trend_pullback', 'keltner_mean_reversion', 'consolidation_breakout', 'post_earnings_drift', 'bear_breakdown']),
+  doji: new Set(['trend_pullback', 'keltner_mean_reversion', 'consolidation_breakout', 'post_earnings_drift', 'bear_breakdown', 'volume_dry_up']),
 };
 
 // ============================================================

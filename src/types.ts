@@ -46,7 +46,8 @@ export type StrategyType =
   | 'consolidation_breakout'
   | 'bear_breakdown'
   | 'post_earnings_drift'
-  | 'keltner_mean_reversion';
+  | 'keltner_mean_reversion'
+  | 'volume_dry_up';
 
 export type { CompositeStrategyParams, ConsolidationBreakoutParams, PhasedStrategyParams, TrendPullbackParams, BearBreakdownParams, PostEarningsDriftParams, KeltnerMeanReversionParams } from './strategies/strategy-configs.js';
 

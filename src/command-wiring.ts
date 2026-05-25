@@ -40,6 +40,7 @@ import { ConsolidationBreakoutStrategy } from './strategies/consolidation-breako
 import { BearBreakdownStrategy } from './strategies/bear-breakdown-strategy.js';
 import { PostEarningsDriftStrategy } from './strategies/post-earnings-drift-strategy.js';
 import { KeltnerMeanReversionStrategy } from './strategies/keltner-mean-reversion-strategy.js';
+import { VduEngine } from './strategies/vdu-engine.js';
 import { createTuneHandler } from './commands/tune-command.js';
 import { createScanHandler } from './commands/scan-command.js';
 import { createChartHandler } from './commands/chart-command.js';
@@ -1443,6 +1444,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   strategyRegistry.register(new BearBreakdownStrategy());
   strategyRegistry.register(new PostEarningsDriftStrategy(dataDir));
   strategyRegistry.register(new KeltnerMeanReversionStrategy());
+  strategyRegistry.register(new VduEngine());
 
   // --- New pipeline commands: tune, scan, chart ---
   const tuneHandler = createTuneHandler({ cachingProvider, registry: strategyRegistry, dataDir });
@@ -1657,5 +1659,7 @@ function getDefaultParams(strategyType: StrategyType): StrategyParams {
       return { config: DEFAULT_PEAD_CONFIG, earningsDates: [] } as StrategyParams;
     case 'keltner_mean_reversion':
       return { config: DEFAULT_KMR_CONFIG } as StrategyParams;
+    case 'volume_dry_up':
+      return { config: {} } as StrategyParams;
   }
 }

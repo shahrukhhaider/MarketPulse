@@ -42,6 +42,10 @@ const TEMPLATES: Record<string, { active: string; near: string }> = {
     active: "Gapped up on earnings and is building a tight base. Momentum continuation — institutional accumulation after the gap.",
     near: "{ticker} post-earnings base forming. Watch for breakout above {entry}.",
   },
+  volume_dry_up: {
+    active: "{ticker} has been consolidating in a tight range with volume drying up to extreme lows. Base is maturing — watch for a breakout above {entry}.",
+    near: "{ticker} volume contracting on tight price action. Setup building — entry zone {entry} if volume expands.",
+  },
 };
 
 // ============================================================

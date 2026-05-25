@@ -28,6 +28,7 @@ export const LONG_STRATEGIES: Set<string> = new Set([
   'trend_pullback',
   'post_earnings_drift',
   'keltner_mean_reversion',
+  'volume_dry_up',
 ]);
 
 /**
@@ -132,7 +133,7 @@ export function computeConfluence(signals: SignalOutput[]): ConfluenceResult {
 
   // Long confluence: scale by agreement count
   // 1 strategy = 0.5 (insufficient for agreement), 2+ = proportional to count
-  // Max possible long strategies = 4, so scale = min(count/2, 1.0)
+  // Max possible long strategies = 5, so scale = min(count/2, 1.0)
   const agreementScale = Math.min(activeLong.length / 2, 1.0);
 
   // Normalize strength: average weighted vote (0 to 1 range)

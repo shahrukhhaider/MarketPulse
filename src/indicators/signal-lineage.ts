@@ -35,6 +35,7 @@ export interface SignalLineage {
   priorAttemptDaysAgo: number | null; // days since the failed attempt
   regimeShift: boolean;             // market_mood changed since first appearance
   adjustment: number;               // [0.85, 1.15] composite multiplier
+  preceded_by_vdu: boolean;         // CB ACTIVE preceded by VDU NEAR/ACTIVE within 5 entries
 }
 
 // ============================================================
@@ -50,6 +51,7 @@ export const NEUTRAL_LINEAGE: SignalLineage = {
   priorAttemptDaysAgo: null,
   regimeShift: false,
   adjustment: 1.0,
+  preceded_by_vdu: false,
 };
 
 // ============================================================
@@ -403,6 +405,47 @@ function computeAdjustment(
 }
 
 // ============================================================
+// VDU Precedence Detection (for CB lineage)
+// ============================================================
+
+/**
+ * Detect if a CB ACTIVE signal was preceded by a VDU NEAR or ACTIVE signal
+ * for the same ticker within the previous 5 calendar entries.
+ *
+ * Searches the signal-history.ndjson entries for the ticker appearing with
+ * strategy "volume_dry_up" in the `active` or `near` arrays.
+ *
+ * @param entries - History entries (date descending, excluding today)
+ * @param ticker - The ticker to search for
+ * @returns true if VDU NEAR or ACTIVE found within 5 entries
+ */
+function detectPrecededByVdu(
+  entries: Array<{ date: string; active: Array<{ ticker: string; strategy: string }>; near: Array<{ ticker: string; strategy: string }>; market_context: { market_mood: string } }>,
+  ticker: string
+): boolean {
+  // Search only the most recent 5 entries
+  const lookback = Math.min(5, entries.length);
+
+  for (let i = 0; i < lookback; i++) {
+    const entry = entries[i];
+
+    // Check if ticker appears with strategy "volume_dry_up" in active array
+    const inActive = (entry.active || []).some(
+      (s) => s.ticker === ticker && s.strategy === 'volume_dry_up'
+    );
+    if (inActive) return true;
+
+    // Check if ticker appears with strategy "volume_dry_up" in near array
+    const inNear = (entry.near || []).some(
+      (s) => s.ticker === ticker && s.strategy === 'volume_dry_up'
+    );
+    if (inNear) return true;
+  }
+
+  return false;
+}
+
+// ============================================================
 // Main Exported Function
 // ============================================================
 
@@ -458,6 +501,12 @@ export function computeLineage(input: LineageInput): SignalLineage {
       regimeShift
     );
 
+    // Step 9: VDU precedence detection (only for CB ACTIVE signals)
+    let preceded_by_vdu = false;
+    if (input.strategy === 'consolidation_breakout' && input.currentState === 'active') {
+      preceded_by_vdu = detectPrecededByVdu(entries, input.ticker);
+    }
+
     return {
       daysInState,
       progressionPath,
@@ -466,6 +515,7 @@ export function computeLineage(input: LineageInput): SignalLineage {
       priorAttemptDaysAgo,
       regimeShift,
       adjustment,
+      preceded_by_vdu,
     };
   } catch {
     // Graceful degradation: return neutral on any error

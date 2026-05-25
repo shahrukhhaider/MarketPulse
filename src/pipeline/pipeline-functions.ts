@@ -3,6 +3,8 @@ import type { TuningPerformanceMetrics } from './tuning-engine.js';
 import type { ConsolidationBreakoutGridEntry, TrendPullbackGridEntry, BearBreakdownGridEntry, KeltnerMeanReversionGridEntry } from '../strategies/parameter-grid.js';
 import { generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig, generateTrendPullbackGrid, buildTrendPullbackGridConfig, generateBearBreakdownGrid, buildBearBreakdownConfig, buildPostEarningsDriftConfig, generateKeltnerMeanReversionGrid, buildKeltnerMeanReversionConfig } from '../strategies/parameter-grid.js';
 import { splitData, evaluateV3Configuration, evaluateTrendPullbackConfiguration, evaluateBearBreakdownConfiguration, evaluateKeltnerMeanReversionConfiguration } from './walk-forward-validator.js';
+import { VduBacktestEngine, DEFAULT_VDU_CONFIG } from '../strategies/vdu-engine.js';
+import type { VduConfig, VduParams } from '../strategies/vdu-engine.js';
 import { BacktestEngine } from './backtest-engine.js';
 import { ConsolidationBreakoutEngine } from '../strategies/consolidation-breakout-engine.js';
 import { TrendPullbackEngine } from '../strategies/trend-pullback-engine.js';
@@ -21,7 +23,7 @@ import { EarningsDateProvider } from '../data/earnings-date-provider.js';
 
 export interface TuneResult {
   bestParams: Record<string, number>;
-  bestEntry: ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry | KeltnerMeanReversionGridEntry;
+  bestEntry: ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry | KeltnerMeanReversionGridEntry | VduGridEntry;
   isMetrics: TuningPerformanceMetrics;
   oosMetrics: TuningPerformanceMetrics;
   configurationsEvaluated: number;
@@ -103,13 +105,13 @@ export function tuneParams(
   // Step 2 & 3: Generate grid entries lazily and evaluate each on IS data.
   // Only keep entries that pass the filter to avoid storing millions of results.
   const filtered: Array<{
-    entry: ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry | KeltnerMeanReversionGridEntry;
+    entry: ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry | KeltnerMeanReversionGridEntry | VduGridEntry;
     isMetrics: TuningPerformanceMetrics;
   }> = [];
 
   let configurationsEvaluated = 0;
 
-  const grid: Iterable<ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry | KeltnerMeanReversionGridEntry> =
+  const grid: Iterable<ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry | KeltnerMeanReversionGridEntry | VduGridEntry> =
     strategy === 'consolidation_breakout'
       ? generateConsolidationBreakoutGrid()
       : strategy === 'trend_pullback'
@@ -118,9 +120,11 @@ export function tuneParams(
           ? generateBearBreakdownGrid()
           : strategy === 'keltner_mean_reversion'
             ? generateKeltnerMeanReversionGrid()
-            : [];
+            : strategy === 'volume_dry_up'
+              ? generateVduGrid()
+              : [];
 
-  if (strategy !== 'consolidation_breakout' && strategy !== 'trend_pullback' && strategy !== 'bear_breakdown' && strategy !== 'keltner_mean_reversion') {
+  if (strategy !== 'consolidation_breakout' && strategy !== 'trend_pullback' && strategy !== 'bear_breakdown' && strategy !== 'keltner_mean_reversion' && strategy !== 'volume_dry_up') {
     return { error: `Unsupported strategy for tuneParams: ${strategy}` };
   }
 
@@ -133,6 +137,8 @@ export function tuneParams(
       metrics = evaluateTrendPullbackConfiguration(entry as TrendPullbackGridEntry, isData, isCache);
     } else if (strategy === 'bear_breakdown') {
       metrics = evaluateBearBreakdownConfiguration(entry as BearBreakdownGridEntry, isData, isCache);
+    } else if (strategy === 'volume_dry_up') {
+      metrics = evaluateVduConfiguration(entry as VduGridEntry, isData);
     } else {
       metrics = evaluateKeltnerMeanReversionConfiguration(entry as KeltnerMeanReversionGridEntry, isData, isCache);
     }
@@ -167,6 +173,8 @@ export function tuneParams(
     bestOosMetrics = evaluateTrendPullbackConfiguration(bestEntry as TrendPullbackGridEntry, oosData, oosCache);
   } else if (strategy === 'bear_breakdown') {
     bestOosMetrics = evaluateBearBreakdownConfiguration(bestEntry as BearBreakdownGridEntry, oosData, oosCache);
+  } else if (strategy === 'volume_dry_up') {
+    bestOosMetrics = evaluateVduConfiguration(bestEntry as VduGridEntry, oosData);
   } else {
     bestOosMetrics = evaluateKeltnerMeanReversionConfiguration(bestEntry as KeltnerMeanReversionGridEntry, oosData, oosCache);
   }
@@ -268,6 +276,15 @@ export function runBacktest(
     engine.reset();
     const backtestEngine = new BacktestEngine();
     return backtestEngine.runV2(data, engine, kmrParams);
+  }
+
+  if (strategy === 'volume_dry_up') {
+    const config = buildVduConfig(params);
+    const vduParams: VduParams = { config };
+    const engine = new VduBacktestEngine();
+    engine.reset();
+    const backtestEngine = new BacktestEngine();
+    return backtestEngine.runV2(data, engine, vduParams as any);
   }
 
   throw new Error(`Unsupported strategy for runBacktest: ${strategy}`);
@@ -456,5 +473,143 @@ export function computeCombinedMetrics(
       keltner_mean_reversion: kmrResult?.performanceSummary,
       bear_breakdown: bbResult?.performanceSummary,
     },
+  };
+}
+
+// ============================================================
+// VDU Config Builder (from flat params)
+// ============================================================
+
+/**
+ * Build a VduConfig from a flat params record, falling back to defaults.
+ */
+export function buildVduConfig(params: Record<string, number>): VduConfig {
+  const consolidation_window = params.consolidation_window ?? DEFAULT_VDU_CONFIG.consolidation_window;
+  const max_range_pct = params.max_range_pct ?? DEFAULT_VDU_CONFIG.max_range_pct;
+  const atr_ratio_threshold = params.atr_ratio_threshold ?? DEFAULT_VDU_CONFIG.atr_ratio_threshold;
+
+  return {
+    consolidation_window,
+    max_range_pct,
+    atr_ratio_threshold,
+    proximity_to_highs_pct: params.proximity_to_highs_pct ?? DEFAULT_VDU_CONFIG.proximity_to_highs_pct,
+    volume_lookback: params.volume_lookback ?? DEFAULT_VDU_CONFIG.volume_lookback,
+    volume_threshold_forming: params.volume_threshold_forming ?? DEFAULT_VDU_CONFIG.volume_threshold_forming,
+    volume_threshold_near: params.volume_threshold_near ?? DEFAULT_VDU_CONFIG.volume_threshold_near,
+    volume_threshold_active: params.volume_threshold_active ?? DEFAULT_VDU_CONFIG.volume_threshold_active,
+    min_declining_days: params.min_declining_days ?? DEFAULT_VDU_CONFIG.min_declining_days,
+    near_range_pct: params.near_range_pct ?? (max_range_pct - 1),
+    near_atr_ratio: params.near_atr_ratio ?? (atr_ratio_threshold * 0.85),
+    active_range_pct: params.active_range_pct ?? (max_range_pct - 2),
+    active_atr_ratio: params.active_atr_ratio ?? (atr_ratio_threshold * 0.70),
+    stopLoss: {
+      atr_multiple: params.atr_multiple ?? DEFAULT_VDU_CONFIG.stopLoss.atr_multiple,
+      swing_lookback: params.swing_lookback ?? DEFAULT_VDU_CONFIG.stopLoss.swing_lookback,
+      buffer: params.buffer ?? DEFAULT_VDU_CONFIG.stopLoss.buffer,
+    },
+    r_multiple: params.r_multiple ?? DEFAULT_VDU_CONFIG.r_multiple,
+    sma_period: params.sma_period ?? DEFAULT_VDU_CONFIG.sma_period,
+    max_risk_pct: params.max_risk_pct ?? DEFAULT_VDU_CONFIG.max_risk_pct,
+  };
+}
+
+// ============================================================
+// VDU Grid Generation and Evaluation (for tuneParams)
+// ============================================================
+
+export interface VduGridEntry {
+  params: Record<string, number>;
+  config: VduConfig;
+}
+
+/**
+ * Generate VDU parameter grid entries for walk-forward tuning.
+ */
+export function* generateVduGrid(): Iterable<VduGridEntry> {
+  const consolidation_windows = [10, 12, 15, 18, 20];
+  const max_range_pcts = [4, 5, 6, 7, 8];
+  const atr_ratio_thresholds = [0.80, 0.90, 1.0, 1.2, 1.5];
+  const volume_threshold_actives = [0.45, 0.55, 0.65, 0.75];
+  const volume_threshold_nears = [0.60, 0.70, 0.80];
+  const volume_threshold_formings = [0.80, 0.85, 0.90, 0.95];
+  const min_declining_days_arr = [2, 3, 4];
+  const r_multiples = [2.0, 3.0];
+
+  for (const consolidation_window of consolidation_windows) {
+    for (const max_range_pct of max_range_pcts) {
+      for (const atr_ratio_threshold of atr_ratio_thresholds) {
+        for (const volume_threshold_active of volume_threshold_actives) {
+          for (const volume_threshold_near of volume_threshold_nears) {
+            // Enforce monotonic ordering
+            if (volume_threshold_active >= volume_threshold_near) continue;
+
+            for (const volume_threshold_forming of volume_threshold_formings) {
+              if (volume_threshold_near >= volume_threshold_forming) continue;
+
+              for (const min_declining_days of min_declining_days_arr) {
+                for (const r_multiple of r_multiples) {
+                  const params: Record<string, number> = {
+                    consolidation_window,
+                    max_range_pct,
+                    atr_ratio_threshold,
+                    volume_threshold_active,
+                    volume_threshold_near,
+                    volume_threshold_forming,
+                    min_declining_days,
+                    r_multiple,
+                  };
+                  const config = buildVduConfig(params);
+                  yield { params, config };
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Evaluate a single VDU grid entry against historical data.
+ * Uses VduBacktestEngine with BacktestEngine.runV2().
+ */
+export function evaluateVduConfiguration(
+  entry: VduGridEntry,
+  dataPoints: HistoricalDataPoint[]
+): TuningPerformanceMetrics {
+  const engine = new VduBacktestEngine();
+  engine.reset();
+
+  const vduParams: VduParams = { config: entry.config };
+  const backtestEngine = new BacktestEngine();
+  const result = backtestEngine.runV2(dataPoints, engine, vduParams as any);
+
+  const { performanceSummary } = result;
+  const trades = performanceSummary.trades;
+
+  let profitFactor: number;
+  if (trades.length === 0) {
+    profitFactor = 0;
+  } else {
+    let grossProfits = 0;
+    let grossLosses = 0;
+    for (const trade of trades) {
+      if (trade.profitLossPercent > 0) {
+        grossProfits += trade.profitLossPercent;
+      } else if (trade.profitLossPercent < 0) {
+        grossLosses += Math.abs(trade.profitLossPercent);
+      }
+    }
+    profitFactor = grossLosses === 0 ? (grossProfits > 0 ? Infinity : 0) : grossProfits / grossLosses;
+  }
+
+  return {
+    totalReturnPercent: performanceSummary.totalReturnPercent,
+    sharpeRatio: performanceSummary.sharpeRatio,
+    maxDrawdownPercent: performanceSummary.maxDrawdownPercent,
+    winRate: performanceSummary.winRate,
+    tradeCount: performanceSummary.numberOfTrades,
+    profitFactor,
   };
 }
