@@ -22,6 +22,7 @@ import type { WorkerTask, WorkerResult } from './worker-pool.js';
 import { fetchHistoricalDataStream } from '../data/data-fetcher.js';
 import { createProgressReporter } from '../formatters/progress-reporter.js';
 import type { HistoricalDataPoint } from '../types.js';
+import type { CapTier } from '../strategies/parameter-grid.js';
 
 // ============================================================
 // Options Interface
@@ -36,6 +37,8 @@ export interface ParallelTuneOptions {
   runBacktest: boolean;
   cachingProvider: HistoricalDataCache;
   dataDir: string;
+  /** Market capitalization tier for parameter grid selection */
+  tier?: CapTier;
 }
 
 // ============================================================
@@ -59,6 +62,7 @@ function buildStrategySummary(
   result: TuneResult | { error: string },
   shouldSave: boolean,
   dataDir: string,
+  tier: CapTier = 'large_cap',
 ): TuneSummary {
   if ('error' in result) {
     const errorMsg = result.error;
@@ -106,6 +110,7 @@ function buildStrategySummary(
       walk_forward_metrics: toWalkForwardMetrics(result.oosMetrics),
       last_tuned_at: lastTunedAt,
       valid_until: validUntil,
+      ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
     };
 
     const saveResult = saveStrategyProfile(profile, dataDir);
@@ -144,24 +149,29 @@ function processTickerResult(
 
   // Build summaries for all strategies
   const cbSummary = buildStrategySummary(
-    ticker, 'consolidation_breakout', v3Result.consolidation_breakout, options.shouldSave, options.dataDir,
+    ticker, 'consolidation_breakout', v3Result.consolidation_breakout, options.shouldSave, options.dataDir, options.tier ?? 'large_cap',
   );
   summaries.push(cbSummary);
 
   const tpSummary = buildStrategySummary(
-    ticker, 'trend_pullback', v3Result.trend_pullback, options.shouldSave, options.dataDir,
+    ticker, 'trend_pullback', v3Result.trend_pullback, options.shouldSave, options.dataDir, options.tier ?? 'large_cap',
   );
   summaries.push(tpSummary);
 
   const bbSummary = buildStrategySummary(
-    ticker, 'bear_breakdown', v3Result.bear_breakdown, options.shouldSave, options.dataDir,
+    ticker, 'bear_breakdown', v3Result.bear_breakdown, options.shouldSave, options.dataDir, options.tier ?? 'large_cap',
   );
   summaries.push(bbSummary);
 
   const kmrSummary = buildStrategySummary(
-    ticker, 'keltner_mean_reversion', v3Result.keltner_mean_reversion, options.shouldSave, options.dataDir,
+    ticker, 'keltner_mean_reversion', v3Result.keltner_mean_reversion, options.shouldSave, options.dataDir, options.tier ?? 'large_cap',
   );
   summaries.push(kmrSummary);
+
+  const vduSummary = buildStrategySummary(
+    ticker, 'volume_dry_up', v3Result.volume_dry_up, options.shouldSave, options.dataDir, options.tier ?? 'large_cap',
+  );
+  summaries.push(vduSummary);
 
   // Update counters
   if (cbSummary.status === 'success') succeeded++;
@@ -180,17 +190,23 @@ function processTickerResult(
   else if (kmrSummary.status === 'error') failed++;
   else skipped++;
 
+  if (vduSummary.status === 'success') succeeded++;
+  else if (vduSummary.status === 'error') failed++;
+  else skipped++;
+
   // Run backtest + chart on main thread if enabled and at least one strategy succeeded
   if (options.runBacktest) {
     const cbResult = v3Result.consolidation_breakout;
     const tpResult = v3Result.trend_pullback;
     const kmrResult = v3Result.keltner_mean_reversion;
     const bbResult = v3Result.bear_breakdown;
+    const vduResult = v3Result.volume_dry_up;
 
     const hasCbParams = !('error' in cbResult);
     const hasTpParams = !('error' in tpResult);
     const hasKmrParams = !('error' in kmrResult);
     const hasBbParams = !('error' in bbResult);
+    const hasVduParams = !('error' in vduResult);
 
     if (hasCbParams || hasTpParams) {
       try {
@@ -198,9 +214,10 @@ function processTickerResult(
         const tpParams = hasTpParams ? tpResult.bestParams : {};
         const kmrParams = hasKmrParams ? kmrResult.bestParams : {};
         const bbParams = hasBbParams ? bbResult.bestParams : {};
+        const vduParams = hasVduParams ? vduResult.bestParams : {};
 
         if (hasCbParams && hasTpParams) {
-          const btResult = backtestV3(data, cbParams, tpParams, kmrParams, bbParams);
+          const btResult = backtestV3(data, cbParams, tpParams, kmrParams, bbParams, vduParams);
           // Render chart for the combined backtest (use consolidation_breakout result for chart)
           renderChart(btResult.consolidation_breakout, data, options.dataDir, ticker);
         }
@@ -246,7 +263,7 @@ async function tuneSingleTicker(options: ParallelTuneOptions): Promise<TuneBatch
     const dataPoints = dataResult.data.dataPoints;
 
     // Run tuneV3 directly on main thread
-    const v3Result = tuneV3(dataPoints);
+    const v3Result = tuneV3(dataPoints, options.tier ?? 'large_cap');
 
     // Process result (backtest + chart + profile save)
     const processed = processTickerResult(ticker, v3Result, dataPoints, options);
@@ -392,6 +409,7 @@ export async function parallelTune(options: ParallelTuneOptions): Promise<TuneBa
         taskType: 'tune',
         ticker: fetchResult.ticker,
         data: fetchResult.data,
+        tier: options.tier,
       };
 
       dispatchedTickers.add(fetchResult.ticker);

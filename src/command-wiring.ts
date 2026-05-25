@@ -33,7 +33,7 @@ import { generateChartHtml, generateCombinedChartHtml, getChartFilePath } from '
 import { writeFileSync, readFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { buildConfig, buildV2Config, generateV2Grid, generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig } from './strategies/parameter-grid.js';
-import type { ConsolidationBreakoutGridEntry } from './strategies/parameter-grid.js';
+import type { CapTier, ConsolidationBreakoutGridEntry } from './strategies/parameter-grid.js';
 import { evaluateV3Configuration, splitData } from './pipeline/walk-forward-validator.js';
 import { StrategyRegistry } from './strategies/strategy-registry.js';
 import { ConsolidationBreakoutStrategy } from './strategies/consolidation-breakout-strategy.js';
@@ -41,7 +41,7 @@ import { BearBreakdownStrategy } from './strategies/bear-breakdown-strategy.js';
 import { PostEarningsDriftStrategy } from './strategies/post-earnings-drift-strategy.js';
 import { KeltnerMeanReversionStrategy } from './strategies/keltner-mean-reversion-strategy.js';
 import { VduEngine } from './strategies/vdu-engine.js';
-import { createTuneHandler } from './commands/tune-command.js';
+import { createTuneHandler, parseCapTier } from './commands/tune-command.js';
 import { createScanHandler } from './commands/scan-command.js';
 import { createChartHandler } from './commands/chart-command.js';
 import { createScanChartHandler } from './commands/scan-chart-command.js';
@@ -400,6 +400,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     'consolidation_breakout',
     'post_earnings_drift',
     'keltner_mean_reversion',
+    'volume_dry_up',
   ];
 
   router.register('backtest', ['ticker', 'strategy'], async (opts) => {
@@ -436,14 +437,16 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         const tpProfile = loadStrategyProfile(ticker, 'trend_pullback', { allowStale: true, baseDir: dataDir });
         const kmrProfile = loadStrategyProfile(ticker, 'keltner_mean_reversion', { allowStale: true, baseDir: dataDir });
         const bbProfile = loadStrategyProfile(ticker, 'bear_breakdown', { allowStale: true, baseDir: dataDir });
+        const vduProfile = loadStrategyProfile(ticker, 'volume_dry_up', { allowStale: true, baseDir: dataDir });
 
         // Use profile params if available, otherwise use empty params (will use defaults from grid)
         const cbParams: Record<string, number> = cbProfile.success ? cbProfile.data.params : {};
         const tpParams: Record<string, number> = tpProfile.success ? tpProfile.data.params : {};
         const kmrParams: Record<string, number> = kmrProfile.success ? kmrProfile.data.params : {};
         const bbParams: Record<string, number> = bbProfile.success ? bbProfile.data.params : {};
+        const vduParams: Record<string, number> = vduProfile.success ? vduProfile.data.params : {};
 
-        const v3Result: V3BacktestResult = backtestV3(dataPoints, cbParams, tpParams, kmrParams, bbParams);
+        const v3Result: V3BacktestResult = backtestV3(dataPoints, cbParams, tpParams, kmrParams, bbParams, vduParams);
         v3Result.consolidation_breakout.ticker = ticker;
         v3Result.trend_pullback.ticker = ticker;
         if (v3Result.keltner_mean_reversion) {
@@ -451,6 +454,9 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         }
         if (v3Result.bear_breakdown) {
           v3Result.bear_breakdown.ticker = ticker;
+        }
+        if (v3Result.volume_dry_up) {
+          v3Result.volume_dry_up.ticker = ticker;
         }
 
         if (opts['chart'] !== undefined) {
@@ -1008,6 +1014,13 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
       const period = '5y';
       const forceTune = opts['force'] !== undefined;
 
+      // Validate --cap-tier flag
+      const tierResult = parseCapTier(opts['cap-tier']);
+      if (typeof tierResult === 'object' && 'error' in tierResult) {
+        return errorResult('tune-and-chart', 'INVALID_PARAM_RANGE', tierResult.error);
+      }
+      const tier: CapTier = tierResult;
+
       try {
         // Step 1: Fetch data
         let dataResult;
@@ -1024,10 +1037,12 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         let tpBestParams: Record<string, number> = {};
         let bbBestParams: Record<string, number> = {};
         let kmrBestParams: Record<string, number> = {};
+        let vduBestParams: Record<string, number> = {};
         let cbTuneResult: V3TuneResult['consolidation_breakout'] = { error: 'skipped' };
         let tpTuneResult: V3TuneResult['trend_pullback'] = { error: 'skipped' };
         let bbTuneResult: V3TuneResult['bear_breakdown'] = { error: 'skipped' };
         let kmrTuneResult: V3TuneResult['keltner_mean_reversion'] = { error: 'skipped' };
+        let vduTuneResult: V3TuneResult['volume_dry_up'] = { error: 'skipped' };
         let tuningSkipped = false;
 
         if (!forceTune) {
@@ -1035,6 +1050,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           const tpProfile = loadStrategyProfile(ticker, 'trend_pullback', { baseDir: dataDir });
           const bbProfile = loadStrategyProfile(ticker, 'bear_breakdown', { baseDir: dataDir });
           const kmrProfile = loadStrategyProfile(ticker, 'keltner_mean_reversion', { baseDir: dataDir });
+          const vduProfile = loadStrategyProfile(ticker, 'volume_dry_up', { baseDir: dataDir });
 
           if (cbProfile.success && tpProfile.success) {
             // Both core profiles are fresh — skip tuning
@@ -1046,27 +1062,32 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
             if (kmrProfile.success) {
               kmrBestParams = kmrProfile.data.params;
             }
+            if (vduProfile.success) {
+              vduBestParams = vduProfile.data.params;
+            }
             tuningSkipped = true;
           }
         }
 
         if (!tuningSkipped) {
           // Run full tuning
-          const v3TuneResult = tuneV3(dataPoints);
+          const v3TuneResult = tuneV3(dataPoints, tier);
 
           cbTuneResult = v3TuneResult.consolidation_breakout;
           tpTuneResult = v3TuneResult.trend_pullback;
           bbTuneResult = v3TuneResult.bear_breakdown;
           kmrTuneResult = v3TuneResult.keltner_mean_reversion;
+          vduTuneResult = v3TuneResult.volume_dry_up;
 
           cbBestParams = !('error' in cbTuneResult) ? cbTuneResult.bestParams : {};
           tpBestParams = !('error' in tpTuneResult) ? tpTuneResult.bestParams : {};
           bbBestParams = !('error' in bbTuneResult) ? bbTuneResult.bestParams : {};
           kmrBestParams = !('error' in kmrTuneResult) ? kmrTuneResult.bestParams : {};
+          vduBestParams = !('error' in vduTuneResult) ? vduTuneResult.bestParams : {};
         }
 
         // Step 3: Backtest both strategies with their best params
-        const v3BacktestResult: V3BacktestResult = backtestV3(dataPoints, cbBestParams, tpBestParams, kmrBestParams, bbBestParams);
+        const v3BacktestResult: V3BacktestResult = backtestV3(dataPoints, cbBestParams, tpBestParams, kmrBestParams, bbBestParams, vduBestParams);
         v3BacktestResult.consolidation_breakout.ticker = ticker;
         v3BacktestResult.trend_pullback.ticker = ticker;
         if (v3BacktestResult.keltner_mean_reversion) {
@@ -1074,6 +1095,9 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         }
         if (v3BacktestResult.bear_breakdown) {
           v3BacktestResult.bear_breakdown.ticker = ticker;
+        }
+        if (v3BacktestResult.volume_dry_up) {
+          v3BacktestResult.volume_dry_up.ticker = ticker;
         }
 
         // Step 4: Build tuning summary data
@@ -1089,6 +1113,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           trend_pullback: tuningSkipped ? 'used_cached_profile' : tpTuneResult,
           bear_breakdown: tuningSkipped ? 'used_cached_profile' : bbTuneResult,
           keltner_mean_reversion: tuningSkipped ? 'used_cached_profile' : kmrTuneResult,
+          volume_dry_up: tuningSkipped ? 'used_cached_profile' : vduTuneResult,
           computed_at: new Date().toISOString(),
           v3: true,
         };
@@ -1127,6 +1152,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
               },
               last_tuned_at: lastTunedAt,
               valid_until: validUntil,
+              ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
             };
             saveStrategyProfile(cbProfile, dataDir);
           }
@@ -1147,6 +1173,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
               },
               last_tuned_at: lastTunedAt,
               valid_until: validUntil,
+              ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
             };
             saveStrategyProfile(tpProfile, dataDir);
           }
@@ -1167,6 +1194,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
               },
               last_tuned_at: lastTunedAt,
               valid_until: validUntil,
+              ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
             };
             saveStrategyProfile(bbProfile, dataDir);
           }
@@ -1187,8 +1215,30 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
               },
               last_tuned_at: lastTunedAt,
               valid_until: validUntil,
+              ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
             };
             saveStrategyProfile(kmrProfile, dataDir);
+          }
+
+          if (Object.keys(vduBestParams).length > 0) {
+            const vduOos = !('error' in vduTuneResult) ? vduTuneResult.oosMetrics : null;
+            const vduProfile: StrategyProfile = {
+              ticker,
+              strategy: 'volume_dry_up',
+              params: vduBestParams,
+              walk_forward_metrics: {
+                return: vduOos ? vduOos.totalReturnPercent : 0,
+                benchmark: 0,
+                win_rate: vduOos ? vduOos.winRate : 0,
+                trades: vduOos ? vduOos.tradeCount : 0,
+                max_drawdown: vduOos ? vduOos.maxDrawdownPercent : 0,
+                sharpe: vduOos ? vduOos.sharpeRatio : 0,
+              },
+              last_tuned_at: lastTunedAt,
+              valid_until: validUntil,
+              ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
+            };
+            saveStrategyProfile(vduProfile, dataDir);
           }
 
           profileSaved = true;
@@ -1201,6 +1251,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
             trend_pullback: tpBestParams,
             bear_breakdown: bbBestParams,
             keltner_mean_reversion: kmrBestParams,
+            volume_dry_up: vduBestParams,
           },
           profile_saved: profileSaved,
           backtest: {
@@ -1470,6 +1521,13 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     const shouldSave = opts['save'] !== undefined;
     const noCache = opts['no-cache'] !== undefined;
 
+    // Validate --cap-tier flag
+    const tierResult = parseCapTier(opts['cap-tier']);
+    if (typeof tierResult === 'object' && 'error' in tierResult) {
+      return errorResult('tune-pipeline', 'INVALID_PARAM_RANGE', tierResult.error);
+    }
+    const tier: CapTier = tierResult;
+
     // Resolve ticker list to determine if we should use parallel execution
     const tickers = resolveV3TickerList(tickersArg, dataDir);
     if ('error' in tickers) {
@@ -1490,6 +1548,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         runBacktest: false,
         cachingProvider,
         dataDir,
+        tier,
       });
 
       return successResult('tune-pipeline', batchResult);
@@ -1516,6 +1575,13 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     const concurrency = parseConcurrency(opts);
     const tickerArg = opts['ticker'];
 
+    // Validate --cap-tier flag
+    const tierResult = parseCapTier(opts['cap-tier']);
+    if (typeof tierResult === 'object' && 'error' in tierResult) {
+      return errorResult('v3', 'INVALID_PARAM_RANGE', tierResult.error);
+    }
+    const tier: CapTier = tierResult;
+
     // Resolve ticker list: 'top100' loads from data/top100.json, comma-separated splits
     const tickers = resolveV3TickerList(tickerArg, dataDir);
     if ('error' in tickers) {
@@ -1536,6 +1602,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         runBacktest: true,
         cachingProvider,
         dataDir,
+        tier,
       });
 
       return successResult('v3', batchResult);

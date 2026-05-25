@@ -5,6 +5,8 @@ import { resolveWeightPreset } from '../indicators/confidence-score.js';
 
 export type { TimeHorizon, TunableStrategy } from '../pipeline/tuning-engine.js';
 
+export type CapTier = 'large_cap' | 'mid_cap' | 'small_cap';
+
 export type ParameterSpace = Record<string, number[]>;
 
 export interface GridEntry {
@@ -465,14 +467,25 @@ export function resolveExitPreset(preset: number): {
   }
 }
 
-export function getConsolidationBreakoutParameterSpace(): ParameterSpace {
+export function getConsolidationBreakoutParameterSpace(tier: CapTier = 'large_cap'): ParameterSpace {
+  const maxRangePct: Record<CapTier, number[]> = {
+    large_cap: [4, 6, 8],
+    mid_cap: [6, 8, 10, 12],
+    small_cap: [8, 12, 16, 20],
+  };
+  const atrMultiple: Record<CapTier, number[]> = {
+    large_cap: [1.2, 1.6, 2.0],
+    mid_cap: [1.6, 2.0, 2.5],
+    small_cap: [2.0, 2.5, 3.0],
+  };
+
   return {
     consolidation_window: [5, 10, 15],
-    max_range_pct: [4, 6, 8],
+    max_range_pct: maxRangePct[tier],
     atr_ratio_threshold: [0.8, 1.0],
     volume_multiplier: [1.2, 1.5],
     overextension_pct: [5, 8, 12],
-    atr_multiple: [1.2, 1.6, 2.0],
+    atr_multiple: atrMultiple[tier],
     swing_lookback: [10, 15, 20],
     max_risk_pct: [3, 5, 8],
     r_multiple: [2, 2.5, 3],
@@ -540,8 +553,8 @@ export function buildConsolidationBreakoutConfig(
  * Returns a generator to avoid materializing all entries in memory at once.
  * Consumers iterate with for...of and only keep what they need.
  */
-export function* generateConsolidationBreakoutGrid(): Generator<ConsolidationBreakoutGridEntry> {
-  const space = getConsolidationBreakoutParameterSpace();
+export function* generateConsolidationBreakoutGrid(tier: CapTier = 'large_cap'): Generator<ConsolidationBreakoutGridEntry> {
+  const space = getConsolidationBreakoutParameterSpace(tier);
   const paramNames = Object.keys(space);
   const paramArrays = paramNames.map(name => space[name]);
 
@@ -559,14 +572,25 @@ export function* generateConsolidationBreakoutGrid(): Generator<ConsolidationBre
 /**
  * Return the trend-pullback parameter space with 10 tunable parameters.
  */
-export function getTrendPullbackParameterSpace(): ParameterSpace {
+export function getTrendPullbackParameterSpace(tier: CapTier = 'large_cap'): ParameterSpace {
+  const pullbackProximityPct: Record<CapTier, number[]> = {
+    large_cap: [2, 3, 5],
+    mid_cap: [3, 5, 7, 10],
+    small_cap: [5, 8, 12, 15],
+  };
+  const stopAtrMultiple: Record<CapTier, number[]> = {
+    large_cap: [1.5, 2.0, 2.5],
+    mid_cap: [2.0, 2.5, 3.0],
+    small_cap: [2.5, 3.0, 3.5],
+  };
+
   return {
-    pullback_proximity_pct: [2, 3, 5],
+    pullback_proximity_pct: pullbackProximityPct[tier],
     atr_contraction_threshold: [0.7, 0.8, 1.0],
     volume_below_avg_multiplier: [0.8, 1.0],
     trigger_volume_multiplier: [1.0, 1.2, 1.5],
     overextension_pct: [5, 8, 12],
-    stop_atr_multiple: [1.5, 2.0, 2.5],
+    stop_atr_multiple: stopAtrMultiple[tier],
     r_multiple: [2, 2.5, 3],
     swing_lookback: [5, 10, 15],
     // Active presets: 0=fixed baseline, 5=trailing ATR highest_close aggressive
@@ -657,8 +681,8 @@ export function buildTrendPullbackGridConfig(
  *
  * Returns a generator to avoid materializing all entries in memory at once.
  */
-export function* generateTrendPullbackGrid(): Generator<TrendPullbackGridEntry> {
-  const space = getTrendPullbackParameterSpace();
+export function* generateTrendPullbackGrid(tier: CapTier = 'large_cap'): Generator<TrendPullbackGridEntry> {
+  const space = getTrendPullbackParameterSpace(tier);
   const paramNames = Object.keys(space);
   const paramArrays = paramNames.map(name => space[name]);
 
@@ -676,15 +700,27 @@ export function* generateTrendPullbackGrid(): Generator<TrendPullbackGridEntry> 
 
 /**
  * Return the bear-breakdown parameter space with 8 tunable parameters.
- * Total combinations: 3 × 3 × 2 × 2 × 3 × 3 × 3 × 3 = 2916
+ * Tier-specific values for max_range_pct and atr_multiple allow wider ranges
+ * for smaller-cap stocks which exhibit higher volatility.
  */
-export function getBearBreakdownParameterSpace(): ParameterSpace {
+export function getBearBreakdownParameterSpace(tier: CapTier = 'large_cap'): ParameterSpace {
+  const maxRangePct: Record<CapTier, number[]> = {
+    large_cap: [4, 6, 8],
+    mid_cap: [6, 8, 10, 12],
+    small_cap: [8, 12, 16, 20],
+  };
+  const atrMultiple: Record<CapTier, number[]> = {
+    large_cap: [1.2, 1.6, 2.0],
+    mid_cap: [1.6, 2.0, 2.5],
+    small_cap: [2.0, 2.5, 3.0],
+  };
+
   return {
     consolidation_window: [5, 10, 15],
-    max_range_pct: [4, 6, 8],
+    max_range_pct: maxRangePct[tier],
     atr_ratio_threshold: [0.8, 1.0],
     volume_multiplier: [1.2, 1.5],
-    atr_multiple: [1.2, 1.6, 2.0],
+    atr_multiple: atrMultiple[tier],
     swing_lookback: [10, 15, 20],
     max_risk_pct: [3, 5, 8],
     r_multiple: [2, 2.5, 3],
@@ -729,8 +765,8 @@ export function buildBearBreakdownConfig(
  *
  * Returns a generator to avoid materializing all entries in memory at once.
  */
-export function* generateBearBreakdownGrid(): Generator<BearBreakdownGridEntry> {
-  const space = getBearBreakdownParameterSpace();
+export function* generateBearBreakdownGrid(tier: CapTier = 'large_cap'): Generator<BearBreakdownGridEntry> {
+  const space = getBearBreakdownParameterSpace(tier);
   const paramNames = Object.keys(space);
   const paramArrays = paramNames.map(name => space[name]);
 
@@ -819,18 +855,33 @@ export function* generatePostEarningsDriftGrid(): Generator<PostEarningsDriftGri
 /**
  * Return the keltner-mean-reversion parameter space with 9 tunable parameters.
  * Total combinations: 4 × 4 × 4 × 3 × 3 × 4 × 4 × 3 × 4 = 110,592
+ *
+ * Tier-specific parameters (only small_cap differs):
+ *   band_multiplier: large_cap/mid_cap=[1.5,2.0,2.5,3.0], small_cap=[2.0,2.5,3.0,3.5]
+ *   band_proximity_pct: large_cap/mid_cap=[2,3,5,8], small_cap=[3,5,8,12]
  */
-export function getKeltnerMeanReversionParameterSpace(): ParameterSpace {
+export function getKeltnerMeanReversionParameterSpace(tier: CapTier = 'large_cap'): ParameterSpace {
+  const bandMultiplier: Record<CapTier, number[]> = {
+    large_cap: [1.5, 2.0, 2.5, 3.0],
+    mid_cap: [1.5, 2.0, 2.5, 3.0],
+    small_cap: [2.0, 2.5, 3.0, 3.5],
+  };
+  const bandProximityPct: Record<CapTier, number[]> = {
+    large_cap: [2, 3, 5, 8],
+    mid_cap: [2, 3, 5, 8],
+    small_cap: [3, 5, 8, 12],
+  };
+
   return {
     ema_period: [10, 20, 30, 50],
     atr_period: [5, 10, 14, 20],
-    band_multiplier: [1.5, 2.0, 2.5, 3.0],
+    band_multiplier: bandMultiplier[tier],
     trend_filter_period: [20, 50, 100],
     reclaim_lookback: [2, 5, 10],
     stop_atr_multiple: [1.0, 1.5, 2.0, 3.0],
     r_multiple: [1.5, 2.0, 2.5, 3.0],
     max_risk_pct: [3, 5, 8],
-    band_proximity_pct: [2, 3, 5, 8],
+    band_proximity_pct: bandProximityPct[tier],
   };
 }
 
@@ -859,8 +910,8 @@ export function buildKeltnerMeanReversionConfig(
  *
  * Returns a generator to avoid materializing all entries in memory at once.
  */
-export function* generateKeltnerMeanReversionGrid(): Generator<KeltnerMeanReversionGridEntry> {
-  const space = getKeltnerMeanReversionParameterSpace();
+export function* generateKeltnerMeanReversionGrid(tier: CapTier = 'large_cap'): Generator<KeltnerMeanReversionGridEntry> {
+  const space = getKeltnerMeanReversionParameterSpace(tier);
   const paramNames = Object.keys(space);
   const paramArrays = paramNames.map(name => space[name]);
 

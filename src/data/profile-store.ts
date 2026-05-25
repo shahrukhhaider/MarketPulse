@@ -7,6 +7,7 @@
 
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import type { CapTier } from '../strategies/parameter-grid.js';
 
 // ============================================================
 // Walk-Forward Metrics
@@ -32,6 +33,7 @@ export interface StrategyProfile {
   walk_forward_metrics: WalkForwardMetrics;
   last_tuned_at: string;   // ISO 8601
   valid_until: string;      // ISO 8601
+  cap_tier?: CapTier;       // Optional — backward compat with legacy profiles
 }
 
 // ============================================================
@@ -91,6 +93,12 @@ export function isValidProfile(obj: unknown): obj is StrategyProfile {
   const requiredMetrics = ['return', 'benchmark', 'win_rate', 'trades', 'max_drawdown', 'sharpe'];
   for (const key of requiredMetrics) {
     if (typeof metrics[key] !== 'number') return false;
+  }
+
+  // Validate cap_tier (optional — absent is valid, but if present must be a valid CapTier value)
+  if ('cap_tier' in record && record.cap_tier !== undefined) {
+    const validTiers: string[] = ['large_cap', 'mid_cap', 'small_cap'];
+    if (typeof record.cap_tier !== 'string' || !validTiers.includes(record.cap_tier)) return false;
   }
 
   return true;

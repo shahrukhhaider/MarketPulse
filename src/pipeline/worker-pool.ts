@@ -33,6 +33,8 @@ export interface WorkerTask {
   params?: Record<string, number>;
   /** Earnings dates for PEAD strategy scan tasks */
   earningsDates?: string[];
+  /** Market capitalization tier for parameter grid selection */
+  tier?: string;
 }
 
 export interface WorkerResult {

@@ -2,6 +2,7 @@ import type { HistoricalDataPoint, BacktestResult, PerformanceSummary, Trade } f
 import type { TuningPerformanceMetrics } from './tuning-engine.js';
 import type { ConsolidationBreakoutGridEntry, TrendPullbackGridEntry, BearBreakdownGridEntry, KeltnerMeanReversionGridEntry } from '../strategies/parameter-grid.js';
 import { generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig, generateTrendPullbackGrid, buildTrendPullbackGridConfig, generateBearBreakdownGrid, buildBearBreakdownConfig, buildPostEarningsDriftConfig, generateKeltnerMeanReversionGrid, buildKeltnerMeanReversionConfig } from '../strategies/parameter-grid.js';
+import type { CapTier } from '../strategies/parameter-grid.js';
 import { splitData, evaluateV3Configuration, evaluateTrendPullbackConfiguration, evaluateBearBreakdownConfiguration, evaluateKeltnerMeanReversionConfiguration } from './walk-forward-validator.js';
 import { VduBacktestEngine, DEFAULT_VDU_CONFIG } from '../strategies/vdu-engine.js';
 import type { VduConfig, VduParams } from '../strategies/vdu-engine.js';
@@ -39,6 +40,7 @@ export interface V3TuneResult {
   trend_pullback: TuneResult | { error: string };
   bear_breakdown: TuneResult | { error: string };
   keltner_mean_reversion: TuneResult | { error: string };
+  volume_dry_up: TuneResult | { error: string };
 }
 
 // ============================================================
@@ -57,6 +59,7 @@ export interface CombinedPerformanceMetrics {
     trend_pullback: PerformanceSummary;
     keltner_mean_reversion?: PerformanceSummary;
     bear_breakdown?: PerformanceSummary;
+    volume_dry_up?: PerformanceSummary;
   };
 }
 
@@ -69,6 +72,7 @@ export interface V3BacktestResult {
   trend_pullback: BacktestResult;
   keltner_mean_reversion?: BacktestResult;
   bear_breakdown: BacktestResult;
+  volume_dry_up?: BacktestResult;
   combined: CombinedPerformanceMetrics;
 }
 
@@ -90,7 +94,8 @@ export interface V3BacktestResult {
 export function tuneParams(
   data: HistoricalDataPoint[],
   strategy: string,
-  _paramSpace: Record<string, number[]>
+  _paramSpace: Record<string, number[]>,
+  tier: CapTier = 'large_cap'
 ): TuneResult | { error: string } {
   // Step 1: Split data into IS/OOS
   const splitResult = splitData(data);
@@ -113,15 +118,15 @@ export function tuneParams(
 
   const grid: Iterable<ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry | KeltnerMeanReversionGridEntry | VduGridEntry> =
     strategy === 'consolidation_breakout'
-      ? generateConsolidationBreakoutGrid()
+      ? generateConsolidationBreakoutGrid(tier)
       : strategy === 'trend_pullback'
-        ? generateTrendPullbackGrid()
+        ? generateTrendPullbackGrid(tier)
         : strategy === 'bear_breakdown'
-          ? generateBearBreakdownGrid()
+          ? generateBearBreakdownGrid(tier)
           : strategy === 'keltner_mean_reversion'
-            ? generateKeltnerMeanReversionGrid()
+            ? generateKeltnerMeanReversionGrid(tier)
             : strategy === 'volume_dry_up'
-              ? generateVduGrid()
+              ? generateVduGrid(tier)
               : [];
 
   if (strategy !== 'consolidation_breakout' && strategy !== 'trend_pullback' && strategy !== 'bear_breakdown' && strategy !== 'keltner_mean_reversion' && strategy !== 'volume_dry_up') {
@@ -201,17 +206,19 @@ export function tuneParams(
  * Each strategy is tuned independently via tuneParams().
  * Returns a V3TuneResult with results (or errors) for both strategies.
  */
-export function tuneV3(data: HistoricalDataPoint[]): V3TuneResult {
-  const cbResult = tuneParams(data, 'consolidation_breakout', {});
-  const tpResult = tuneParams(data, 'trend_pullback', {});
-  const bbResult = tuneParams(data, 'bear_breakdown', {});
-  const kmrResult = tuneParams(data, 'keltner_mean_reversion', {});
+export function tuneV3(data: HistoricalDataPoint[], tier: CapTier = 'large_cap'): V3TuneResult {
+  const cbResult = tuneParams(data, 'consolidation_breakout', {}, tier);
+  const tpResult = tuneParams(data, 'trend_pullback', {}, tier);
+  const bbResult = tuneParams(data, 'bear_breakdown', {}, tier);
+  const kmrResult = tuneParams(data, 'keltner_mean_reversion', {}, tier);
+  const vduResult = tuneParams(data, 'volume_dry_up', {}, tier);
 
   return {
     consolidation_breakout: cbResult,
     trend_pullback: tpResult,
     bear_breakdown: bbResult,
     keltner_mean_reversion: kmrResult,
+    volume_dry_up: vduResult,
   };
 }
 
@@ -334,7 +341,8 @@ export function backtestV3(
   cbParams: Record<string, number>,
   tpParams: Record<string, number>,
   kmrParams?: Record<string, number>,
-  bbParams?: Record<string, number>
+  bbParams?: Record<string, number>,
+  vduParams?: Record<string, number>
 ): V3BacktestResult {
   const cbResult = runBacktest(data, 'consolidation_breakout', cbParams);
   const tpResult = runBacktest(data, 'trend_pullback', tpParams);
@@ -346,13 +354,19 @@ export function backtestV3(
 
   const bbResult = runBacktest(data, 'bear_breakdown', bbParams ?? {});
 
-  const combined = computeCombinedMetrics(cbResult, tpResult, data, kmrResult, bbResult);
+  let vduResult: BacktestResult | undefined;
+  if (vduParams && Object.keys(vduParams).length > 0) {
+    vduResult = runBacktest(data, 'volume_dry_up', vduParams);
+  }
+
+  const combined = computeCombinedMetrics(cbResult, tpResult, data, kmrResult, bbResult, vduResult);
 
   return {
     consolidation_breakout: cbResult,
     trend_pullback: tpResult,
     keltner_mean_reversion: kmrResult,
     bear_breakdown: bbResult,
+    volume_dry_up: vduResult,
     combined,
   };
 }
@@ -377,13 +391,15 @@ export function computeCombinedMetrics(
   tpResult: BacktestResult,
   _data: HistoricalDataPoint[],
   kmrResult?: BacktestResult,
-  bbResult?: BacktestResult
+  bbResult?: BacktestResult,
+  vduResult?: BacktestResult
 ): CombinedPerformanceMetrics {
   const cbTrades = cbResult.performanceSummary.trades;
   const tpTrades = tpResult.performanceSummary.trades;
   const kmrTrades = kmrResult ? kmrResult.performanceSummary.trades : [];
   const bbTrades = bbResult ? bbResult.performanceSummary.trades : [];
-  const allTrades: Trade[] = [...cbTrades, ...tpTrades, ...kmrTrades, ...bbTrades];
+  const vduTrades = vduResult ? vduResult.performanceSummary.trades : [];
+  const allTrades: Trade[] = [...cbTrades, ...tpTrades, ...kmrTrades, ...bbTrades, ...vduTrades];
 
   const numberOfTrades = allTrades.length;
 
@@ -409,11 +425,16 @@ export function computeCombinedMetrics(
   for (const trade of bbTrades) {
     bbCumulative *= 1 + trade.profitLossPercent / 100;
   }
+  let vduCumulative = 1;
+  for (const trade of vduTrades) {
+    vduCumulative *= 1 + trade.profitLossPercent / 100;
+  }
   // Combined return: average of all active streams (equal capital allocation)
   let streamCount = 2; // CB + TP always active
   let streamSum = cbCumulative + tpCumulative;
   if (kmrTrades.length > 0) { streamCount++; streamSum += kmrCumulative; }
   if (bbTrades.length > 0) { streamCount++; streamSum += bbCumulative; }
+  if (vduTrades.length > 0) { streamCount++; streamSum += vduCumulative; }
   const totalReturnPercent = (streamSum / streamCount - 1) * 100;
 
   // Max drawdown: computed from combined equity curve
@@ -472,6 +493,7 @@ export function computeCombinedMetrics(
       trend_pullback: tpResult.performanceSummary,
       keltner_mean_reversion: kmrResult?.performanceSummary,
       bear_breakdown: bbResult?.performanceSummary,
+      volume_dry_up: vduResult?.performanceSummary,
     },
   };
 }
@@ -525,12 +547,29 @@ export interface VduGridEntry {
 /**
  * Generate VDU parameter grid entries for walk-forward tuning.
  */
-export function* generateVduGrid(): Iterable<VduGridEntry> {
+export function* generateVduGrid(tier: CapTier = 'large_cap'): Iterable<VduGridEntry> {
   const consolidation_windows = [10, 12, 15, 18, 20];
-  const max_range_pcts = [4, 5, 6, 7, 8];
+
+  const maxRangePcts: Record<CapTier, number[]> = {
+    large_cap: [4, 5, 6, 7, 8],
+    mid_cap: [5, 6, 7, 8, 10, 12],
+    small_cap: [6, 8, 10, 12, 15],
+  };
+  const volumeThresholdActives: Record<CapTier, number[]> = {
+    large_cap: [0.45, 0.55, 0.65, 0.75],
+    mid_cap: [0.45, 0.55, 0.65, 0.75, 0.85],
+    small_cap: [0.35, 0.40, 0.45, 0.55, 0.65],
+  };
+  const volumeThresholdNears: Record<CapTier, number[]> = {
+    large_cap: [0.60, 0.70, 0.80],
+    mid_cap: [0.60, 0.70, 0.80, 0.90],
+    small_cap: [0.50, 0.60, 0.70, 0.80],
+  };
+
+  const max_range_pcts = maxRangePcts[tier];
   const atr_ratio_thresholds = [0.80, 0.90, 1.0, 1.2, 1.5];
-  const volume_threshold_actives = [0.45, 0.55, 0.65, 0.75];
-  const volume_threshold_nears = [0.60, 0.70, 0.80];
+  const volume_threshold_actives = volumeThresholdActives[tier];
+  const volume_threshold_nears = volumeThresholdNears[tier];
   const volume_threshold_formings = [0.80, 0.85, 0.90, 0.95];
   const min_declining_days_arr = [2, 3, 4];
   const r_multiples = [2.0, 3.0];

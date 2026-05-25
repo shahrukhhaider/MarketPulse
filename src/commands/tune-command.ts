@@ -17,6 +17,23 @@ import type { TuneResult, V3TuneResult } from '../pipeline/pipeline-functions.js
 import { saveStrategyProfile, computeExpiry } from '../data/profile-store.js';
 import type { StrategyProfile, WalkForwardMetrics } from '../data/profile-store.js';
 import type { TuningPerformanceMetrics } from '../pipeline/tuning-engine.js';
+import type { CapTier } from '../strategies/parameter-grid.js';
+
+// ============================================================
+// Cap-Tier Validation
+// ============================================================
+
+export const VALID_CAP_TIERS: CapTier[] = ['large_cap', 'mid_cap', 'small_cap'];
+
+export function parseCapTier(value: string | undefined): CapTier | { error: string } {
+  if (value === undefined || value === '') {
+    return 'large_cap';
+  }
+  if (VALID_CAP_TIERS.includes(value as CapTier)) {
+    return value as CapTier;
+  }
+  return { error: `Invalid --cap-tier value '${value}'. Valid options: ${VALID_CAP_TIERS.join(', ')}` };
+}
 
 // ============================================================
 // Dependencies
@@ -41,6 +58,7 @@ export interface TuneSummary {
   configurations_evaluated?: number;
   profile_saved: boolean;
   error_message?: string;
+  cap_tier?: CapTier;
 }
 
 export interface TuneBatchResult {
@@ -104,9 +122,16 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
     const noCache = opts['no-cache'] !== undefined;
     const isV3 = opts['v3'] !== undefined;
 
+    // Validate --cap-tier flag
+    const tierResult = parseCapTier(opts['cap-tier']);
+    if (typeof tierResult === 'object' && 'error' in tierResult) {
+      return errorResult('tune', 'INVALID_PARAM_RANGE', tierResult.error);
+    }
+    const tier: CapTier = tierResult;
+
     // V3 path: tune both strategies in parallel
     if (isV3) {
-      return handleV3Tune(tickersArg, shouldSave, noCache, cachingProvider, dataDir);
+      return handleV3Tune(tickersArg, shouldSave, noCache, cachingProvider, dataDir, tier);
     }
 
     // Resolve strategy from registry
@@ -156,7 +181,7 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
         const dataPoints = dataResult.data.dataPoints;
 
         // Run tuneParams
-        const tuneResult = tuneParams(dataPoints, strategyName, paramSpace);
+        const tuneResult = tuneParams(dataPoints, strategyName, paramSpace, tier);
 
         if ('error' in tuneResult) {
           // Classify the error
@@ -210,6 +235,7 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
             walk_forward_metrics: toWalkForwardMetrics(result.oosMetrics),
             last_tuned_at: lastTunedAt,
             valid_until: validUntil,
+            ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
           };
 
           const saveResult = saveStrategyProfile(profile, dataDir);
@@ -225,6 +251,7 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
           out_of_sample: result.oosMetrics,
           configurations_evaluated: result.configurationsEvaluated,
           profile_saved: profileSaved,
+          cap_tier: tier,
         });
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
@@ -261,6 +288,7 @@ async function handleV3Tune(
   noCache: boolean,
   cachingProvider: HistoricalDataCache,
   dataDir: string,
+  tier: CapTier = 'large_cap',
 ) {
   // Resolve ticker list
   const tickers = resolveTickerList(tickersArg, dataDir);
@@ -319,29 +347,29 @@ async function handleV3Tune(
       const dataPoints = dataResult.data.dataPoints;
 
       // Run tuneV3 — tunes all strategies on the same data
-      const v3Result: V3TuneResult = tuneV3(dataPoints);
+      const v3Result: V3TuneResult = tuneV3(dataPoints, tier);
 
       // Process consolidation_breakout result
       const cbSummary = buildV3StrategySummary(
-        ticker, 'consolidation_breakout', v3Result.consolidation_breakout, shouldSave, dataDir
+        ticker, 'consolidation_breakout', v3Result.consolidation_breakout, shouldSave, dataDir, tier
       );
       summaries.push(cbSummary);
 
       // Process trend_pullback result
       const tpSummary = buildV3StrategySummary(
-        ticker, 'trend_pullback', v3Result.trend_pullback, shouldSave, dataDir
+        ticker, 'trend_pullback', v3Result.trend_pullback, shouldSave, dataDir, tier
       );
       summaries.push(tpSummary);
 
       // Process bear_breakdown result
       const bbSummary = buildV3StrategySummary(
-        ticker, 'bear_breakdown', v3Result.bear_breakdown, shouldSave, dataDir
+        ticker, 'bear_breakdown', v3Result.bear_breakdown, shouldSave, dataDir, tier
       );
       summaries.push(bbSummary);
 
       // Process keltner_mean_reversion result
       const kmrSummary = buildV3StrategySummary(
-        ticker, 'keltner_mean_reversion', v3Result.keltner_mean_reversion, shouldSave, dataDir
+        ticker, 'keltner_mean_reversion', v3Result.keltner_mean_reversion, shouldSave, dataDir, tier
       );
       summaries.push(kmrSummary);
 
@@ -417,6 +445,7 @@ function buildV3StrategySummary(
   result: TuneResult | { error: string },
   shouldSave: boolean,
   dataDir: string,
+  tier: CapTier = 'large_cap',
 ): TuneSummary {
   if ('error' in result) {
     const errorMsg = result.error;
@@ -464,6 +493,7 @@ function buildV3StrategySummary(
       walk_forward_metrics: toWalkForwardMetrics(result.oosMetrics),
       last_tuned_at: lastTunedAt,
       valid_until: validUntil,
+      ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
     };
 
     const saveResult = saveStrategyProfile(profile, dataDir);
@@ -478,5 +508,6 @@ function buildV3StrategySummary(
     out_of_sample: result.oosMetrics,
     configurations_evaluated: result.configurationsEvaluated,
     profile_saved: profileSaved,
+    cap_tier: tier,
   };
 }
