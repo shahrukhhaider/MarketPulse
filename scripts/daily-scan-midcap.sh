@@ -1,33 +1,30 @@
 #!/bin/bash
-# Daily V3 scan (large-cap) — runs at market open (9:30 AM ET) on weekdays
-# Scans all tickers from watchlist.json for trade opportunities
-# Universe: large_cap
+# Daily V3 scan (mid-cap) — runs at market open (9:30 AM ET) on weekdays
+# Scans all tickers from watchlist-midcap.json for trade opportunities
+# Universe: mid_cap
 
 set -e
 
 PROJECT_DIR="/Users/haidex/Documents/projects/liveTrack/stock-price-tracker"
 NODE="/Users/haidex/.nvm/versions/node/v20.20.2/bin/node"
 LOG_DIR="$PROJECT_DIR/.stock-tracker/logs"
-UNIVERSE="large_cap"
+UNIVERSE="mid_cap"
 
 mkdir -p "$LOG_DIR"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-LOG_FILE="$LOG_DIR/scan_${TIMESTAMP}.json"
+LOG_FILE="$LOG_DIR/scan_midcap_${TIMESTAMP}.json"
 START_TIME=$(date +%s)
 
 echo "[$(date)] Daily scan ($UNIVERSE) started..." >> "$LOG_DIR/cron.log"
 
 cd "$PROJECT_DIR"
 
-# Run scan with --universe large_cap
+# Run scan with --universe mid_cap
 $NODE dist/src/cli.js scan --tickers watchlist --strategy v3 --universe $UNIVERSE --allow-stale --summary --log "$LOG_FILE" 2>> "$LOG_DIR/cron.log"
 
-# Signal history upsert with --universe large_cap
+# Signal history upsert with --universe mid_cap
 $NODE dist/src/cli.js signal-history --scan-output "$LOG_FILE" --universe $UNIVERSE 2>> "$LOG_DIR/cron.log"
-
-# Update journal — check stop/target hits on open positions
-$NODE dist/src/cli.js journal-update >> "$LOG_DIR/cron.log" 2>&1
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))

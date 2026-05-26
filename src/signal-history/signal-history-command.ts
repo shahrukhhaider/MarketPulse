@@ -16,6 +16,7 @@ import type { CommandHandler } from '../command-router.js';
 import { extractSignalEntry } from './extractor.js';
 import type { ScanOutput } from './extractor.js';
 import { upsertSignalEntry } from './upsert.js';
+import { resolveUniverse, resolveSignalHistoryFile } from '../utils/universe.js';
 
 // ============================================================
 // Dependencies
@@ -44,6 +45,14 @@ export function createSignalHistoryHandler(deps: SignalHistoryCommandDeps): Comm
 
   return (opts: Record<string, string>) => {
     const scanOutputPath = opts['scan-output'];
+
+    // Resolve --universe flag (defaults to large_cap)
+    const universeResult = resolveUniverse(opts['universe']);
+    if ('error' in universeResult) {
+      process.stderr.write(`[signal-history] Error: ${universeResult.error}\n`);
+      return errorResult('signal-history', 'INVALID_PARAM_RANGE', universeResult.error);
+    }
+    const historyFilename = resolveSignalHistoryFile(universeResult.capTier);
 
     // --scan-output is required
     if (!scanOutputPath) {
@@ -103,8 +112,8 @@ export function createSignalHistoryHandler(deps: SignalHistoryCommandDeps): Comm
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     const entry = extractSignalEntry(scanOutput, today);
 
-    // Upsert into signal-history.ndjson
-    const historyPath = path.join(dataDir, 'signal-history.ndjson');
+    // Upsert into universe-specific signal history file
+    const historyPath = path.join(dataDir, historyFilename);
     const result = upsertSignalEntry({ historyPath, entry });
 
     if (!result.success) {

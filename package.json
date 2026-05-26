@@ -31,6 +31,8 @@
     "notify": "./scripts/notify.sh"
   },
   "dependencies": {
+    "lightweight-charts": "^5.2.0",
+    "puppeteer": "^24.0.0",
     "yahoo-finance2": "^3.14.0"
   },
   "devDependencies": {

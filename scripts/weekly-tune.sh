@@ -10,7 +10,7 @@ NODE="/Users/haidex/.nvm/versions/node/v20.20.2/bin/node"
 LOG_DIR="$PROJECT_DIR/.stock-tracker/logs"
 BATCH_SIZE=50
 CONCURRENCY=8
-CAP_TIER="large_cap"
+UNIVERSE="large_cap"
 
 mkdir -p "$LOG_DIR"
 
@@ -69,7 +69,7 @@ for ((i=0; i<TOTAL; i+=BATCH_SIZE)); do
   echo "  ▸ Batch $BATCH_NUM: tickers $((i+1))–$END of $TOTAL ($PROGRESS%) ..."
 
   # Run tune for this batch
-  if $NODE dist/src/cli.js tune-pipeline --tickers "$BATCH_TICKERS" --strategy v3 --concurrency $CONCURRENCY --cap-tier $CAP_TIER --save >> "$LOG_FILE" 2>&1; then
+  if $NODE dist/src/cli.js tune-pipeline --tickers "$BATCH_TICKERS" --strategy v3 --concurrency $CONCURRENCY --universe $UNIVERSE --save >> "$LOG_FILE" 2>&1; then
     SUCCEEDED=$((SUCCEEDED + BATCH_COUNT))
     echo "    ✓ Batch $BATCH_NUM complete ($BATCH_COUNT tickers)"
   else
@@ -88,3 +88,8 @@ echo "════════════════════════�
 echo ""
 
 echo "[$(date)] Weekly tune complete: $SUCCEEDED succeeded, $FAILED failed, ${ELAPSED}m elapsed" >> "$LOG_DIR/cron.log"
+
+# Exit non-zero if any batch failed
+if [ $FAILED -gt 0 ]; then
+  exit 1
+fi

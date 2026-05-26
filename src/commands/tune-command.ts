@@ -18,6 +18,7 @@ import { saveStrategyProfile, computeExpiry } from '../data/profile-store.js';
 import type { StrategyProfile, WalkForwardMetrics } from '../data/profile-store.js';
 import type { TuningPerformanceMetrics } from '../pipeline/tuning-engine.js';
 import type { CapTier } from '../strategies/parameter-grid.js';
+import { resolveUniverse } from '../utils/universe.js';
 
 // ============================================================
 // Cap-Tier Validation
@@ -71,25 +72,36 @@ export interface TuneBatchResult {
 
 
 // ============================================================
-// Top-100 Ticker Resolution
+// Ticker Resolution — loads from universe-resolved watchlist or explicit list
 // ============================================================
 
-function resolveTickerList(tickersArg: string, dataDir: string): string[] | { error: string } {
-  if (tickersArg.toLowerCase() === 'watchlist' || tickersArg.toLowerCase() === 'top100') {
+function resolveTickerList(
+  tickersArg: string | undefined,
+  dataDir: string,
+  watchlistFile: string = 'watchlist.json',
+): string[] | { error: string } {
+  // When --tickers is not provided, 'watchlist', or 'top100', load from universe-resolved watchlist
+  if (
+    tickersArg === undefined ||
+    tickersArg === '' ||
+    tickersArg.toLowerCase() === 'watchlist' ||
+    tickersArg.toLowerCase() === 'top100'
+  ) {
     try {
-      const watchlistPath = join(dataDir, 'data', 'watchlist.json');
+      const watchlistPath = join(dataDir, 'data', watchlistFile);
       const content = readFileSync(watchlistPath, 'utf-8');
       const parsed = JSON.parse(content) as { tickers?: string[] };
       if (!Array.isArray(parsed.tickers) || parsed.tickers.length === 0) {
-        return { error: `watchlist.json at ${watchlistPath} is missing or has empty 'tickers' array` };
+        return { error: `Watchlist file '${watchlistFile}' at ${watchlistPath} is missing or has empty 'tickers' array` };
       }
       return parsed.tickers.map((t: string) => t.toUpperCase());
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      return { error: `Failed to load watchlist.json: ${message}` };
+      return { error: `Failed to load watchlist file '${watchlistFile}': ${message}` };
     }
   }
 
+  // Explicit ticker list provided — use as-is (capTier still inherited from universe)
   return tickersArg.split(',').map(t => t.trim().toUpperCase()).filter(t => t.length > 0);
 }
 
@@ -122,16 +134,16 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
     const noCache = opts['no-cache'] !== undefined;
     const isV3 = opts['v3'] !== undefined;
 
-    // Validate --cap-tier flag
-    const tierResult = parseCapTier(opts['cap-tier']);
-    if (typeof tierResult === 'object' && 'error' in tierResult) {
-      return errorResult('tune', 'INVALID_PARAM_RANGE', tierResult.error);
+    // Resolve universe (replaces --cap-tier)
+    const universeResult = resolveUniverse(opts['universe']);
+    if ('error' in universeResult) {
+      return errorResult('tune', 'INVALID_PARAM_RANGE', universeResult.error);
     }
-    const tier: CapTier = tierResult;
+    const tier: CapTier = universeResult.capTier;
 
     // V3 path: tune both strategies in parallel
     if (isV3) {
-      return handleV3Tune(tickersArg, shouldSave, noCache, cachingProvider, dataDir, tier);
+      return handleV3Tune(tickersArg, shouldSave, noCache, cachingProvider, dataDir, tier, universeResult.watchlistFile);
     }
 
     // Resolve strategy from registry
@@ -141,8 +153,8 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
         `Unknown strategy '${strategyName}'. Available: ${registry.list().join(', ')}`);
     }
 
-    // Resolve ticker list
-    const tickers = resolveTickerList(tickersArg, dataDir);
+    // Resolve ticker list from universe-resolved watchlist
+    const tickers = resolveTickerList(tickersArg, dataDir, universeResult.watchlistFile);
     if ('error' in tickers) {
       return errorResult('tune', 'CONFIG_ERROR', tickers.error);
     }
@@ -283,15 +295,16 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
 // ============================================================
 
 async function handleV3Tune(
-  tickersArg: string,
+  tickersArg: string | undefined,
   shouldSave: boolean,
   noCache: boolean,
   cachingProvider: HistoricalDataCache,
   dataDir: string,
   tier: CapTier = 'large_cap',
+  watchlistFile: string = 'watchlist.json',
 ) {
-  // Resolve ticker list
-  const tickers = resolveTickerList(tickersArg, dataDir);
+  // Resolve ticker list from universe-resolved watchlist
+  const tickers = resolveTickerList(tickersArg, dataDir, watchlistFile);
   if ('error' in tickers) {
     return errorResult('tune', 'CONFIG_ERROR', tickers.error);
   }

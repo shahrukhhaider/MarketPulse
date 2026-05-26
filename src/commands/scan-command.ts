@@ -16,6 +16,7 @@ import { successResult, errorResult } from '../command-router.js';
 import type { CommandHandler } from '../command-router.js';
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import { loadStrategyProfile } from '../data/profile-store.js';
+import type { StrategyProfile } from '../data/profile-store.js';
 import { detectSignal } from '../strategies/signal-detector.js';
 import type { DetectSignalOptions } from '../strategies/signal-detector.js';
 import type { SignalOutput } from '../strategies/strategy-registry.js';
@@ -35,6 +36,8 @@ import { scoreCandlesticks } from '../indicators/candlestick-scorer.js';
 import type { Bar } from '../indicators/candlestick-scorer.js';
 import { computeLineage } from '../indicators/signal-lineage.js';
 import type { SignalLineage } from '../indicators/signal-lineage.js';
+import { resolveUniverse, VALID_UNIVERSES } from '../utils/universe.js';
+import type { CapTier } from '../utils/universe.js';
 
 // ============================================================
 // Dependencies
@@ -143,23 +146,40 @@ function applyCandlestickAdjustment(signal: SignalOutput, bars: Bar[]): SignalOu
 // Top-100 Ticker Resolution
 // ============================================================
 
-function resolveTickerList(tickersArg: string, dataDir: string): string[] | { error: string } {
+function resolveTickerList(tickersArg: string, dataDir: string, watchlistFile: string = 'watchlist.json'): string[] | { error: string } {
   if (tickersArg.toLowerCase() === 'watchlist' || tickersArg.toLowerCase() === 'top100') {
     try {
-      const watchlistPath = join(dataDir, 'data', 'watchlist.json');
+      const watchlistPath = join(dataDir, 'data', watchlistFile);
       const content = readFileSync(watchlistPath, 'utf-8');
       const parsed = JSON.parse(content) as { tickers?: string[] };
       if (!Array.isArray(parsed.tickers) || parsed.tickers.length === 0) {
-        return { error: `watchlist.json at ${watchlistPath} is missing or has empty 'tickers' array` };
+        return { error: `Watchlist file '${watchlistFile}' at ${watchlistPath} is missing or has empty 'tickers' array` };
       }
       return parsed.tickers.map((t: string) => t.toUpperCase());
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      return { error: `Failed to load watchlist.json: ${message}` };
+      return { error: `Failed to load watchlist file '${watchlistFile}': ${message}` };
     }
   }
 
   return tickersArg.split(',').map(t => t.trim().toUpperCase()).filter(t => t.length > 0);
+}
+
+// ============================================================
+// Profile Scoping — Universe-aware profile filtering
+// ============================================================
+
+/**
+ * Check if a strategy profile is scoped to the active universe.
+ * Legacy profiles (no cap_tier field) are accepted for any universe.
+ * Profiles with a defined cap_tier must match the active universe.
+ */
+export function isProfileScopedToUniverse(
+  profile: StrategyProfile,
+  activeUniverse: CapTier
+): boolean {
+  if (profile.cap_tier === undefined) return true;
+  return profile.cap_tier === activeUniverse;
 }
 
 // ============================================================
@@ -243,6 +263,108 @@ async function loadOpenPositions(
 }
 
 // ============================================================
+// Load Tickers from Watchlist File
+// ============================================================
+
+/**
+ * Load tickers directly from a watchlist file path.
+ * Used by --universe all to load each universe's tickers independently.
+ * Returns the ticker array or an error object.
+ */
+function loadTickersFromWatchlist(dataDir: string, watchlistFile: string): string[] | { error: string } {
+  try {
+    const watchlistPath = join(dataDir, 'data', watchlistFile);
+    const content = readFileSync(watchlistPath, 'utf-8');
+    const parsed = JSON.parse(content) as { tickers?: string[] };
+    if (!Array.isArray(parsed.tickers) || parsed.tickers.length === 0) {
+      return { error: `Watchlist file '${watchlistFile}' at ${watchlistPath} is missing or has empty 'tickers' array` };
+    }
+    return parsed.tickers.map((t: string) => t.toUpperCase());
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return { error: `Failed to load watchlist file '${watchlistFile}': ${message}` };
+  }
+}
+
+// ============================================================
+// Single Ticker Scan Helper (for --universe all with single-ticker universes)
+// ============================================================
+
+async function runSingleTickerScan(
+  tickers: string[],
+  strategyName: string,
+  allowStale: boolean,
+  cachingProvider: HistoricalDataCache,
+  dataDir: string,
+  regimeStateMap?: Map<string, RegimeState>,
+): Promise<{ signals: SignalOutput[]; warnings: string[]; total: number; scanned: number; skipped: number }> {
+  const signals: SignalOutput[] = [];
+  const warnings: string[] = [];
+
+  for (const ticker of tickers) {
+    try {
+      const dataResult = await cachingProvider.getHistoricalData(ticker, '1y');
+      if (!dataResult.success) {
+        warnings.push(`[${ticker}] Failed to fetch data: ${dataResult.error}`);
+        continue;
+      }
+      const dataPoints = dataResult.data.dataPoints;
+      const strategiesToScan = strategyName === 'v3'
+        ? ['consolidation_breakout', 'trend_pullback', 'bear_breakdown', 'post_earnings_drift', 'keltner_mean_reversion']
+        : [strategyName];
+
+      for (const strat of strategiesToScan) {
+        let params: Record<string, number>;
+        let signalOptions: DetectSignalOptions | undefined;
+
+        if (strat === 'post_earnings_drift') {
+          params = DEFAULT_PEAD_CONFIG as unknown as Record<string, number>;
+          const earningsResult = await new EarningsDateProvider({ cacheDir: dataDir }).getEarningsDates(ticker);
+          signalOptions = { earningsDates: earningsResult.success ? earningsResult.data.dates : [] };
+        } else {
+          const profileResult = loadStrategyProfile(ticker, strat, { allowStale, baseDir: dataDir });
+          if (!profileResult.success) {
+            if (profileResult.error.code === 'PROFILE_NOT_FOUND') {
+              warnings.push(`[${ticker}/${strat}] Profile not found. Run: npm run v3 -- --ticker ${ticker}`);
+              continue;
+            }
+            if (profileResult.error.code === 'PROFILE_EXPIRED' && !allowStale) {
+              warnings.push(`[${ticker}/${strat}] Profile expired. Retune or use --allow-stale`);
+              continue;
+            }
+            warnings.push(`[${ticker}/${strat}] ${profileResult.error.message}`);
+            continue;
+          }
+          params = profileResult.data.params;
+        }
+
+        const signal = detectSignal(dataPoints, params, strat, signalOptions);
+        signal.ticker = ticker;
+
+        // Apply RS confidence adjustment if regime data available
+        if (regimeStateMap) {
+          const regimeState = regimeStateMap.get(ticker);
+          signal.confidence = applyRsConfidenceAdjustment(signal.confidence, regimeState?.rs_rating ?? 50);
+        }
+
+        signals.push(signal);
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      warnings.push(`[${ticker}] Error: ${message}`);
+    }
+  }
+
+  return {
+    signals: sortBySignalPriority(signals),
+    warnings,
+    total: tickers.length,
+    scanned: signals.length,
+    skipped: tickers.length - signals.length,
+  };
+}
+
+// ============================================================
 // createScanHandler
 // ============================================================
 
@@ -254,17 +376,169 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     const strategyName = opts['strategy'];
     const allowStale = opts['allow-stale'] !== undefined;
     const regimeFlag = opts['no-regime'] === undefined; // regime runs by default; --no-regime disables it
-
-    if (!tickersArg) {
-      return errorResult('scan', 'MISSING_PARAM', 'Missing required parameter: --tickers');
-    }
+    const universeArg = opts['universe'];
 
     if (!strategyName) {
       return errorResult('scan', 'MISSING_PARAM', 'Missing required parameter: --strategy');
     }
 
-    // Resolve ticker list
-    const tickers = resolveTickerList(tickersArg, dataDir);
+    // ---- Universe resolution ----
+    // Validate --universe flag value
+    if (universeArg !== undefined && universeArg !== 'all') {
+      const validWithAll = [...VALID_UNIVERSES, 'all'];
+      if (!validWithAll.includes(universeArg as any)) {
+        return errorResult(
+          'scan',
+          'INVALID_PARAM_RANGE',
+          `Invalid --universe value '${universeArg}'. Valid options: ${VALID_UNIVERSES.join(', ')}, all`,
+        );
+      }
+    }
+
+    // Handle --universe all: iterate over defined tiers, scan each independently, merge results
+    if (universeArg === 'all') {
+      const universesToScan: CapTier[] = ['large_cap', 'mid_cap'];
+      const allResults: Record<string, unknown>[] = [];
+      const allWarnings: string[] = [];
+
+      for (const tier of universesToScan) {
+        const resolution = resolveUniverse(tier);
+        if ('error' in resolution) {
+          allWarnings.push(`[${tier}] ${resolution.error}`);
+          continue;
+        }
+
+        // Load tickers from the universe's watchlist
+        const tickers = loadTickersFromWatchlist(dataDir, resolution.watchlistFile);
+        if ('error' in tickers) {
+          // Non-fatal for --universe all: skip with warning
+          allWarnings.push(`[${tier}] Skipping: ${tickers.error}`);
+          continue;
+        }
+
+        // Build opts for this universe's scan (reuse most opts, override tickers)
+        const universeOpts: Record<string, string> = {
+          ...opts,
+          tickers: tickers.join(','),
+          universe: tier,
+        };
+        // Remove the 'all' value so recursive call doesn't loop
+        delete universeOpts['_universe_all'];
+
+        // Run the scan for this universe using the single-universe path
+        const concurrency = opts['_concurrency'] ? parseInt(opts['_concurrency'], 10) : 8;
+
+        // Run regime detection once (shared across universes)
+        let regimeResult: RegimeResult | undefined;
+        let regimeStateMap: Map<string, RegimeState> | undefined;
+
+        if (regimeFlag && regimeDetector) {
+          regimeResult = await regimeDetector.detect(tickers);
+          regimeStateMap = new Map<string, RegimeState>();
+          for (const state of regimeResult.tickers) {
+            regimeStateMap.set(state.ticker, state);
+          }
+        }
+
+        // Use parallelScan for multi-ticker
+        if (tickers.length > 1 && concurrency > 1) {
+          const result = await parallelScan({
+            tickers,
+            concurrency,
+            strategyName,
+            allowStale,
+            cachingProvider,
+            dataDir,
+            activeUniverse: tier,
+          });
+
+          // Annotate signals with regime state + RS confidence adjustment
+          const annotatedSignals = regimeStateMap
+            ? result.signals.map(s => {
+                const regimeState = regimeStateMap!.get(s.ticker);
+                const confidence = applyRsConfidenceAdjustment(s.confidence, regimeState?.rs_rating ?? 50);
+                return { ...s, confidence, regimeState };
+              })
+            : result.signals;
+
+          allResults.push({
+            universe: tier,
+            header: `━━━ ${tier.replace('_cap', ' CAP').toUpperCase()} ━━━`,
+            signals: sortBySignalPriority(annotatedSignals),
+            warnings: result.warnings,
+            total: result.total,
+            scanned: result.scanned,
+            skipped: result.skipped,
+          });
+          allWarnings.push(...result.warnings);
+        } else {
+          // Single ticker or sequential path for this universe
+          const singleResult = await runSingleTickerScan(
+            tickers, strategyName, allowStale, cachingProvider, dataDir, regimeStateMap,
+          );
+          allResults.push({
+            universe: tier,
+            header: `━━━ ${tier.replace('_cap', ' CAP').toUpperCase()} ━━━`,
+            signals: singleResult.signals,
+            warnings: singleResult.warnings,
+            total: singleResult.total,
+            scanned: singleResult.scanned,
+            skipped: singleResult.skipped,
+          });
+          allWarnings.push(...singleResult.warnings);
+        }
+      }
+
+      // Merge results with section headers
+      const mergedSignals: SignalOutput[] = [];
+      const sections: { header: string; signals: SignalOutput[] }[] = [];
+      for (const r of allResults) {
+        sections.push({
+          header: r.header as string,
+          signals: r.signals as SignalOutput[],
+        });
+        mergedSignals.push(...(r.signals as SignalOutput[]));
+      }
+
+      // Load open positions
+      const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
+
+      // Compute journal total P&L
+      const journalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
+      const journalLoadResult = loadJournal(journalPath);
+      let journalPnl: number | null = null;
+      if (journalLoadResult.success && journalLoadResult.data.length > 0) {
+        const stats = computeStats(journalLoadResult.data);
+        journalPnl = stats.total_pnl;
+      }
+
+      return successResult('scan', {
+        signals: mergedSignals,
+        sections,
+        warnings: [...allWarnings, ...positionsResult.warnings],
+        total: allResults.reduce((sum, r) => sum + (r.total as number), 0),
+        scanned: allResults.reduce((sum, r) => sum + (r.scanned as number), 0),
+        skipped: allResults.reduce((sum, r) => sum + (r.skipped as number), 0),
+        openPositions: positionsResult.openPositions,
+        journalPnl,
+        universeMode: 'all',
+      });
+    }
+
+    // ---- Single universe path ----
+    // Resolve universe (defaults to large_cap when not provided)
+    const universeResult = resolveUniverse(universeArg);
+    if ('error' in universeResult) {
+      return errorResult('scan', 'INVALID_PARAM_RANGE', universeResult.error);
+    }
+
+    // Resolve tickers: use --tickers if provided, otherwise load from universe watchlist
+    let tickers: string[] | { error: string };
+    if (!tickersArg) {
+      tickers = loadTickersFromWatchlist(dataDir, universeResult.watchlistFile);
+    } else {
+      tickers = resolveTickerList(tickersArg, dataDir, universeResult.watchlistFile);
+    }
     if ('error' in tickers) {
       return errorResult('scan', 'CONFIG_ERROR', tickers.error);
     }
@@ -297,6 +571,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         allowStale,
         cachingProvider,
         dataDir,
+        activeUniverse: universeResult.capTier,
       });
 
       // Annotate signals with regime state + RS confidence adjustment if available
@@ -456,7 +731,16 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
               continue;
             }
 
-            params = profileResult.data.params;
+            // Profile scoping: check cap_tier matches active universe
+            if (!isProfileScopedToUniverse(profileResult.data, universeResult.capTier)) {
+              process.stderr.write(
+                `[WARN] Skipping profile for ${ticker}: profile cap_tier '${profileResult.data.cap_tier}' does not match active universe '${universeResult.capTier}'. Re-tune with --universe ${universeResult.capTier}.\n`
+              );
+              // Use default params for this ticker's signal detection
+              params = {};
+            } else {
+              params = profileResult.data.params;
+            }
           }
 
           const signal = detectSignal(dataPoints, params, strat, signalOptions);

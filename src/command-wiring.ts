@@ -42,6 +42,7 @@ import { PostEarningsDriftStrategy } from './strategies/post-earnings-drift-stra
 import { KeltnerMeanReversionStrategy } from './strategies/keltner-mean-reversion-strategy.js';
 import { VduEngine } from './strategies/vdu-engine.js';
 import { createTuneHandler, parseCapTier } from './commands/tune-command.js';
+import { resolveUniverse, VALID_UNIVERSES } from './utils/universe.js';
 import { createScanHandler } from './commands/scan-command.js';
 import { createChartHandler } from './commands/chart-command.js';
 import { createScanChartHandler } from './commands/scan-chart-command.js';
@@ -403,8 +404,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     'volume_dry_up',
   ];
 
-  router.register('backtest', ['ticker', 'strategy'], async (opts) => {
-    const ticker = opts['ticker'].toUpperCase();
+  router.register('backtest', ['strategy'], async (opts) => {
     const strategyType = opts['strategy'] as StrategyType;
 
     // Validate strategy type
@@ -412,6 +412,181 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
       return errorResult('backtest', ErrorCodes.INVALID_PARAM_RANGE,
         `Invalid strategy type '${opts['strategy']}'. Valid types: ${VALID_STRATEGY_TYPES.join(', ')}`);
     }
+
+    // ---- Universe resolution ----
+    const universeArg = opts['universe'];
+
+    // Validate --universe flag value (including 'all')
+    if (universeArg !== undefined && universeArg !== 'all') {
+      const validWithAll = [...VALID_UNIVERSES, 'all'];
+      if (!validWithAll.includes(universeArg as any)) {
+        return errorResult('backtest', 'INVALID_PARAM_RANGE',
+          `Invalid --universe value '${universeArg}'. Valid options: ${VALID_UNIVERSES.join(', ')}, all`);
+      }
+    }
+
+    // Handle --universe all: iterate over defined tiers, backtest each independently
+    if (universeArg === 'all') {
+      const universesToBacktest: CapTier[] = ['large_cap', 'mid_cap'];
+      const allResults: Record<string, unknown>[] = [];
+      const allWarnings: string[] = [];
+
+      for (const tier of universesToBacktest) {
+        const resolution = resolveUniverse(tier);
+        if ('error' in resolution) {
+          allWarnings.push(`[${tier}] Skipping: ${resolution.error}`);
+          continue;
+        }
+
+        // Load tickers from the resolved watchlist for this universe
+        const watchlistPath = path.join(dataDir, 'data', resolution.watchlistFile);
+        let tickers: string[];
+        try {
+          const content = readFileSync(watchlistPath, 'utf-8');
+          const parsed = JSON.parse(content) as { tickers?: string[] };
+          if (!Array.isArray(parsed.tickers) || parsed.tickers.length === 0) {
+            allWarnings.push(`[${tier}] Skipping: watchlist at ${watchlistPath} is missing or has empty 'tickers' array`);
+            continue;
+          }
+          tickers = parsed.tickers.map((t: string) => t.toUpperCase());
+        } catch {
+          allWarnings.push(`[${tier}] Skipping: could not load watchlist at ${watchlistPath}`);
+          continue;
+        }
+
+        // If --ticker is also provided, use only that ticker but with this tier's capTier
+        if (opts['ticker']) {
+          tickers = [opts['ticker'].toUpperCase()];
+        }
+
+        // Run v3 backtest for each ticker in this universe
+        const period = (opts['period'] as HistoricalPeriod) || '5y';
+        for (const t of tickers) {
+          try {
+            const dataResult = await cachingProvider.getHistoricalData(t, period);
+            if (!dataResult.success) {
+              allWarnings.push(`[${tier}] ${t}: ${dataResult.error}`);
+              continue;
+            }
+            const dataPoints = dataResult.data.dataPoints;
+            const cbProfile = loadStrategyProfile(t, 'consolidation_breakout', { allowStale: true, baseDir: dataDir });
+            const tpProfile = loadStrategyProfile(t, 'trend_pullback', { allowStale: true, baseDir: dataDir });
+            const kmrProfile = loadStrategyProfile(t, 'keltner_mean_reversion', { allowStale: true, baseDir: dataDir });
+            const bbProfile = loadStrategyProfile(t, 'bear_breakdown', { allowStale: true, baseDir: dataDir });
+            const vduProfile = loadStrategyProfile(t, 'volume_dry_up', { allowStale: true, baseDir: dataDir });
+
+            const cbParams: Record<string, number> = cbProfile.success ? cbProfile.data.params : {};
+            const tpParams: Record<string, number> = tpProfile.success ? tpProfile.data.params : {};
+            const kmrParams: Record<string, number> = kmrProfile.success ? kmrProfile.data.params : {};
+            const bbParams: Record<string, number> = bbProfile.success ? bbProfile.data.params : {};
+            const vduParams: Record<string, number> = vduProfile.success ? vduProfile.data.params : {};
+
+            const v3Result: V3BacktestResult = backtestV3(dataPoints, cbParams, tpParams, kmrParams, bbParams, vduParams);
+            v3Result.consolidation_breakout.ticker = t;
+            v3Result.trend_pullback.ticker = t;
+            if (v3Result.keltner_mean_reversion) v3Result.keltner_mean_reversion.ticker = t;
+            if (v3Result.bear_breakdown) v3Result.bear_breakdown.ticker = t;
+            if (v3Result.volume_dry_up) v3Result.volume_dry_up.ticker = t;
+
+            allResults.push({
+              universe: tier,
+              label: `[${tier}] ${t}`,
+              ticker: t,
+              ...v3Result,
+            });
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            allWarnings.push(`[${tier}] ${t}: ${message}`);
+          }
+        }
+      }
+
+      return successResult('backtest', {
+        universeMode: 'all',
+        results: allResults,
+        warnings: allWarnings.length > 0 ? allWarnings : undefined,
+        v3: true,
+      });
+    }
+
+    // Single universe resolution (or default to large_cap)
+    const universeResult = resolveUniverse(universeArg);
+    if ('error' in universeResult) {
+      return errorResult('backtest', 'INVALID_PARAM_RANGE', universeResult.error);
+    }
+    const resolvedCapTier: CapTier = universeResult.capTier;
+
+    // When --universe provided without --ticker, load ticker list from resolved watchlist
+    if (!opts['ticker'] && universeArg !== undefined) {
+      const watchlistPath = path.join(dataDir, 'data', universeResult.watchlistFile);
+      let tickers: string[];
+      try {
+        const content = readFileSync(watchlistPath, 'utf-8');
+        const parsed = JSON.parse(content) as { tickers?: string[] };
+        if (!Array.isArray(parsed.tickers) || parsed.tickers.length === 0) {
+          return errorResult('backtest', 'CONFIG_ERROR',
+            `Watchlist at ${watchlistPath} is missing or has empty 'tickers' array`);
+        }
+        tickers = parsed.tickers.map((t: string) => t.toUpperCase());
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        return errorResult('backtest', 'CONFIG_ERROR', `Failed to load watchlist: ${message}`);
+      }
+
+      // Run v3 backtest for each ticker in the universe
+      const period = (opts['period'] as HistoricalPeriod) || '5y';
+      const results: Record<string, unknown>[] = [];
+      const warnings: string[] = [];
+
+      for (const t of tickers) {
+        try {
+          const dataResult = await cachingProvider.getHistoricalData(t, period);
+          if (!dataResult.success) {
+            warnings.push(`${t}: ${dataResult.error}`);
+            continue;
+          }
+          const dataPoints = dataResult.data.dataPoints;
+          const cbProfile = loadStrategyProfile(t, 'consolidation_breakout', { allowStale: true, baseDir: dataDir });
+          const tpProfile = loadStrategyProfile(t, 'trend_pullback', { allowStale: true, baseDir: dataDir });
+          const kmrProfile = loadStrategyProfile(t, 'keltner_mean_reversion', { allowStale: true, baseDir: dataDir });
+          const bbProfile = loadStrategyProfile(t, 'bear_breakdown', { allowStale: true, baseDir: dataDir });
+          const vduProfile = loadStrategyProfile(t, 'volume_dry_up', { allowStale: true, baseDir: dataDir });
+
+          const cbParams: Record<string, number> = cbProfile.success ? cbProfile.data.params : {};
+          const tpParams: Record<string, number> = tpProfile.success ? tpProfile.data.params : {};
+          const kmrParams: Record<string, number> = kmrProfile.success ? kmrProfile.data.params : {};
+          const bbParams: Record<string, number> = bbProfile.success ? bbProfile.data.params : {};
+          const vduParams: Record<string, number> = vduProfile.success ? vduProfile.data.params : {};
+
+          const v3Result: V3BacktestResult = backtestV3(dataPoints, cbParams, tpParams, kmrParams, bbParams, vduParams);
+          v3Result.consolidation_breakout.ticker = t;
+          v3Result.trend_pullback.ticker = t;
+          if (v3Result.keltner_mean_reversion) v3Result.keltner_mean_reversion.ticker = t;
+          if (v3Result.bear_breakdown) v3Result.bear_breakdown.ticker = t;
+          if (v3Result.volume_dry_up) v3Result.volume_dry_up.ticker = t;
+
+          results.push({ ticker: t, ...v3Result });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          warnings.push(`${t}: ${message}`);
+        }
+      }
+
+      return successResult('backtest', {
+        universe: resolvedCapTier,
+        results,
+        warnings: warnings.length > 0 ? warnings : undefined,
+        v3: true,
+      });
+    }
+
+    // Require --ticker when --universe is not provided (backward compatibility)
+    if (!opts['ticker']) {
+      return errorResult('backtest', ErrorCodes.MISSING_PARAM,
+        `Missing required parameter(s): --ticker`);
+    }
+
+    const ticker = opts['ticker'].toUpperCase();
 
     // --v3 path: run both consolidation_breakout and trend_pullback in parallel
     const isV3Backtest = opts['v3'] !== undefined;
@@ -1521,12 +1696,12 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     const shouldSave = opts['save'] !== undefined;
     const noCache = opts['no-cache'] !== undefined;
 
-    // Validate --cap-tier flag
-    const tierResult = parseCapTier(opts['cap-tier']);
-    if (typeof tierResult === 'object' && 'error' in tierResult) {
-      return errorResult('tune-pipeline', 'INVALID_PARAM_RANGE', tierResult.error);
+    // Resolve universe (replaces --cap-tier)
+    const universeResult = resolveUniverse(opts['universe']);
+    if ('error' in universeResult) {
+      return errorResult('tune-pipeline', 'INVALID_PARAM_RANGE', universeResult.error);
     }
-    const tier: CapTier = tierResult;
+    const tier: CapTier = universeResult.capTier;
 
     // Resolve ticker list to determine if we should use parallel execution
     const tickers = resolveV3TickerList(tickersArg, dataDir);
@@ -1558,7 +1733,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     opts['_concurrency'] = String(concurrency);
     return tuneHandler(opts);
   });
-  router.register('scan', ['tickers', 'strategy'], async (opts) => {
+  router.register('scan', ['strategy'], async (opts) => {
     // Parse and validate --concurrency flag
     const concurrency = parseConcurrency(opts);
     opts['_concurrency'] = String(concurrency);
@@ -1575,12 +1750,12 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     const concurrency = parseConcurrency(opts);
     const tickerArg = opts['ticker'];
 
-    // Validate --cap-tier flag
-    const tierResult = parseCapTier(opts['cap-tier']);
-    if (typeof tierResult === 'object' && 'error' in tierResult) {
-      return errorResult('v3', 'INVALID_PARAM_RANGE', tierResult.error);
+    // Resolve universe (replaces --cap-tier)
+    const universeResult = resolveUniverse(opts['universe']);
+    if ('error' in universeResult) {
+      return errorResult('v3', 'INVALID_PARAM_RANGE', universeResult.error);
     }
-    const tier: CapTier = tierResult;
+    const tier: CapTier = universeResult.capTier;
 
     // Resolve ticker list: 'top100' loads from data/top100.json, comma-separated splits
     const tickers = resolveV3TickerList(tickerArg, dataDir);

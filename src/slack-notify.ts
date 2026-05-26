@@ -690,5 +690,8 @@ async function main(): Promise<void> {
   process.exit(0);
 }
 
-// Self-executing when run as a script
-main();
+// Only run main() when executed directly as a script (not when imported)
+const _scriptPath = process.argv[1];
+if (_scriptPath && (_scriptPath.endsWith('slack-notify.js') || _scriptPath.endsWith('slack-notify.ts'))) {
+  main();
+}
