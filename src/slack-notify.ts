@@ -590,7 +590,10 @@ export function buildSlackMessage(data: ScanData): string {
         lineageBadge = `  ${parts.join(' · ')}`;
       }
       lines.push(`${sideIcon} *${s.ticker}* ${side} · ${strategyDisplay}${rvolBadge}${candleBadge}${lineageBadge}`);
-      lines.push(`      Entry ${formatPrice(s.entry)} → Stop ${formatPrice(s.stop)} · Risk ${formatPct(s.risk_pct)}`);
+      const targetFromReason = (s.reason ?? []).find((r: string) => r.includes('Target:'))?.match(/Target:\s*([\d.]+)/)?.[1];
+      const rrFromReason = (s.reason ?? []).find((r: string) => r.includes('R:R'))?.match(/R:R\s*=\s*([\d:.]+)/)?.[1];
+      const targetRrSuffix = targetFromReason ? ` → Target ${targetFromReason}${rrFromReason ? ` · R:R ${rrFromReason}` : ''}` : '';
+      lines.push(`      Entry ${formatPrice(s.entry)} → Stop ${formatPrice(s.stop)} · Risk ${formatPct(s.risk_pct)}${targetRrSuffix}`);
       const narrative = narrateSignal({ ticker: s.ticker, strategy: s.strategy, signal: s.signal === 'active_late' ? 'active' : s.signal, entry: s.entry, stop: s.stop, target: s.target, reason: s.reason });
       if (narrative) {
         lines.push(`      ${narrative}`);

@@ -15,6 +15,7 @@ import { buildMultipartPayload } from './discord-multipart.js';
 import { cleanupStaleTempDirs, cleanupChartTempDir, createChartTempDir } from './chart-temp-files.js';
 import { generateChartFilename } from './chart-types.js';
 import type { SignalInput, ChartResult, ChartSuccess, AttachmentMeta, MultipartPayload } from './chart-types.js';
+import type { SignalLineage } from './indicators/signal-lineage.js';
 
 // --- Discord Embed Types ---
 
@@ -343,9 +344,11 @@ export function buildOpenPositionsPayload(data: ScanData): DiscordPayload | null
 }
 
 /**
- * Build active signal embeds. One embed per active/active_late signal.
- * Splits into multiple payloads at 10 embeds per payload.
- * Returns a "No Active Signals" placeholder when list is empty.
+ * Build active signal payloads — one embed per signal with 3-line compact format.
+ * Line 1: Header (ticker, side, strategy, day)
+ * Line 2: Rationale/narrative
+ * Line 3: Entry → Stop → Target · Risk · R:R
+ * Charts attach via embed.image when available.
  */
 export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
   const activeSignals = data.signals.filter(
@@ -357,13 +360,26 @@ export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
     return [{ embeds: [{ title: 'No Active Signals', color: COLORS.GREY }] }];
   }
 
+  // Sort by confidence descending
+  const sorted = [...activeSignals].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+
   // Build one embed per signal
-  const embeds: DiscordEmbed[] = activeSignals.map((signal) => {
-    const title = `${signal.ticker} — ${signal.strategy.replace(/_/g, ' ')}`;
+  const embeds: DiscordEmbed[] = sorted.map((signal) => {
     const side = determineSide(signal.strategy);
+    const sideIcon = side === 'SHORT' ? '🔴' : '🟢';
+    const sideLabel = side === 'SHORT' ? 'SHORT' : 'BUY';
+    const stratName = signal.strategy.replace(/_/g, ' ');
+    const lineage = (signal as any).lineage as SignalLineage | undefined;
+    const dayStr = lineage ? `Day ${lineage.daysInState}` : 'Day 1';
     const color = side === 'SHORT' ? COLORS.RED : COLORS.GREEN;
 
-    // Description: narrateSignal or fallback to reason[0]
+    // Title: ticker — strategy (used for chart matching)
+    const title = `${signal.ticker} — ${stratName}`;
+
+    // Line 1 (in description): side + day
+    const headerLine = `${sideIcon} **${sideLabel}** · ${dayStr}`;
+
+    // Line 2: narrative/rationale
     const narrateInput = {
       ticker: signal.ticker,
       strategy: signal.strategy,
@@ -374,42 +390,30 @@ export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
       reason: signal.reason,
     };
     const narrative = narrateSignal(narrateInput as any);
-    let description: string | undefined;
-    if (narrative && narrative.length > 0) {
-      description = narrative;
-    } else if (signal.reason && signal.reason.length > 0) {
-      description = signal.reason[0];
-    }
+    const rationale = narrative && narrative.length > 0
+      ? narrative
+      : (signal.reason && signal.reason.length > 0 ? signal.reason[0] : '');
 
-    // 8 inline fields
-    const rr = (signal as any).rr as number | undefined | null;
-    const regimeState = (signal as any).regime_state ?? (signal as any).regimeState;
-    const rsRating = regimeState?.rs_rating;
-    const rvol = (signal as any).rvol as number | undefined | null;
+    // Line 3: trigger prices
+    const targetFromReason = (signal.reason ?? []).find((r: string) => r.includes('Target:'))?.match(/Target:\s*([\d.]+)/)?.[1];
+    const targetValue = signal.target ?? (targetFromReason ? parseFloat(targetFromReason) : undefined);
+    const rrFromReason = (signal.reason ?? []).find((r: string) => r.includes('R:R'))?.match(/R:R\s*=\s*([\d:.]+)/)?.[1];
 
-    const fields: DiscordEmbedField[] = [
-      { name: 'Entry', value: signal.entry.toFixed(2), inline: true },
-      { name: 'Stop', value: signal.stop.toFixed(2), inline: true },
-      { name: 'Target', value: signal.target?.toFixed(2) ?? '—', inline: true },
-      { name: 'Risk', value: signal.risk_pct != null ? `${signal.risk_pct.toFixed(1)}%` : '—', inline: true },
-      { name: 'R:R', value: rr != null ? rr.toFixed(1) : '—', inline: true },
-      { name: 'RS', value: rsRating != null ? rsRating.toString() : '—', inline: true },
-      { name: 'Conf', value: `${signal.confidence}%`, inline: true },
-      { name: 'Vol', value: rvol != null ? rvol.toFixed(1) + 'x' : '—', inline: true },
-    ];
+    const entryStr = signal.entry.toFixed(2);
+    const stopStr = signal.stop.toFixed(2);
+    const targetStr = targetValue != null ? targetValue.toFixed(2) : '—';
+    const riskStr = signal.risk_pct != null ? `${signal.risk_pct.toFixed(1)}%` : '—';
+    const rrStr = rrFromReason ?? '—';
 
-    // Footer: exit plan text
-    const footerText = `Stop at ${signal.stop.toFixed(2)} · ${signal.target ? 'Target at ' + signal.target.toFixed(2) : 'No target set'}`;
+    const priceLine = `Entry **${entryStr}** → Stop **${stopStr}** → Target **${targetStr}** · Risk ${riskStr} · R:R ${rrStr}`;
+
+    const description = `${headerLine}\n${rationale}\n${priceLine}`;
 
     const embed: DiscordEmbed = {
       title,
+      description,
       color,
-      fields,
-      footer: { text: footerText },
     };
-    if (description) {
-      embed.description = description;
-    }
 
     return embed;
   });

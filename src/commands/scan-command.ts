@@ -607,7 +607,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       });
 
       // Apply signal lineage adjustment to active signals (after candlestick adjustment)
-      const historyPath = join(dataDir, '.stock-tracker', 'signal-history.ndjson');
+      const historyPath = join(dataDir, 'signal-history.ndjson');
       const today = new Date().toISOString().slice(0, 10);
       const currentMood = regimeResult?.market?.market_mood ?? 'unknown';
 
@@ -805,7 +805,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     });
 
     // Apply signal lineage adjustment to active signals (after candlestick adjustment)
-    const seqHistoryPath = join(dataDir, '.stock-tracker', 'signal-history.ndjson');
+    const seqHistoryPath = join(dataDir, 'signal-history.ndjson');
     const seqToday = new Date().toISOString().slice(0, 10);
     const seqCurrentMood = regimeResult?.market?.market_mood ?? 'unknown';
 
