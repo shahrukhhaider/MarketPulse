@@ -16,6 +16,7 @@ import { cleanupStaleTempDirs, cleanupChartTempDir, createChartTempDir } from '.
 import { generateChartFilename } from './chart-types.js';
 import type { SignalInput, ChartResult, ChartSuccess, AttachmentMeta, MultipartPayload } from './chart-types.js';
 import type { SignalLineage } from './indicators/signal-lineage.js';
+import { sortSignals } from './formatters/signal-sort.js';
 
 // --- Discord Embed Types ---
 
@@ -361,10 +362,11 @@ export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
   }
 
   // Sort by confidence descending
-  const sorted = [...activeSignals].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+  const sorted = sortSignals(activeSignals as any) as typeof activeSignals;
 
-  // Build one embed per signal
-  const embeds: DiscordEmbed[] = sorted.map((signal) => {
+  // Build one embed per signal (top 5 only — bottom signals are not actionable)
+  const top = sorted.slice(0, 5);
+  const embeds: DiscordEmbed[] = top.map((signal) => {
     const side = determineSide(signal.strategy);
     const sideIcon = side === 'SHORT' ? '🔴' : '🟢';
     const sideLabel = side === 'SHORT' ? 'SHORT' : 'BUY';

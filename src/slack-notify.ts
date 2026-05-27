@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { narrateSignal } from './formatters/signal-narrator.js';
 import type { SignalLineage } from './indicators/signal-lineage.js';
+import { sortSignals } from './formatters/signal-sort.js';
 
 // --- Block Kit Types ---
 
@@ -280,19 +281,11 @@ export function buildSlackPayload(data: ScanData): SlackPayload {
   const nearSignalsRaw = data.signals.filter((s) => s.signal === 'near');
   const positions = data.openPositions;
 
-  // --- Sort by quality (confluence desc → confidence desc → risk asc) and limit to 10 ---
+  // --- Sort by quality and limit to 10 ---
   const MAX_PER_CATEGORY = 10;
-  const sortSignals = (signals: Signal[]): Signal[] =>
-    [...signals].sort((a, b) => {
-      const confA = (a as any).confluence ?? 0;
-      const confB = (b as any).confluence ?? 0;
-      if (confB !== confA) return confB - confA;
-      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
-      return a.risk_pct - b.risk_pct;
-    });
 
-  const activeSignals = sortSignals(activeSignalsRaw).slice(0, MAX_PER_CATEGORY);
-  const nearSignals = sortSignals(nearSignalsRaw).slice(0, MAX_PER_CATEGORY);
+  const activeSignals = sortSignals(activeSignalsRaw as any).slice(0, MAX_PER_CATEGORY) as Signal[];
+  const nearSignals = sortSignals(nearSignalsRaw as any).slice(0, MAX_PER_CATEGORY) as Signal[];
 
   // --- Header block ---
   const scanDate = activeSignals.length > 0
@@ -510,19 +503,11 @@ export function buildSlackPayload(data: ScanData): SlackPayload {
  */
 export function buildSlackMessage(data: ScanData): string {
   const MAX_PER_CATEGORY = 10;
-  const sortSigs = (signals: Signal[]): Signal[] =>
-    [...signals].sort((a, b) => {
-      const confA = (a as any).confluence ?? 0;
-      const confB = (b as any).confluence ?? 0;
-      if (confB !== confA) return confB - confA;
-      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
-      return a.risk_pct - b.risk_pct;
-    });
 
-  const activeSignals = sortSigs(data.signals.filter(
+  const activeSignals = sortSignals(data.signals.filter(
     (s) => s.signal === 'active' || s.signal === 'active_late'
-  )).slice(0, MAX_PER_CATEGORY);
-  const nearSignals = sortSigs(data.signals.filter((s) => s.signal === 'near')).slice(0, MAX_PER_CATEGORY);
+  ) as any).slice(0, MAX_PER_CATEGORY) as Signal[];
+  const nearSignals = sortSignals(data.signals.filter((s) => s.signal === 'near') as any).slice(0, MAX_PER_CATEGORY) as Signal[];
   const positions = data.openPositions;
 
   // Header

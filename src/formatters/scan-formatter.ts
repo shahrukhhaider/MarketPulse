@@ -12,6 +12,7 @@ import type { SignalLineage } from '../indicators/signal-lineage.js';
 import { toExposureTier } from './market-exposure.js';
 import type { MarketRegimeData } from './market-exposure.js';
 import { narrateSignal } from './signal-narrator.js';
+import { computeCompositeScore, compareSignals } from './signal-sort.js';
 
 // ============================================================
 // ANSI Color Helpers
@@ -123,17 +124,6 @@ export function confluenceLabel(confluence: number | undefined): string {
   if (confluence >= 0.7) return green(label);
   if (confluence > 0.3) return yellow(label);
   return red(label);
-}
-
-/**
- * Compute composite sort score: rvol × confidence.
- * Returns 0 when rvol is null/undefined or confidence is 0.
- */
-export function computeCompositeScore(
-  rvol: number | null | undefined,
-  confidence: number
-): number {
-  return (rvol ?? 0) * confidence;
 }
 
 /**
@@ -462,7 +452,7 @@ function renderActive(signals: AnnotatedSignal[]): string {
     byTicker.set(sig.ticker, group);
   }
 
-  // Sort ticker groups by composite score desc → confluence desc → RS desc → risk asc
+  // Sort ticker groups by composite score desc → regime alignment → confluence desc → RS desc → risk asc
   const sortedGroups = [...byTicker.entries()].sort((a, b) => {
     const bestA = a[1].reduce((best, s) => {
       const scoreS = computeCompositeScore(s.rvol, s.confidence);
@@ -475,23 +465,7 @@ function renderActive(signals: AnnotatedSignal[]): string {
       return scoreS > scoreBest ? s : best;
     }, b[1][0]);
 
-    // Primary: composite score descending
-    const scoreA = computeCompositeScore(bestA.rvol, bestA.confidence);
-    const scoreB = computeCompositeScore(bestB.rvol, bestB.confidence);
-    if (scoreB !== scoreA) return scoreB - scoreA;
-
-    // Tiebreaker 1: confluence descending
-    const confA = bestA.confluence ?? 0;
-    const confB = bestB.confluence ?? 0;
-    if (confB !== confA) return confB - confA;
-
-    // Tiebreaker 2: RS rating descending
-    const rsA = bestA.regimeState?.rs_rating ?? 0;
-    const rsB = bestB.regimeState?.rs_rating ?? 0;
-    if (rsB !== rsA) return rsB - rsA;
-
-    // Tiebreaker 3: risk_pct ascending
-    return bestA.risk_pct - bestB.risk_pct;
+    return compareSignals(bestA, bestB);
   });
 
   for (const [, tickerSignals] of sortedGroups) {

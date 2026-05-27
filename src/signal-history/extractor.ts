@@ -12,6 +12,7 @@ import type {
   NearSignal,
   OpenPosition,
 } from './signal-entry.js';
+import { sortSignals } from '../formatters/signal-sort.js';
 
 // ============================================================
 // ScanOutput — shape of the JSON produced by `cli.js scan --log`
@@ -51,8 +52,12 @@ const NEAR_CLASSIFICATIONS = new Set(['near']);
  */
 export function extractSignalEntry(scanOutput: ScanOutput, date: string): SignalEntry {
   const marketContext = extractMarketContext(scanOutput);
-  const active = extractActiveSignals(scanOutput.signals);
-  const near = extractNearSignals(scanOutput.signals);
+
+  // Sort signals by quality before extracting (best signals first in history)
+  const sortedSignals = sortSignals(scanOutput.signals as any) as AnnotatedSignal[];
+
+  const active = extractActiveSignals(sortedSignals);
+  const near = extractNearSignals(sortedSignals);
   const openPositions = extractOpenPositions(scanOutput.openPositions);
 
   return {
