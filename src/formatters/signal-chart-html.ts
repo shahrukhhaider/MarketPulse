@@ -53,6 +53,196 @@ function buildVolumeData(
 }
 
 /**
+ * Compute Simple Moving Average for a given period.
+ */
+function computeSMA(
+  dataPoints: SignalChartInput['dataPoints'],
+  period: number
+): Array<{ time: string; value: number }> {
+  const result: Array<{ time: string; value: number }> = [];
+  for (let i = period - 1; i < dataPoints.length; i++) {
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      sum += dataPoints[j].close;
+    }
+    result.push({ time: dataPoints[i].date, value: sum / period });
+  }
+  return result;
+}
+
+/**
+ * Compute ATR (Average True Range) for a given period.
+ */
+function computeATR(
+  dataPoints: SignalChartInput['dataPoints'],
+  period: number
+): number[] {
+  const trs: number[] = [];
+  for (let i = 1; i < dataPoints.length; i++) {
+    const high = dataPoints[i].high;
+    const low = dataPoints[i].low;
+    const prevClose = dataPoints[i - 1].close;
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trs.push(tr);
+  }
+
+  // EMA-based ATR
+  const atrs: number[] = [];
+  if (trs.length < period) return atrs;
+
+  let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  atrs.push(atr);
+  for (let i = period; i < trs.length; i++) {
+    atr = (atr * (period - 1) + trs[i]) / period;
+    atrs.push(atr);
+  }
+  return atrs;
+}
+
+/**
+ * Compute EMA (Exponential Moving Average) for a given period.
+ */
+function computeEMA(
+  dataPoints: SignalChartInput['dataPoints'],
+  period: number
+): Array<{ time: string; value: number }> {
+  const result: Array<{ time: string; value: number }> = [];
+  if (dataPoints.length < period) return result;
+
+  // Seed with SMA
+  let ema = 0;
+  for (let i = 0; i < period; i++) {
+    ema += dataPoints[i].close;
+  }
+  ema /= period;
+  result.push({ time: dataPoints[period - 1].date, value: ema });
+
+  const multiplier = 2 / (period + 1);
+  for (let i = period; i < dataPoints.length; i++) {
+    ema = (dataPoints[i].close - ema) * multiplier + ema;
+    result.push({ time: dataPoints[i].date, value: ema });
+  }
+  return result;
+}
+
+/**
+ * Compute Keltner Channel bands (upper and lower).
+ * Uses EMA as center line and ATR × multiplier for band width.
+ */
+function computeKeltnerBands(
+  dataPoints: SignalChartInput['dataPoints'],
+  emaPeriod: number,
+  atrPeriod: number,
+  multiplier: number
+): { upper: Array<{ time: string; value: number }>; lower: Array<{ time: string; value: number }> } {
+  const emaData = computeEMA(dataPoints, emaPeriod);
+  const atrValues = computeATR(dataPoints, atrPeriod);
+
+  const upper: Array<{ time: string; value: number }> = [];
+  const lower: Array<{ time: string; value: number }> = [];
+
+  // Align ATR with EMA (ATR starts at index atrPeriod, EMA starts at index emaPeriod-1)
+  const atrStartIdx = atrPeriod; // ATR[0] corresponds to dataPoints[atrPeriod]
+  const emaStartIdx = emaPeriod - 1; // EMA[0] corresponds to dataPoints[emaPeriod-1]
+
+  for (let i = 0; i < emaData.length; i++) {
+    const dpIdx = emaStartIdx + i;
+    const atrIdx = dpIdx - atrStartIdx;
+    if (atrIdx >= 0 && atrIdx < atrValues.length) {
+      const atr = atrValues[atrIdx];
+      upper.push({ time: emaData[i].time, value: emaData[i].value + multiplier * atr });
+      lower.push({ time: emaData[i].time, value: emaData[i].value - multiplier * atr });
+    }
+  }
+
+  return { upper, lower };
+}
+
+/**
+ * Build strategy-specific overlay script for the chart.
+ * - Trend Pullback / CB / Bear Breakdown: SMA10, SMA20, SMA50
+ * - Keltner Mean Reversion: EMA20 + Keltner bands (2.0× ATR14)
+ */
+function buildOverlayScript(
+  strategy: string,
+  dataPoints: SignalChartInput['dataPoints']
+): string {
+  if (strategy === 'keltner_mean_reversion') {
+    const emaData = computeEMA(dataPoints, 20);
+    const bands = computeKeltnerBands(dataPoints, 20, 14, 2.0);
+
+    return `
+    // EMA20 center line (yellow)
+    var emaSeries = chart.addSeries(LightweightCharts.LineSeries, {
+      color: '#FFD700',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false
+    });
+    emaSeries.setData(${JSON.stringify(emaData)});
+
+    // Keltner upper band (cyan, dashed)
+    var upperSeries = chart.addSeries(LightweightCharts.LineSeries, {
+      color: '#00BCD4',
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      priceLineVisible: false,
+      lastValueVisible: false
+    });
+    upperSeries.setData(${JSON.stringify(bands.upper)});
+
+    // Keltner lower band (cyan, dashed)
+    var lowerSeries = chart.addSeries(LightweightCharts.LineSeries, {
+      color: '#00BCD4',
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      priceLineVisible: false,
+      lastValueVisible: false
+    });
+    lowerSeries.setData(${JSON.stringify(bands.lower)});`;
+  }
+
+  // Default: SMA10, SMA20, SMA50 for trend-based strategies
+  const sma10 = computeSMA(dataPoints, 10);
+  const sma20 = computeSMA(dataPoints, 20);
+  const sma50 = computeSMA(dataPoints, 50);
+
+  let script = `
+    // SMA10 (white, thin)
+    var sma10Series = chart.addSeries(LightweightCharts.LineSeries, {
+      color: '#FFFFFF',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false
+    });
+    sma10Series.setData(${JSON.stringify(sma10)});
+
+    // SMA20 (orange)
+    var sma20Series = chart.addSeries(LightweightCharts.LineSeries, {
+      color: '#FF9800',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false
+    });
+    sma20Series.setData(${JSON.stringify(sma20)});`;
+
+  if (sma50.length > 0) {
+    script += `
+
+    // SMA50 (purple)
+    var sma50Series = chart.addSeries(LightweightCharts.LineSeries, {
+      color: '#9C27B0',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false
+    });
+    sma50Series.setData(${JSON.stringify(sma50)});`;
+  }
+
+  return script;
+}
+
+/**
  * Generate a self-contained HTML string for signal chart screenshot.
  *
  * The HTML includes:
@@ -68,7 +258,7 @@ function buildVolumeData(
  * @param lightweightChartsJs - Inlined JavaScript content of the lightweight-charts library
  */
 export function generateSignalChartHtml(input: SignalChartInput, lightweightChartsJs: string): string {
-  const { ticker, strategy, dataPoints, entry, stop, target } = input;
+  const { ticker, strategy, dataPoints, entry, stop, target, signalStartDate } = input;
 
   const candlestickData = buildCandlestickData(dataPoints);
   const volumeData = buildVolumeData(dataPoints);
@@ -107,6 +297,22 @@ export function generateSignalChartHtml(input: SignalChartInput, lightweightChar
       axisLabelVisible: true,
       title: 'Target ${target.toFixed(2)}'
     });`;
+  }
+
+  // Build signal start date marker script
+  let markerScript = '';
+  if (signalStartDate) {
+    markerScript = `
+    // Signal start date marker (gold arrow below bar)
+    try {
+      candleSeries.createSeriesMarkers([{
+        time: '${signalStartDate}',
+        position: 'belowBar',
+        color: '#FFD700',
+        shape: 'arrowUp',
+        text: 'Signal'
+      }]);
+    } catch(e) { /* markers API may differ across versions */ }`;
   }
 
   return `<!DOCTYPE html>
@@ -158,7 +364,14 @@ export function generateSignalChartHtml(input: SignalChartInput, lightweightChar
     scaleMargins: { top: 0.8, bottom: 0 }
   });
   volumeSeries.setData(volumeData);
+
+  // Strategy-specific overlays (wrapped in try/catch to not block chart rendering)
+  try {
+${buildOverlayScript(strategy, dataPoints)}
+  } catch(e) { /* overlay failed, continue without */ }
+
 ${priceLinesScript}
+${markerScript}
 
   chart.timeScale().fitContent();
   document.body.setAttribute('data-chart-ready', 'true');

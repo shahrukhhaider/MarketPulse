@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { confidenceBadge, confluenceBadge } from './formatters/badge-helpers.js';
 import { narrateSignal } from './formatters/signal-narrator.js';
 import type { SignalLineage } from './indicators/signal-lineage.js';
 import { sortSignals } from './formatters/signal-sort.js';
@@ -344,27 +345,30 @@ export function buildSlackPayload(data: ScanData): SlackPayload {
   // --- Build section blocks for each category ---
   const activeBlocks: Block[] = activeSignals.map((s) => {
     const side = determineSide(s.strategy);
-    const buyZone = `\`${formatPrice(s.entry)}\` – \`${formatPrice(s.stop)}\``;
-    const risk = `\`${formatPct(s.risk_pct)}\``;
-    const rr = calculateRR(s.risk_pct);
+    const sideIcon = side === 'BUY' ? '🟢' : '🔻';
+    const strategyDisplay = s.strategy.replace(/_/g, ' ');
+
+    // Badge-based metadata line
+    const metaParts: string[] = [];
+    const badge = confidenceBadge(s.confidence);
+    if (badge) metaParts.push(badge);
+    const rs = (s as any).regimeState?.rs_rating;
+    if (rs != null && rs > 0) metaParts.push(`RS ${rs}`);
     const rvol = (s as any).rvol ?? null;
-    const rvolBadge = rvol != null ? `  Vol: ${rvol.toFixed(1)}×` : '';
-    const candlestickPatterns = (s as any).candlestickPatterns as string[] | undefined;
-    const candleBadge = candlestickPatterns && candlestickPatterns.length > 0
-      ? `  🕯 ${candlestickPatterns.join(', ')}`
-      : '';
+    if (rvol != null) metaParts.push(`Vol ${rvol.toFixed(1)}×`);
     const lineage = (s as any).lineage as SignalLineage | undefined;
-    let lineageBadge = '';
-    if (lineage) {
-      const parts: string[] = [`Day ${lineage.daysInState}`];
-      if (lineage.textbookProgression) parts.push('↗');
-      if (lineage.priorFailedAttempt) {
-        parts.push(`⚠ Prior attempt ${lineage.priorAttemptDaysAgo}d ago`);
-      }
-      if (lineage.regimeShift) parts.push('⚠ Regime shift');
-      lineageBadge = `  ${parts.join(' · ')}`;
+    const day = lineage?.daysInState ?? 1;
+    metaParts.push(`Day ${day}`);
+    const metadataLine = metaParts.join(' · ');
+
+    // Confluence badge line
+    const confluence = (s as any).confluence as number | undefined;
+    const confBadge = confluenceBadge(confluence);
+
+    let text = `${sideIcon} *${s.ticker}* ${side} · ${strategyDisplay}\n${metadataLine}`;
+    if (confBadge) {
+      text += `\n${confBadge}`;
     }
-    let text = `*${s.ticker}* ${side} · ${s.strategy}\nZone: ${buyZone}  Risk: ${risk}  R:R \`${rr}\`${rvolBadge}${candleBadge}${lineageBadge}`;
     const narrative = narrateSignal({ ticker: s.ticker, strategy: s.strategy, signal: s.signal === 'active_late' ? 'active' : s.signal, entry: s.entry, stop: s.stop, target: s.target, reason: s.reason });
     if (narrative) {
       text += `\n${narrative}`;
@@ -557,28 +561,28 @@ export function buildSlackMessage(data: ScanData): string {
       const side = determineSide(s.strategy);
       const sideIcon = side === 'BUY' ? '🟢' : '🔻';
       const strategyDisplay = s.strategy.replace(/_/g, ' ');
+      lines.push(`${sideIcon} *${s.ticker}* ${side} · ${strategyDisplay}`);
+
+      // Badge-based metadata line
+      const metaParts: string[] = [];
+      const badge = confidenceBadge(s.confidence);
+      if (badge) metaParts.push(badge);
+      const rs = (s as any).regimeState?.rs_rating;
+      if (rs != null && rs > 0) metaParts.push(`RS ${rs}`);
       const rvol = (s as any).rvol ?? null;
-      const rvolBadge = rvol != null ? `  Vol: ${rvol.toFixed(1)}×` : '';
-      const candlestickPatterns = (s as any).candlestickPatterns as string[] | undefined;
-      const candleBadge = candlestickPatterns && candlestickPatterns.length > 0
-        ? `  🕯 ${candlestickPatterns.join(', ')}`
-        : '';
+      if (rvol != null) metaParts.push(`Vol ${rvol.toFixed(1)}×`);
       const lineage = (s as any).lineage as SignalLineage | undefined;
-      let lineageBadge = '';
-      if (lineage) {
-        const parts: string[] = [`Day ${lineage.daysInState}`];
-        if (lineage.textbookProgression) parts.push('↗');
-        if (lineage.priorFailedAttempt) {
-          parts.push(`⚠ Prior attempt ${lineage.priorAttemptDaysAgo}d ago`);
-        }
-        if (lineage.regimeShift) parts.push('⚠ Regime shift');
-        lineageBadge = `  ${parts.join(' · ')}`;
+      const day = lineage?.daysInState ?? 1;
+      metaParts.push(`Day ${day}`);
+      lines.push(`      ${metaParts.join(' · ')}`);
+
+      // Confluence badge line
+      const confluence = (s as any).confluence as number | undefined;
+      const confBadge = confluenceBadge(confluence);
+      if (confBadge) {
+        lines.push(`      ${confBadge}`);
       }
-      lines.push(`${sideIcon} *${s.ticker}* ${side} · ${strategyDisplay}${rvolBadge}${candleBadge}${lineageBadge}`);
-      const targetFromReason = (s.reason ?? []).find((r: string) => r.includes('Target:'))?.match(/Target:\s*([\d.]+)/)?.[1];
-      const rrFromReason = (s.reason ?? []).find((r: string) => r.includes('R:R'))?.match(/R:R\s*=\s*([\d:.]+)/)?.[1];
-      const targetRrSuffix = targetFromReason ? ` → Target ${targetFromReason}${rrFromReason ? ` · R:R ${rrFromReason}` : ''}` : '';
-      lines.push(`      Entry ${formatPrice(s.entry)} → Stop ${formatPrice(s.stop)} · Risk ${formatPct(s.risk_pct)}${targetRrSuffix}`);
+
       const narrative = narrateSignal({ ticker: s.ticker, strategy: s.strategy, signal: s.signal === 'active_late' ? 'active' : s.signal, entry: s.entry, stop: s.stop, target: s.target, reason: s.reason });
       if (narrative) {
         lines.push(`      ${narrative}`);

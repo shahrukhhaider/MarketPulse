@@ -1,9 +1,8 @@
 // ============================================================
-// Scan Chart Generator — HTML visualization for signal scans
+// Scan Chart Generator — Delegates to shared signal chart template
 // ============================================================
-// Produces a self-contained HTML file with candlestick chart,
-// consolidation zone overlays, breakout level lines, signal
-// annotations, and a summary panel.
+// Thin wrapper that converts ScanChartInput into the format expected
+// by generateSignalChartHtml (the rich template with strategy overlays).
 //
 // ISOLATION: This module does NOT import TuningEngine,
 // generateConsolidationBreakoutGrid, generateV2Grid, generateGrid,
@@ -12,6 +11,8 @@
 
 import type { HistoricalDataPoint } from '../types.js';
 import type { SignalScanResult } from '../commands/scan-chart-command.js';
+import { extractOverlayData } from '../../scripts/chart-overlay-extractors.js';
+import { loadTunedParams } from '../data/load-tuned-params.js';
 
 // ============================================================
 // Interfaces
@@ -22,46 +23,13 @@ export interface ScanChartInput {
   strategy: string;
   dataPoints: HistoricalDataPoint[];
   scanResult: SignalScanResult;
+  dataDir?: string;  // base data dir for loading tuned params
 }
 
 // ============================================================
-// Local Data Transformation (reimplemented from chart-generator)
+// Shared Utilities
 // ============================================================
 
-/**
- * Build the candlestick data array for Lightweight Charts from HistoricalDataPoint[].
- * Each entry: { time: 'YYYY-MM-DD', open, high, low, close }
- */
-function buildCandlestickData(
-  dataPoints: HistoricalDataPoint[]
-): Array<{ time: string; open: number; high: number; low: number; close: number }> {
-  return dataPoints.map((dp) => ({
-    time: dp.date,
-    open: dp.open,
-    high: dp.high,
-    low: dp.low,
-    close: dp.close,
-  }));
-}
-
-/**
- * Build the volume histogram data array for Lightweight Charts.
- * Each entry: { time: 'YYYY-MM-DD', value: number, color: string }
- * Green (#26a69a) when close >= open, red (#ef5350) otherwise.
- */
-function buildVolumeData(
-  dataPoints: HistoricalDataPoint[]
-): Array<{ time: string; value: number; color: string }> {
-  return dataPoints.map((dp) => ({
-    time: dp.date,
-    value: dp.volume,
-    color: dp.close >= dp.open ? '#26a69a' : '#ef5350',
-  }));
-}
-
-/**
- * Escape HTML special characters to prevent injection.
- */
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -76,166 +44,95 @@ function escapeHtml(text: string): string {
 // ============================================================
 
 /**
- * Build the consolidation zone data for embedding in the HTML.
- * Each zone includes high, low, startDate, and endDate for rendering.
+ * Generate a self-contained HTML chart for a single ticker/strategy scan.
+ * Uses the same rich template as generate-signal-charts.ts with full
+ * strategy overlay support (Keltner bands, pullback bars, zones, etc.).
  */
-function buildConsolidationZoneData(
-  scanResult: SignalScanResult
-): Array<{ high: number; low: number; startDate: string; endDate: string }> {
-  return scanResult.consolidationZones.map((zone) => ({
-    high: zone.high,
-    low: zone.low,
-    startDate: zone.startDate,
-    endDate: zone.endDate,
-  }));
-}
-
-// ============================================================
-// Signal Summary Panel
-// ============================================================
-
-/** Map signal state to its display color. */
-function getSignalStateColor(state: SignalScanResult['signalState']): string {
-  switch (state) {
-    case 'active': return '#4CAF50';
-    case 'near': return '#FFA726';
-    case 'forming': return '#4285F4';
-    case 'none': return '#9E9E9E';
-    // New context-aware states — colors will be refined in task 8.2
-    case 'pressure': return '#FF7043';
-    case 'active_late': return '#66BB6A';
-    case 'extended': return '#AB47BC';
-  }
-}
-
-/** Build the HTML for the signal summary panel. */
-function buildSignalSummaryPanelHtml(
-  ticker: string,
-  strategy: string,
-  scanResult: SignalScanResult
-): string {
-  const stateColor = getSignalStateColor(scanResult.signalState);
-  const stateLabel = scanResult.signalState.toUpperCase();
-
-  // Always-visible fields
-  let panelHtml = `<div id="signal-summary-panel" class="signal-summary-panel" style="border-left-color: ${stateColor};">
-  <div class="summary-row">
-    <span class="summary-label">Ticker</span>
-    <span class="summary-value" data-field="ticker">${escapeHtml(ticker)}</span>
-  </div>
-  <div class="summary-row">
-    <span class="summary-label">Strategy</span>
-    <span class="summary-value" data-field="strategy">${escapeHtml(strategy)}</span>
-  </div>
-  <div class="summary-row">
-    <span class="summary-label">Signal</span>
-    <span class="summary-value signal-state-badge" data-field="signal-state" style="background: ${stateColor}; color: #fff; padding: 2px 8px; border-radius: 4px;">${escapeHtml(stateLabel)}</span>
-  </div>
-  <div class="summary-row">
-    <span class="summary-label">Date</span>
-    <span class="summary-value" data-field="date">${escapeHtml(scanResult.date)}</span>
-  </div>
-  <div class="summary-row">
-    <span class="summary-label">Confidence</span>
-    <span class="summary-value" data-field="confidence">${scanResult.confidence}</span>
-  </div>`;
-
-  // Active-specific fields: entry, stop, risk%, reason array
-  if (scanResult.signalState === 'active') {
-    if (scanResult.entry !== null) {
-      panelHtml += `
-  <div class="summary-row">
-    <span class="summary-label">Entry</span>
-    <span class="summary-value" data-field="entry">${scanResult.entry}</span>
-  </div>`;
-    }
-    if (scanResult.stop !== null) {
-      panelHtml += `
-  <div class="summary-row">
-    <span class="summary-label">Stop</span>
-    <span class="summary-value" data-field="stop">${scanResult.stop}</span>
-  </div>`;
-    }
-    if (scanResult.riskPct !== null) {
-      panelHtml += `
-  <div class="summary-row">
-    <span class="summary-label">Risk %</span>
-    <span class="summary-value" data-field="risk-pct">${scanResult.riskPct}</span>
-  </div>`;
-    }
-    if (scanResult.reason.length > 0) {
-      panelHtml += `
-  <div class="summary-row summary-reasons">
-    <span class="summary-label">Reasons</span>
-    <span class="summary-value" data-field="reasons">${scanResult.reason.map((r) => `<span class="reason-item">${escapeHtml(r)}</span>`).join('')}</span>
-  </div>`;
-    }
-  }
-
-  // Near/Forming-specific fields: breakout level, current price, distance-from-breakout %
-  if (scanResult.signalState === 'near' || scanResult.signalState === 'forming') {
-    if (scanResult.breakoutLevel !== null) {
-      const distancePct = ((scanResult.breakoutLevel - scanResult.currentPrice) / scanResult.currentPrice * 100);
-      panelHtml += `
-  <div class="summary-row">
-    <span class="summary-label">Breakout Level</span>
-    <span class="summary-value" data-field="breakout-level">${scanResult.breakoutLevel}</span>
-  </div>
-  <div class="summary-row">
-    <span class="summary-label">Current Price</span>
-    <span class="summary-value" data-field="current-price">${scanResult.currentPrice}</span>
-  </div>
-  <div class="summary-row">
-    <span class="summary-label">Distance from Breakout</span>
-    <span class="summary-value" data-field="distance-pct">${distancePct.toFixed(2)}%</span>
-  </div>`;
-    }
-  }
-
-  // Context-aware metrics: shown when context awareness is enabled (metrics are populated)
-  if (scanResult.near_count_5d !== undefined) {
-    panelHtml += `
-  <div class="summary-row">
-    <span class="summary-label">Near Count (5d/10d)</span>
-    <span class="summary-value" data-field="near-count">${scanResult.near_count_5d}/${scanResult.near_count_10d ?? 0}</span>
-  </div>
-  <div class="summary-row">
-    <span class="summary-label">Bars Since Breakout</span>
-    <span class="summary-value" data-field="bars-since-breakout">${scanResult.bars_since_breakout !== null && scanResult.bars_since_breakout !== undefined ? scanResult.bars_since_breakout : 'N/A'}</span>
-  </div>
-  <div class="summary-row">
-    <span class="summary-label">Distance to Breakout %</span>
-    <span class="summary-value" data-field="distance-to-breakout-pct">${scanResult.distance_to_breakout_pct !== null && scanResult.distance_to_breakout_pct !== undefined ? scanResult.distance_to_breakout_pct.toFixed(2) + '%' : 'N/A'}</span>
-  </div>
-  <div class="summary-row">
-    <span class="summary-label">Structure Valid</span>
-    <span class="summary-value" data-field="structure-valid">${scanResult.structure_valid ? 'yes' : 'no'}</span>
-  </div>
-  <div class="summary-row">
-    <span class="summary-label">Breakout Level</span>
-    <span class="summary-value" data-field="context-breakout-level">${scanResult.breakoutLevel !== null ? scanResult.breakoutLevel : 'N/A'}</span>
-  </div>
-  <div class="summary-row">
-    <span class="summary-label">Current Price</span>
-    <span class="summary-value" data-field="context-current-price">${scanResult.currentPrice}</span>
-  </div>`;
-  }
-
-  panelHtml += `
-</div>`;
-
-  return panelHtml;
-}
-
-/** Generate a self-contained HTML string for the scan chart visualization. */
 export function generateScanChartHtml(input: ScanChartInput): string {
-  const { ticker, strategy, dataPoints, scanResult } = input;
-  const title = `${ticker} — ${strategy} — Scan Chart`;
+  const { ticker, strategy, dataPoints, scanResult, dataDir } = input;
 
-  const candlestickData = buildCandlestickData(dataPoints);
-  const volumeData = buildVolumeData(dataPoints);
-  const consolidationZoneData = buildConsolidationZoneData(scanResult);
-  const summaryPanelHtml = buildSignalSummaryPanelHtml(ticker, strategy, scanResult);
+  // Extract overlay data for strategy-specific chart elements
+  let overlayData = null;
+  try {
+    const tunedParams = dataDir ? loadTunedParams(strategy, ticker, dataDir) : null;
+    const resolvedParams: Record<string, number> = tunedParams ?? {};
+    overlayData = extractOverlayData(strategy, dataPoints, resolvedParams);
+  } catch {
+    // Non-fatal — render without overlays
+  }
+
+  // Build data arrays
+  const candlestickData = dataPoints.map((dp) => ({
+    time: dp.date,
+    open: dp.open,
+    high: dp.high,
+    low: dp.low,
+    close: dp.close,
+  }));
+
+  const volumeData = dataPoints.map((dp) => ({
+    time: dp.date,
+    value: dp.volume,
+    color: dp.close >= dp.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)',
+  }));
+
+  // Build SMA data (20-period)
+  const sma20Data: Array<{ time: string; value: number }> = [];
+  for (let i = 19; i < dataPoints.length; i++) {
+    let sum = 0;
+    for (let j = i - 19; j <= i; j++) sum += dataPoints[j].close;
+    sma20Data.push({ time: dataPoints[i].date, value: sum / 20 });
+  }
+
+  // Build SMA data (50-period)
+  const sma50Data: Array<{ time: string; value: number }> = [];
+  for (let i = 49; i < dataPoints.length; i++) {
+    let sum = 0;
+    for (let j = i - 49; j <= i; j++) sum += dataPoints[j].close;
+    sma50Data.push({ time: dataPoints[i].date, value: sum / 50 });
+  }
+
+  // Derive entry/stop/target from scan result
+  const entry = scanResult.entry ?? 0;
+  const stop = scanResult.stop ?? 0;
+  const target = scanResult.breakoutLevel ?? null;
+  const confidence = scanResult.confidence;
+  const date = scanResult.date;
+  const reason = scanResult.reason;
+  const riskPct = scanResult.riskPct ?? 0;
+  const daysInState = 0; // scan-chart doesn't track lineage
+
+  // Signal state info for the panel
+  const stateLabel = scanResult.signalState.toUpperCase();
+  const stateColor = getSignalStateColor(scanResult.signalState);
+
+  // Generate overlay legend HTML
+  const overlayLegendHtml = overlayData
+    ? overlayData.legendEntries
+        .map((entry) => {
+          let swatchHtml: string;
+          switch (entry.style) {
+            case 'solid':
+              swatchHtml = `<span class="legend-line" style="background:${entry.color};"></span>`;
+              break;
+            case 'dashed':
+              swatchHtml = `<span class="legend-line dashed" style="border-color:${entry.color};"></span>`;
+              break;
+            case 'zone':
+              swatchHtml = `<span style="display:inline-block;width:12px;height:12px;background:${entry.color};border-radius:2px;"></span>`;
+              break;
+            case 'marker':
+              swatchHtml = `<span style="display:inline-block;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:10px solid ${entry.color};"></span>`;
+              break;
+            default:
+              swatchHtml = `<span class="legend-line" style="background:${entry.color};"></span>`;
+          }
+          return `<div class="legend-item">${swatchHtml}${escapeHtml(entry.name)}</div>`;
+        })
+        .join('\n  ')
+    : '';
+
+  const title = `${ticker} — ${strategy}`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -247,171 +144,258 @@ export function generateScanChartHtml(input: ScanChartInput): string {
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
-header { margin-bottom: 20px; }
-header h1 { font-size: 1.5rem; color: #ffffff; }
-header p { color: #a0a0b0; margin-top: 4px; }
-#chart-container { width: 100%; height: 450px; margin-bottom: 20px; border-radius: 8px; overflow: hidden; }
-.signal-summary-panel { background: #16213e; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px; border-left: 4px solid #9E9E9E; display: flex; flex-wrap: wrap; gap: 12px 24px; }
-.summary-row { display: flex; align-items: center; gap: 8px; }
-.summary-label { color: #a0a0b0; font-size: 0.85rem; }
-.summary-value { color: #ffffff; font-size: 0.95rem; font-weight: 500; }
-.signal-state-badge { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.5px; }
-.summary-reasons { flex-basis: 100%; }
-.reason-item { display: inline-block; background: #1a1a2e; border: 1px solid #2a2a4e; border-radius: 4px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 0.85rem; color: #e0e0e0; }
+header { margin-bottom: 16px; display: flex; justify-content: space-between; align-items: baseline; }
+header h1 { font-size: 1.4rem; color: #ffffff; }
+header .meta { color: #a0a0b0; font-size: 0.85rem; }
+.info-panel { background: #16213e; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 8px 20px; border-left: 4px solid ${stateColor}; }
+.info-item { display: flex; align-items: center; gap: 6px; }
+.info-label { color: #a0a0b0; font-size: 0.8rem; }
+.info-value { color: #ffffff; font-size: 0.9rem; font-weight: 500; }
+.info-value.green { color: #4CAF50; }
+.info-value.red { color: #F44336; }
+.info-value.blue { color: #2196F3; }
+.info-value.gold { color: #FFD700; }
+#chart-container { width: 100%; height: 500px; border-radius: 8px; overflow: hidden; }
+.reasons { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 4px; }
+.reason-tag { background: #1a1a2e; border: 1px solid #2a2a4e; border-radius: 4px; padding: 2px 8px; font-size: 0.8rem; color: #c0c0d0; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 12px 0; padding: 8px 12px; background: #16213e; border-radius: 6px; }
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.8rem; color: #c0c0d0; }
+.legend-line { width: 18px; height: 3px; border-radius: 1px; }
+.legend-line.dashed { border-top: 2px dashed; height: 0; }
 </style>
 </head>
 <body>
 <header>
-  <h1>${escapeHtml(ticker)} — ${escapeHtml(strategy)} — Scan Chart</h1>
-  <p>Data points: ${dataPoints.length}</p>
+  <h1>${escapeHtml(ticker)} — ${escapeHtml(strategy)}</h1>
+  <span class="meta">${date} · ${dataPoints.length} bars</span>
 </header>
 
-${summaryPanelHtml}
+<div class="info-panel">
+  <div class="info-item"><span class="info-label">Signal</span><span class="info-value" style="background:${stateColor};color:#fff;padding:2px 8px;border-radius:4px;font-size:0.8rem;font-weight:700;">${stateLabel}</span></div>
+  <div class="info-item"><span class="info-label">Confidence</span><span class="info-value gold">${(confidence * 100).toFixed(0)}%</span></div>
+  ${entry > 0 ? `<div class="info-item"><span class="info-label">Entry</span><span class="info-value green">${entry.toFixed(2)}</span></div>` : ''}
+  ${stop > 0 ? `<div class="info-item"><span class="info-label">Stop</span><span class="info-value red">${stop.toFixed(2)}</span></div>` : ''}
+  ${target !== null ? `<div class="info-item"><span class="info-label">Target</span><span class="info-value blue">${target.toFixed(2)}</span></div>` : ''}
+  ${riskPct > 0 ? `<div class="info-item"><span class="info-label">Risk</span><span class="info-value">${riskPct.toFixed(2)}%</span></div>` : ''}
+  <div class="info-item"><span class="info-label">Price</span><span class="info-value">${scanResult.currentPrice.toFixed(2)}</span></div>
+</div>
 
-<!-- Consolidation zone data for verification (high/low values) -->
-<div id="consolidation-zones-data" style="display:none;">${consolidationZoneData.map((z) => `<span class="consolidation-zone" data-high="${z.high}" data-low="${z.low}" data-start="${escapeHtml(z.startDate)}" data-end="${escapeHtml(z.endDate)}">${z.high},${z.low}</span>`).join('')}</div>
+<div class="reasons">
+  ${reason.map((r) => `<span class="reason-tag">${escapeHtml(r)}</span>`).join('\n  ')}
+</div>
 
-<!-- Breakout level and signal annotation data for verification -->
-<div id="breakout-level-data" style="display:none;">${scanResult.breakoutLevel !== null ? `<span class="breakout-level" data-price="${scanResult.breakoutLevel}">${scanResult.breakoutLevel}</span>` : ''}</div>
-<div id="signal-annotations-data" style="display:none;">${scanResult.signalState === 'active' && scanResult.entry !== null && scanResult.stop !== null && scanResult.riskPct !== null ? `<span class="entry-price" data-price="${scanResult.entry}">${scanResult.entry}</span><span class="stop-price" data-price="${scanResult.stop}">${scanResult.stop}</span><span class="risk-pct" data-value="${scanResult.riskPct}">${scanResult.riskPct}</span>` : ''}${scanResult.signalState === 'near' && scanResult.breakoutLevel !== null ? `<span class="projected-entry" data-price="${scanResult.breakoutLevel}">${scanResult.breakoutLevel}</span>` : ''}</div>
+<div class="legend">
+  <div class="legend-item"><span class="legend-line" style="background:#FFD700;"></span>SMA 20</div>
+  <div class="legend-item"><span class="legend-line" style="background:#00BCD4;"></span>SMA 50</div>
+  ${entry > 0 ? `<div class="legend-item"><span class="legend-line" style="background:#4CAF50;"></span>Entry</div>` : ''}
+  ${stop > 0 ? `<div class="legend-item"><span class="legend-line" style="background:#F44336;"></span>Stop</div>` : ''}
+  <div class="legend-item"><span class="legend-line" style="background:rgba(38,166,154,0.5);"></span><span class="legend-line" style="background:rgba(239,83,80,0.5);"></span>Volume</div>
+  ${overlayLegendHtml}
+</div>
 
 <div id="chart-container"></div>
 
 <script>
 (function() {
+  window.__overlayData = ${JSON.stringify(overlayData)};
+
   var chartData = ${JSON.stringify(candlestickData)};
   var volumeData = ${JSON.stringify(volumeData)};
-  var consolidationZones = ${JSON.stringify(consolidationZoneData)};
+  var sma20Data = ${JSON.stringify(sma20Data)};
+  var sma50Data = ${JSON.stringify(sma50Data)};
 
   var container = document.getElementById('chart-container');
   var chart = LightweightCharts.createChart(container, {
     width: container.clientWidth,
-    height: 450,
+    height: 500,
     layout: { background: { type: 'solid', color: '#1a1a2e' }, textColor: '#e0e0e0' },
     grid: { vertLines: { color: '#2a2a4e' }, horzLines: { color: '#2a2a4e' } },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    timeScale: { borderColor: '#2a2a4e' },
+    timeScale: { borderColor: '#2a2a4e', barSpacing: 8, rightOffset: 2 },
     rightPriceScale: { borderColor: '#2a2a4e' }
   });
 
   var candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
-    upColor: '#26a69a',
-    downColor: '#ef5350',
-    borderDownColor: '#ef5350',
-    borderUpColor: '#26a69a',
-    wickDownColor: '#ef5350',
-    wickUpColor: '#26a69a'
+    upColor: '#26a69a', downColor: '#ef5350',
+    borderDownColor: '#ef5350', borderUpColor: '#26a69a',
+    wickDownColor: '#ef5350', wickUpColor: '#26a69a'
   });
   candleSeries.setData(chartData);
 
+  // SMA 20
+  var sma20Series = chart.addSeries(LightweightCharts.LineSeries, {
+    color: '#FFD700', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false
+  });
+  sma20Series.setData(sma20Data);
+
+  // SMA 50
+  var sma50Series = chart.addSeries(LightweightCharts.LineSeries, {
+    color: '#00BCD4', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false
+  });
+  sma50Series.setData(sma50Data);
+
+  // Volume
   var volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
-    priceFormat: { type: 'volume' },
-    priceScaleId: 'volume'
+    priceFormat: { type: 'volume' }, priceScaleId: 'volume'
   });
-  chart.priceScale('volume').applyOptions({
-    scaleMargins: { top: 0.8, bottom: 0 }
-  });
+  chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
   volumeSeries.setData(volumeData);
 
-  // ---- Consolidation Zone Overlays ----
-  // Rendered as absolutely-positioned HTML divs over the chart container.
-  // We use the chart's coordinate conversion APIs to position them after render.
-  function drawConsolidationZoneOverlays() {
-    // Remove any existing zone overlays
-    var existing = container.querySelectorAll('.zone-overlay');
-    for (var i = 0; i < existing.length; i++) { existing[i].remove(); }
-
-    var timeScale = chart.timeScale();
-    consolidationZones.forEach(function(zone) {
-      var startX = timeScale.timeToCoordinate(zone.startDate);
-      var endX = timeScale.timeToCoordinate(zone.endDate);
-      if (startX === null || endX === null) return;
-
-      var highY = candleSeries.priceToCoordinate(zone.high);
-      var lowY = candleSeries.priceToCoordinate(zone.low);
-      if (highY === null || lowY === null) return;
-
-      var div = document.createElement('div');
-      div.className = 'zone-overlay';
-      div.style.position = 'absolute';
-      div.style.left = Math.min(startX, endX) + 'px';
-      div.style.top = Math.min(highY, lowY) + 'px';
-      div.style.width = Math.abs(endX - startX) + 'px';
-      div.style.height = Math.abs(lowY - highY) + 'px';
-      div.style.background = 'rgba(66, 133, 244, 0.15)';
-      div.style.border = '1px solid rgba(66, 133, 244, 0.35)';
-      div.style.pointerEvents = 'none';
-      div.style.zIndex = '1';
-      container.appendChild(div);
-    });
-  }
-
-  // Draw zones after initial render and on any chart update
-  container.style.position = 'relative';
-  chart.timeScale().subscribeVisibleLogicalRangeChange(drawConsolidationZoneOverlays);
-  // Initial draw after a short delay to ensure chart is rendered
-  setTimeout(drawConsolidationZoneOverlays, 100);
-
-  // ---- Breakout Level Line ----
-  // Render breakout level as a horizontal dashed price line (#FFA726) with price label
-  var breakoutLevel = ${scanResult.breakoutLevel !== null ? scanResult.breakoutLevel : 'null'};
-  if (breakoutLevel !== null) {
-    candleSeries.createPriceLine({
-      price: breakoutLevel,
-      color: '#FFA726',
-      lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: 'Breakout ' + breakoutLevel.toFixed(2)
-    });
-  }
-
-  // ---- Entry/Stop Annotations ----
-  var signalState = ${JSON.stringify(scanResult.signalState)};
-  var entryPrice = ${scanResult.entry !== null ? scanResult.entry : 'null'};
-  var stopPrice = ${scanResult.stop !== null ? scanResult.stop : 'null'};
-  var riskPct = ${scanResult.riskPct !== null ? scanResult.riskPct : 'null'};
-
-  if (signalState === 'active' && entryPrice !== null && stopPrice !== null) {
-    // Green entry line
-    candleSeries.createPriceLine({
-      price: entryPrice,
-      color: '#4CAF50',
-      lineWidth: 2,
-      lineStyle: LightweightCharts.LineStyle.Solid,
-      axisLabelVisible: true,
-      title: 'Entry ' + entryPrice.toFixed(2) + (riskPct !== null ? ' (Risk: ' + riskPct.toFixed(2) + '%)' : '')
-    });
-    // Red stop-loss line
-    candleSeries.createPriceLine({
-      price: stopPrice,
-      color: '#F44336',
-      lineWidth: 2,
-      lineStyle: LightweightCharts.LineStyle.Solid,
-      axisLabelVisible: true,
-      title: 'Stop ' + stopPrice.toFixed(2)
-    });
-  } else if (signalState === 'near' && breakoutLevel !== null) {
-    // Dashed green line at breakout level as projected entry
-    candleSeries.createPriceLine({
-      price: breakoutLevel,
-      color: '#4CAF50',
-      lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: 'Projected Entry ' + breakoutLevel.toFixed(2)
-    });
-  }
+  // Entry/Stop lines (only for active signals)
+  ${entry > 0 ? `candleSeries.createPriceLine({ price: ${entry}, color: '#4CAF50', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Entry ${entry.toFixed(2)}' });` : ''}
+  ${stop > 0 ? `candleSeries.createPriceLine({ price: ${stop}, color: '#F44336', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Stop ${stop.toFixed(2)}' });` : ''}
+  ${target !== null ? `candleSeries.createPriceLine({ price: ${target}, color: '#2196F3', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Target ${target.toFixed(2)}' });` : ''}
 
   chart.timeScale().fitContent();
 
-  window.addEventListener('resize', function() {
-    chart.applyOptions({ width: container.clientWidth });
-  });
+  // --- Strategy Overlay Renderers ---
+  var STRATEGY_OVERLAY_RENDERERS = {
+    consolidation_breakout: renderConsolidationBreakoutOverlay,
+    bear_breakdown: renderBearBreakdownOverlay,
+    keltner_mean_reversion: renderKeltnerMeanReversionOverlay,
+    trend_pullback: renderTrendPullbackOverlay,
+    volume_dry_up: renderVolumeDryUpOverlay
+  };
+
+  function renderConsolidationBreakoutOverlay(chart, candleSeries, overlayData) {
+    if (!overlayData || !overlayData.zone) return;
+    var zone = overlayData.zone;
+    if (overlayData.breakoutMarker) {
+      try { candleSeries.setMarkers([{ time: overlayData.breakoutMarker.date, position: 'aboveBar', color: '#9C27B0', shape: 'arrowUp', text: 'Breakout' }]); } catch(e) {}
+    }
+    function drawZone() {
+      container.querySelectorAll('.cb-zone').forEach(function(el) { el.remove(); });
+      var ts = chart.timeScale();
+      var xS = ts.timeToCoordinate(zone.startDate), xE = ts.timeToCoordinate(zone.endDate);
+      if (xS === null || xE === null) return;
+      var yH = candleSeries.priceToCoordinate(zone.high), yL = candleSeries.priceToCoordinate(zone.low);
+      if (yH === null || yL === null) return;
+      container.style.position = 'relative';
+      var d = document.createElement('div'); d.className = 'cb-zone';
+      d.style.cssText = 'position:absolute;background:rgba(156,39,176,0.15);border:1px solid rgba(156,39,176,0.4);pointer-events:none;z-index:1;border-radius:2px;';
+      d.style.left = Math.min(xS,xE)+'px'; d.style.width = Math.abs(xE-xS)+'px';
+      d.style.top = Math.min(yH,yL)+'px'; d.style.height = Math.abs(yL-yH)+'px';
+      container.appendChild(d);
+      var lbl = document.createElement('div'); lbl.className = 'cb-zone';
+      lbl.style.cssText = 'position:absolute;color:#9C27B0;font-size:10px;font-weight:bold;pointer-events:none;z-index:2;padding:1px 3px;background:rgba(26,26,46,0.8);border-radius:2px;';
+      lbl.style.left = (Math.min(xS,xE)+4)+'px'; lbl.style.top = (Math.min(yH,yL)+2)+'px';
+      lbl.textContent = 'Range: '+zone.rangePct.toFixed(1)+'%'; container.appendChild(lbl);
+    }
+    chart.timeScale().subscribeVisibleLogicalRangeChange(drawZone); setTimeout(drawZone, 120);
+  }
+
+  function renderBearBreakdownOverlay(chart, candleSeries, overlayData) {
+    if (!overlayData || !overlayData.zone) return;
+    var zone = overlayData.zone;
+    if (overlayData.breakdownMarker) {
+      try { candleSeries.setMarkers([{ time: overlayData.breakdownMarker.date, position: 'belowBar', color: '#FF9800', shape: 'arrowDown', text: 'Breakdown' }]); } catch(e) {}
+    }
+    function drawZone() {
+      container.querySelectorAll('.bb-zone').forEach(function(el) { el.remove(); });
+      var ts = chart.timeScale();
+      var xS = ts.timeToCoordinate(zone.startDate), xE = ts.timeToCoordinate(zone.endDate);
+      if (xS === null || xE === null) return;
+      var yH = candleSeries.priceToCoordinate(zone.high), yL = candleSeries.priceToCoordinate(zone.low);
+      if (yH === null || yL === null) return;
+      container.style.position = 'relative';
+      var d = document.createElement('div'); d.className = 'bb-zone';
+      d.style.cssText = 'position:absolute;background:rgba(255,152,0,0.15);border:1px solid rgba(255,152,0,0.4);pointer-events:none;z-index:1;border-radius:2px;';
+      d.style.left = Math.min(xS,xE)+'px'; d.style.width = Math.abs(xE-xS)+'px';
+      d.style.top = Math.min(yH,yL)+'px'; d.style.height = Math.abs(yL-yH)+'px';
+      container.appendChild(d);
+      var lbl = document.createElement('div'); lbl.className = 'bb-zone';
+      lbl.style.cssText = 'position:absolute;color:#FF9800;font-size:10px;font-weight:bold;pointer-events:none;z-index:2;padding:1px 3px;background:rgba(26,26,46,0.8);border-radius:2px;';
+      lbl.style.left = (Math.min(xS,xE)+4)+'px'; lbl.style.top = (Math.min(yH,yL)+2)+'px';
+      lbl.textContent = 'Range: '+zone.rangePct.toFixed(1)+'%'; container.appendChild(lbl);
+    }
+    chart.timeScale().subscribeVisibleLogicalRangeChange(drawZone); setTimeout(drawZone, 120);
+  }
+
+  function renderKeltnerMeanReversionOverlay(chart, candleSeries, overlayData) {
+    if (!overlayData) return;
+    if (overlayData.upperBand && overlayData.upperBand.length > 0) {
+      var ub = chart.addSeries(LightweightCharts.LineSeries, { color: '#E91E63', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      ub.setData(overlayData.upperBand);
+    }
+    if (overlayData.lowerBand && overlayData.lowerBand.length > 0) {
+      var lb = chart.addSeries(LightweightCharts.LineSeries, { color: '#E91E63', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      lb.setData(overlayData.lowerBand);
+    }
+    var markers = [];
+    if (overlayData.dipMarker) markers.push({ time: overlayData.dipMarker.date, position: 'belowBar', color: '#F44336', shape: 'arrowDown', text: 'Dip' });
+    if (overlayData.reclaimMarker) markers.push({ time: overlayData.reclaimMarker.date, position: 'belowBar', color: '#4CAF50', shape: 'arrowUp', text: 'Reclaim' });
+    if (markers.length > 0) { markers.sort(function(a,b){ return a.time < b.time ? -1 : 1; }); try { candleSeries.setMarkers(markers); } catch(e) {} }
+  }
+
+  function renderTrendPullbackOverlay(chart, candleSeries, overlayData) {
+    if (!overlayData) return;
+    if (overlayData.sma10 && overlayData.sma10.length > 0) {
+      var s10 = chart.addSeries(LightweightCharts.LineSeries, { color: '#FF9800', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      s10.setData(overlayData.sma10);
+    }
+    if (overlayData.pullbackBars && overlayData.pullbackBars.length > 0) {
+      var pbSet = {}; overlayData.pullbackBars.forEach(function(d){ pbSet[d] = true; });
+      candleSeries.setData(chartData.map(function(bar){ return pbSet[bar.time] ? Object.assign({}, bar, { borderUpColor: 'rgba(255,193,7,0.8)', borderDownColor: 'rgba(255,193,7,0.8)', wickUpColor: 'rgba(255,193,7,0.6)', wickDownColor: 'rgba(255,193,7,0.6)' }) : bar; }));
+    }
+    if (overlayData.triggerMarker) {
+      try { candleSeries.setMarkers([{ time: overlayData.triggerMarker.date, position: 'belowBar', color: '#FFC107', shape: 'arrowUp', text: 'Trigger' }]); } catch(e) {}
+    }
+  }
+
+  function renderVolumeDryUpOverlay(chart, candleSeries, overlayData) {
+    if (!overlayData) return;
+    if (overlayData.dryUpBars && overlayData.dryUpBars.length > 0) {
+      var duSet = {}; overlayData.dryUpBars.forEach(function(d){ duSet[d] = true; });
+      volumeSeries.setData(volumeData.map(function(bar){ return duSet[bar.time] ? Object.assign({}, bar, { color: 'rgba(33,150,243,0.6)' }) : bar; }));
+    }
+    if (overlayData.zone) {
+      var vduZone = overlayData.zone;
+      function drawVduZone() {
+        container.querySelectorAll('.vdu-zone').forEach(function(el){ el.remove(); });
+        var ts = chart.timeScale();
+        var xS = ts.timeToCoordinate(vduZone.startDate), xE = ts.timeToCoordinate(vduZone.endDate);
+        if (xS === null || xE === null) return;
+        var yH = candleSeries.priceToCoordinate(vduZone.high), yL = candleSeries.priceToCoordinate(vduZone.low);
+        if (yH === null || yL === null) return;
+        container.style.position = 'relative';
+        var d = document.createElement('div'); d.className = 'vdu-zone';
+        d.style.cssText = 'position:absolute;background:rgba(0,150,136,0.15);border:1px solid rgba(0,150,136,0.4);pointer-events:none;z-index:1;border-radius:2px;';
+        d.style.left = Math.min(xS,xE)+'px'; d.style.width = Math.abs(xE-xS)+'px';
+        d.style.top = Math.min(yH,yL)+'px'; d.style.height = Math.abs(yL-yH)+'px';
+        container.appendChild(d);
+      }
+      chart.timeScale().subscribeVisibleLogicalRangeChange(drawVduZone); setTimeout(drawVduZone, 120);
+    }
+  }
+
+  // Dispatch overlay rendering
+  if (window.__overlayData) {
+    var renderer = STRATEGY_OVERLAY_RENDERERS[window.__overlayData.strategy];
+    if (renderer) renderer(chart, candleSeries, window.__overlayData);
+  }
+
+  window.addEventListener('resize', function() { chart.applyOptions({ width: container.clientWidth }); });
 })();
 <\/script>
 </body>
 </html>`;
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+
+function getSignalStateColor(state: string): string {
+  switch (state) {
+    case 'active': return '#4CAF50';
+    case 'near': return '#FFA726';
+    case 'forming': return '#4285F4';
+    case 'none': return '#9E9E9E';
+    case 'pressure': return '#FF7043';
+    case 'active_late': return '#66BB6A';
+    case 'extended': return '#AB47BC';
+    default: return '#9E9E9E';
+  }
 }
 
 // ============================================================

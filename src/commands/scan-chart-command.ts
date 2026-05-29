@@ -205,6 +205,7 @@ export function createScanChartHandler(deps: ScanChartCommandDeps): CommandHandl
         strategy: strategyName,
         dataPoints,
         scanResult,
+        dataDir,
       });
 
       writeFileSync(chartFilePath, html, 'utf-8');

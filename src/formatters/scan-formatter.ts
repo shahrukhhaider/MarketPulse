@@ -127,6 +127,19 @@ export function confluenceLabel(confluence: number | undefined): string {
 }
 
 /**
+ * Format confidence score as a color-coded CLI label.
+ * Green for ≥0.80 (High), cyan for ≥0.65 (Good), yellow for ≥0.50 (Fair).
+ * Returns empty string when confidence is below 0.50 or invalid.
+ */
+export function confidenceLabel(confidence: number | undefined): string {
+  if (confidence == null || confidence < 0.50) return '';
+  const pct = Math.round(confidence * 100);
+  if (confidence >= 0.80) return green(`🔥 ${pct}%`);
+  if (confidence >= 0.65) return cyan(`★ ${pct}%`);
+  return yellow(`~ ${pct}%`);
+}
+
+/**
  * Format RVOL as a colored terminal badge.
  * - rvol >= 2.0: green
  * - 1.0 <= rvol < 2.0: default color
@@ -525,7 +538,7 @@ function renderActiveSignalLine(sig: AnnotatedSignal): string {
 
   const badgeStr = regimeBadge(sig.regimeState);
   const rs = rsLabel(sig.regimeState);
-  const confLabel = confluenceLabel(sig.confluence);
+  const confLabel = confidenceLabel(sig.confidence);
   const rvolBadge = formatRvolBadge(sig.rvol);
   const candleBadge = candlestickBadge(sig.candlestickPatterns);
   const linBadge = lineageBadges(sig.lineage);
@@ -568,7 +581,7 @@ function renderMergedSignalBlock(signals: AnnotatedSignal[]): string {
   const side = isShort ? red(padRight('SHORT', 7)) : green(padRight('BUY', 7));
   const badgeStr = regimeBadge(sig.regimeState);
   const rs = rsLabel(sig.regimeState);
-  const conf = confluenceLabel(sig.confluence);
+  const conf = confidenceLabel(sig.confidence);
 
   // Header line
   const rvolBadge = formatRvolBadge(sig.rvol);
@@ -661,7 +674,7 @@ function renderNear(signals: AnnotatedSignal[]): string {
     const badgeStr = regimeBadge(sig.regimeState);
     const rs = rsLabel(sig.regimeState);
     const rvolBadge = formatRvolBadge(sig.rvol);
-    lines.push(`  ${yellow(padRight(sig.ticker, 8))}${badgeStr} ${dim(strat)}${confluenceLabel(sig.confluence) ? '  ' + confluenceLabel(sig.confluence) : ''}${rvolBadge ? ' ' + rvolBadge : ''}`);
+    lines.push(`  ${yellow(padRight(sig.ticker, 8))}${badgeStr} ${dim(strat)}${confidenceLabel(sig.confidence) ? '  ' + confidenceLabel(sig.confidence) : ''}${rvolBadge ? ' ' + rvolBadge : ''}`);
     lines.push(`           Entry: ${formatPrice(sig.entry)}  Stop: ${red(formatPrice(sig.stop))}  Risk: ${formatPct(sig.risk_pct)}  ${rs}`);
     lines.push(`           ${dim('→ ' + need)}`);
   }

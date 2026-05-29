@@ -9,6 +9,7 @@ import {
   type MarketRegime,
 } from './slack-notify.js';
 import { narrateSignal } from './formatters/signal-narrator.js';
+import { confidenceBadge, confluenceBadge } from './formatters/badge-helpers.js';
 import { toExposureTier } from './formatters/market-exposure.js';
 import { generateChartImages } from './chart-image-generator.js';
 import { buildMultipartPayload } from './discord-multipart.js';
@@ -372,16 +373,37 @@ export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
     const sideLabel = side === 'SHORT' ? 'SHORT' : 'BUY';
     const stratName = signal.strategy.replace(/_/g, ' ');
     const lineage = (signal as any).lineage as SignalLineage | undefined;
-    const dayStr = lineage ? `Day ${lineage.daysInState}` : 'Day 1';
+    const dayStr = lineage ? `${lineage.daysInState}` : '1';
     const color = side === 'SHORT' ? COLORS.RED : COLORS.GREEN;
 
     // Title: ticker — strategy (used for chart matching)
     const title = `${signal.ticker} — ${stratName}`;
 
-    // Line 1 (in description): side + day
-    const headerLine = `${sideIcon} **${sideLabel}** · ${dayStr}`;
+    // Header line: {sideIcon} **{SIDE}** · Day {N} · {confidence_badge} · RS {rs_rating}
+    const headerParts: string[] = [`${sideIcon} **${sideLabel}**`, `Day ${dayStr}`];
+    const badge = confidenceBadge((signal as any).confidence);
+    if (badge) headerParts.push(badge);
+    const rs = (signal as any).regimeState?.rs_rating;
+    if (rs && rs > 0) headerParts.push(`RS ${rs}`);
+    const headerLine = headerParts.join(' · ');
 
-    // Line 2: narrative/rationale
+    // Metrics line: R:R {ratio} · Risk {pct} · Vol {rvol}×
+    const rrFromReason = (signal.reason ?? []).find((r: string) => r.includes('R:R'))?.match(/R:R\s*=\s*([\d:.]+)/)?.[1];
+    const rrStr = rrFromReason ?? '—';
+    const riskStr = signal.risk_pct != null ? `${signal.risk_pct.toFixed(1)}%` : '—';
+    const rvol = (signal as any).rvol as number | null | undefined;
+
+    const metricParts: string[] = [];
+    if (rrStr && rrStr !== '—') metricParts.push(`R:R ${rrStr}`);
+    if (riskStr && riskStr !== '—') metricParts.push(`Risk ${riskStr}`);
+    if (rvol != null) metricParts.push(`Vol ${rvol.toFixed(1)}×`);
+    const metricsLine = metricParts.length > 0 ? metricParts.join(' · ') : '';
+
+    // Confluence badge line
+    const confluence = (signal as any).confluence as number | null | undefined;
+    const confBadge = confluenceBadge(confluence);
+
+    // Narrative/rationale
     const narrateInput = {
       ticker: signal.ticker,
       strategy: signal.strategy,
@@ -396,20 +418,12 @@ export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
       ? narrative
       : (signal.reason && signal.reason.length > 0 ? signal.reason[0] : '');
 
-    // Line 3: trigger prices
-    const targetFromReason = (signal.reason ?? []).find((r: string) => r.includes('Target:'))?.match(/Target:\s*([\d.]+)/)?.[1];
-    const targetValue = signal.target ?? (targetFromReason ? parseFloat(targetFromReason) : undefined);
-    const rrFromReason = (signal.reason ?? []).find((r: string) => r.includes('R:R'))?.match(/R:R\s*=\s*([\d:.]+)/)?.[1];
-
-    const entryStr = signal.entry.toFixed(2);
-    const stopStr = signal.stop.toFixed(2);
-    const targetStr = targetValue != null ? targetValue.toFixed(2) : '—';
-    const riskStr = signal.risk_pct != null ? `${signal.risk_pct.toFixed(1)}%` : '—';
-    const rrStr = rrFromReason ?? '—';
-
-    const priceLine = `Entry **${entryStr}** → Stop **${stopStr}** → Target **${targetStr}** · Risk ${riskStr} · R:R ${rrStr}`;
-
-    const description = `${headerLine}\n${rationale}\n${priceLine}`;
+    // Assemble description: header, metrics, confluence badge, narrative
+    const descLines: string[] = [headerLine];
+    if (metricsLine) descLines.push(metricsLine);
+    if (confBadge) descLines.push(confBadge);
+    if (rationale) descLines.push(rationale);
+    const description = descLines.join('\n');
 
     const embed: DiscordEmbed = {
       title,
@@ -626,13 +640,25 @@ async function main(): Promise<void> {
     cleanupStaleTempDirs();
 
     // Build SignalInput[] from active signals
-    const signalInputs: SignalInput[] = activeSignals.map((s) => ({
-      ticker: s.ticker,
-      strategy: s.strategy,
-      entry: s.entry,
-      stop: s.stop,
-      target: s.target ?? null,
-    }));
+    const signalInputs: SignalInput[] = activeSignals.map((s) => {
+      const lineage = (s as any).lineage as SignalLineage | undefined;
+      let signalStartDate: string | undefined;
+      if (lineage && lineage.daysInState > 0) {
+        // Compute start date by subtracting daysInState - 1 from today
+        const today = new Date();
+        const startDate = new Date(today);
+        startDate.setDate(startDate.getDate() - (lineage.daysInState - 1));
+        signalStartDate = startDate.toISOString().slice(0, 10);
+      }
+      return {
+        ticker: s.ticker,
+        strategy: s.strategy,
+        entry: s.entry,
+        stop: s.stop,
+        target: s.target ?? null,
+        signalStartDate,
+      };
+    });
 
     // Read lightweight-charts JS from node_modules
     let lightweightChartsJs: string | null = null;
@@ -665,10 +691,15 @@ async function main(): Promise<void> {
           cacheDir: path.join(process.cwd(), '.stock-tracker', 'history-cache'),
         });
 
-        const chartResults = await generateChartImages(signalInputs, {
-          dataProvider,
-          lightweightChartsJs,
-        });
+        const chartResults = await Promise.race([
+          generateChartImages(signalInputs, {
+            dataProvider,
+            lightweightChartsJs,
+          }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Chart generation timed out after 60s')), 60_000)
+          ),
+        ]);
 
         // Build chart map from successful results
         for (const result of chartResults) {

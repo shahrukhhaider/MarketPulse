@@ -16,6 +16,8 @@ export interface SignalChartInput {
   entry: number;
   stop: number;
   target: number | null;
+  /** Date when the signal was first discovered (YYYY-MM-DD). Rendered as a vertical marker. */
+  signalStartDate?: string;
 }
 
 /**
@@ -54,6 +56,8 @@ export interface SignalInput {
   entry: number;
   stop: number;
   target: number | null;
+  /** Date when the signal was first discovered (YYYY-MM-DD). */
+  signalStartDate?: string;
 }
 
 /**

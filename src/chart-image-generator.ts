@@ -15,7 +15,7 @@ import { generateSignalChartHtml } from './formatters/signal-chart-html.js';
 const MAX_CONCURRENT_PAGES = 3;
 
 /** Per-chart timeout in milliseconds (page navigation → screenshot). */
-const CHART_TIMEOUT_MS = 15_000;
+const CHART_TIMEOUT_MS = 30_000;
 
 /** Minimum data points required for chart rendering. */
 const MIN_DATA_POINTS = 20;
@@ -215,7 +215,7 @@ async function renderSignalChart(
 
     // 3. Generate HTML
     const html = generateSignalChartHtml(
-      { ticker, strategy, dataPoints, entry, stop, target },
+      { ticker, strategy, dataPoints, entry, stop, target, signalStartDate: signal.signalStartDate },
       deps.lightweightChartsJs
     );
 
@@ -277,7 +277,7 @@ async function renderPageWithTimeout(
 }
 
 async function renderPage(page: any, html: string): Promise<Buffer> {
-  await page.setContent(html, { waitUntil: 'networkidle0' });
+  await page.setContent(html, { waitUntil: 'domcontentloaded' });
 
   // Wait for the data-chart-ready attribute on body (runs in browser context)
   await page.waitForFunction(

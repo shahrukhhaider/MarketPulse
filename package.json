@@ -28,7 +28,8 @@
     "journal:update": "node dist/src/cli.js journal-update",
     "regime": "node dist/src/cli.js regime",
     "pipeline": "./scripts/daily-pipeline.sh",
-    "notify": "./scripts/notify.sh"
+    "notify": "./scripts/notify.sh",
+    "signal-charts": "npx --yes tsx scripts/generate-signal-charts.ts"
   },
   "dependencies": {
     "lightweight-charts": "^5.2.0",
