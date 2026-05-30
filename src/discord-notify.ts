@@ -9,7 +9,7 @@ import {
   type MarketRegime,
 } from './slack-notify.js';
 import { narrateSignal } from './formatters/signal-narrator.js';
-import { confidenceBadge, confluenceBadge } from './formatters/badge-helpers.js';
+import { confidenceBadge } from './formatters/badge-helpers.js';
 import { toExposureTier } from './formatters/market-exposure.js';
 import { generateChartImages } from './chart-image-generator.js';
 import { buildMultipartPayload } from './discord-multipart.js';
@@ -17,7 +17,7 @@ import { cleanupStaleTempDirs, cleanupChartTempDir, createChartTempDir } from '.
 import { generateChartFilename } from './chart-types.js';
 import type { SignalInput, ChartResult, ChartSuccess, AttachmentMeta, MultipartPayload } from './chart-types.js';
 import type { SignalLineage } from './indicators/signal-lineage.js';
-import { sortSignals } from './formatters/signal-sort.js';
+import { readProcessedSignals, flattenProcessedSignals } from './pipeline/read-processed-signals.js';
 
 // --- Discord Embed Types ---
 
@@ -353,20 +353,16 @@ export function buildOpenPositionsPayload(data: ScanData): DiscordPayload | null
  * Charts attach via embed.image when available.
  */
 export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
-  const activeSignals = data.signals.filter(
-    (s) => s.signal === 'active' || s.signal === 'active_late',
-  );
+  // Read pre-processed signals from pipeline output (no re-sorting)
+  const topSignals = flattenProcessedSignals(readProcessedSignals(data as any)).slice(0, 5);
 
-  // No active signals → placeholder
-  if (activeSignals.length === 0) {
+  // No signals → placeholder
+  if (topSignals.length === 0) {
     return [{ embeds: [{ title: 'No Active Signals', color: COLORS.GREY }] }];
   }
 
-  // Sort by confidence descending
-  const sorted = sortSignals(activeSignals as any) as typeof activeSignals;
-
-  // Build one embed per signal (top 5 only — bottom signals are not actionable)
-  const top = sorted.slice(0, 5);
+  // Build one embed per signal (top 5 from pre-sorted pipeline output)
+  const top = topSignals as unknown as Array<Signal & Record<string, any>>;
   const embeds: DiscordEmbed[] = top.map((signal) => {
     const side = determineSide(signal.strategy);
     const sideIcon = side === 'SHORT' ? '🔴' : '🟢';
@@ -387,21 +383,26 @@ export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
     if (rs && rs > 0) headerParts.push(`RS ${rs}`);
     const headerLine = headerParts.join(' · ');
 
-    // Metrics line: R:R {ratio} · Risk {pct} · Vol {rvol}×
+    // Metrics line: Entry → Stop → Target · Risk · R:R
     const rrFromReason = (signal.reason ?? []).find((r: string) => r.includes('R:R'))?.match(/R:R\s*=\s*([\d:.]+)/)?.[1];
     const rrStr = rrFromReason ?? '—';
     const riskStr = signal.risk_pct != null ? `${signal.risk_pct.toFixed(1)}%` : '—';
     const rvol = (signal as any).rvol as number | null | undefined;
 
-    const metricParts: string[] = [];
-    if (rrStr && rrStr !== '—') metricParts.push(`R:R ${rrStr}`);
-    if (riskStr && riskStr !== '—') metricParts.push(`Risk ${riskStr}`);
-    if (rvol != null) metricParts.push(`Vol ${rvol.toFixed(1)}×`);
-    const metricsLine = metricParts.length > 0 ? metricParts.join(' · ') : '';
+    const targetFromReason = (signal.reason ?? []).find((r: string) => r.includes('Target:'))?.match(/Target:\s*([\d.]+)/)?.[1];
+    const targetValue = signal.target ?? (targetFromReason ? parseFloat(targetFromReason) : undefined);
 
-    // Confluence badge line
-    const confluence = (signal as any).confluence as number | null | undefined;
-    const confBadge = confluenceBadge(confluence);
+    const entryStr = signal.entry.toFixed(2);
+    const stopStr = signal.stop.toFixed(2);
+    const targetStr = targetValue != null ? targetValue.toFixed(2) : '—';
+
+    const priceLine = `Entry **${entryStr}** → Stop **${stopStr}** → Target **${targetStr}** · Risk ${riskStr} · R:R ${rrStr}`;
+
+    const metricParts: string[] = [];
+    if (rvol != null) metricParts.push(`Vol ${rvol.toFixed(1)}×`);
+    const candlestickPatterns = (signal as any).candlestickPatterns as string[] | undefined;
+    if (candlestickPatterns && candlestickPatterns.length > 0) metricParts.push(candlestickPatterns.join(', '));
+    const metricsLine = metricParts.length > 0 ? metricParts.join(' · ') : '';
 
     // Narrative/rationale
     const narrateInput = {
@@ -418,11 +419,11 @@ export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
       ? narrative
       : (signal.reason && signal.reason.length > 0 ? signal.reason[0] : '');
 
-    // Assemble description: header, metrics, confluence badge, narrative
+    // Assemble description: header, rationale, price line, extras
     const descLines: string[] = [headerLine];
-    if (metricsLine) descLines.push(metricsLine);
-    if (confBadge) descLines.push(confBadge);
     if (rationale) descLines.push(rationale);
+    descLines.push(priceLine);
+    if (metricsLine) descLines.push(metricsLine);
     const description = descLines.join('\n');
 
     const embed: DiscordEmbed = {

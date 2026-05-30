@@ -13,6 +13,8 @@ import { toExposureTier } from './market-exposure.js';
 import type { MarketRegimeData } from './market-exposure.js';
 import { narrateSignal } from './signal-narrator.js';
 import { computeCompositeScore, compareSignals } from './signal-sort.js';
+import type { ProcessedSignals } from '../pipeline/signal-pipeline.js';
+import { readProcessedSignals } from '../pipeline/read-processed-signals.js';
 
 // ============================================================
 // ANSI Color Helpers
@@ -170,184 +172,10 @@ function regimeBadge(regimeState: RegimeState | undefined): string {
 }
 
 // ============================================================
-// Signal Grouping
+// Signal Grouping (display-level sub-grouping from pre-processed data)
 // ============================================================
 
 type AnnotatedSignal = SignalOutput & { regimeState?: RegimeState };
-
-// ============================================================
-// Conflict Resolution
-// ============================================================
-
-const STRATEGY_DIRECTION: Record<string, 'long' | 'short'> = {
-  consolidation_breakout: 'long',
-  trend_pullback: 'long',
-  post_earnings_drift: 'long',
-  keltner_mean_reversion: 'long',
-  bear_breakdown: 'short',
-};
-
-const SIGNAL_PRIORITY: Record<string, number> = {
-  active: 0,
-  active_late: 1,
-  extended: 2,
-  pressure: 3,
-  near: 4,
-  forming: 5,
-  none: 6,
-};
-
-/**
- * Resolve directional conflicts for tickers with opposing signals.
- * When a ticker has both long and short actionable signals, the dominant
- * direction wins (by signal priority, then confidence). Losing direction
- * signals are removed. Non-conflict signals pass through unchanged.
- */
-function resolveConflicts(signals: AnnotatedSignal[]): AnnotatedSignal[] {
-  // Group by ticker
-  const byTicker = new Map<string, AnnotatedSignal[]>();
-  for (const sig of signals) {
-    if (!sig.ticker) continue;
-    const existing = byTicker.get(sig.ticker);
-    if (existing) {
-      existing.push(sig);
-    } else {
-      byTicker.set(sig.ticker, [sig]);
-    }
-  }
-
-  const result: AnnotatedSignal[] = [];
-
-  for (const [, tickerSignals] of byTicker) {
-    // Separate into long and short actionable signals
-    const longSignals: AnnotatedSignal[] = [];
-    const shortSignals: AnnotatedSignal[] = [];
-
-    for (const sig of tickerSignals) {
-      if (sig.signal === 'none') {
-        result.push(sig);
-        continue;
-      }
-      const dir = STRATEGY_DIRECTION[sig.strategy] ?? 'long';
-      if (dir === 'long') {
-        longSignals.push(sig);
-      } else {
-        shortSignals.push(sig);
-      }
-    }
-
-    // No conflict: only one direction has signals
-    if (longSignals.length === 0 || shortSignals.length === 0) {
-      result.push(...longSignals, ...shortSignals);
-      continue;
-    }
-
-    // Conflict: pick dominant direction
-    const bestLong = getBestSignal(longSignals);
-    const bestShort = getBestSignal(shortSignals);
-
-    const longPriority = SIGNAL_PRIORITY[bestLong.signal] ?? 6;
-    const shortPriority = SIGNAL_PRIORITY[bestShort.signal] ?? 6;
-
-    if (longPriority < shortPriority) {
-      // Long wins by priority
-      result.push(...longSignals);
-    } else if (shortPriority < longPriority) {
-      // Short wins by priority
-      result.push(...shortSignals);
-    } else {
-      // Same priority — tie-break by confidence
-      if (bestLong.confidence >= bestShort.confidence) {
-        result.push(...longSignals);
-      } else {
-        result.push(...shortSignals);
-      }
-    }
-  }
-
-  return result;
-}
-
-/**
- * Get the best signal from a group (lowest priority number, then highest confidence).
- */
-function getBestSignal(signals: AnnotatedSignal[]): AnnotatedSignal {
-  return signals.reduce((best, sig) => {
-    const bestPri = SIGNAL_PRIORITY[best.signal] ?? 6;
-    const sigPri = SIGNAL_PRIORITY[sig.signal] ?? 6;
-    if (sigPri < bestPri) return sig;
-    if (sigPri === bestPri && sig.confidence > best.confidence) return sig;
-    return best;
-  });
-}
-
-interface GroupedSignals {
-  active: AnnotatedSignal[];
-  near: AnnotatedSignal[];
-  forming_breakout: AnnotatedSignal[];
-  forming_pullback: AnnotatedSignal[];
-  forming_breakdown: AnnotatedSignal[];
-  none_below_sma: AnnotatedSignal[];
-  none_other: AnnotatedSignal[];
-}
-
-function groupSignals(signals: AnnotatedSignal[]): GroupedSignals {
-  const groups: GroupedSignals = {
-    active: [],
-    near: [],
-    forming_breakout: [],
-    forming_pullback: [],
-    forming_breakdown: [],
-    none_below_sma: [],
-    none_other: [],
-  };
-
-  for (const sig of signals) {
-    if (sig.signal === 'active' || sig.signal === 'active_late') {
-      groups.active.push(sig);
-    } else if (sig.signal === 'near') {
-      groups.near.push(sig);
-    } else if (sig.signal === 'forming') {
-      if (sig.strategy === 'consolidation_breakout') {
-        groups.forming_breakout.push(sig);
-      } else if (sig.strategy === 'bear_breakdown') {
-        groups.forming_breakdown.push(sig);
-      } else {
-        groups.forming_pullback.push(sig);
-      }
-    } else {
-      // "none" signals
-      const reason = sig.reason?.[0] ?? '';
-      if (reason.includes('below SMA(50)')) {
-        groups.none_below_sma.push(sig);
-      } else {
-        groups.none_other.push(sig);
-      }
-    }
-  }
-
-  return groups;
-}
-
-/**
- * Sort signals by quality: confluence (desc) → RS rating (desc) → risk (asc, tighter is better).
- */
-function sortByQuality(signals: AnnotatedSignal[]): AnnotatedSignal[] {
-  return [...signals].sort((a, b) => {
-    // 1. Confluence descending (higher = more strategies agree)
-    const confA = a.confluence ?? 0;
-    const confB = b.confluence ?? 0;
-    if (confB !== confA) return confB - confA;
-
-    // 2. RS rating descending (higher = stronger relative strength)
-    const rsA = a.regimeState?.rs_rating ?? 0;
-    const rsB = b.regimeState?.rs_rating ?? 0;
-    if (rsB !== rsA) return rsB - rsA;
-
-    // 3. Risk ascending (lower = tighter stop, less downside)
-    return a.risk_pct - b.risk_pct;
-  });
-}
 
 // ============================================================
 // Section Renderers
@@ -1038,6 +866,7 @@ export function renderMarketContext(
 
 export interface ScanSummaryData {
   signals: AnnotatedSignal[];
+  processedSignals?: ProcessedSignals;
   warnings: string[];
   total: number;
   scanned: number;
@@ -1052,31 +881,41 @@ export interface ScanSummaryData {
  */
 export function formatScanSummary(data: ScanSummaryData): string {
   const { signals, warnings, total } = data;
-  const resolved = resolveConflicts(signals);
-  const groups = groupSignals(resolved);
 
-  // Sort and limit each category to top 10
+  // Read pre-processed signals from pipeline output (with backward-compatible fallback)
+  const processed = readProcessedSignals({ signals, processedSignals: data.processedSignals });
+
+  // Sub-group for display purposes (forming → breakout/pullback/breakdown, none → below_sma/other)
   const MAX_PER_CATEGORY = 10;
-  groups.active = sortByQuality(groups.active).slice(0, MAX_PER_CATEGORY);
-  groups.near = [...groups.near].sort((a, b) => {
-    // Primary: composite score descending
-    const scoreA = computeCompositeScore(a.rvol, a.confidence);
-    const scoreB = computeCompositeScore(b.rvol, b.confidence);
-    if (scoreB !== scoreA) return scoreB - scoreA;
-    // Tiebreaker 1: confluence descending
-    const confA = a.confluence ?? 0;
-    const confB = b.confluence ?? 0;
-    if (confB !== confA) return confB - confA;
-    // Tiebreaker 2: RS rating descending
-    const rsA = a.regimeState?.rs_rating ?? 0;
-    const rsB = b.regimeState?.rs_rating ?? 0;
-    if (rsB !== rsA) return rsB - rsA;
-    // Tiebreaker 3: risk ascending (tighter stop = better)
-    return a.risk_pct - b.risk_pct;
-  }).slice(0, MAX_PER_CATEGORY);
-  groups.forming_breakout = sortByQuality(groups.forming_breakout).slice(0, MAX_PER_CATEGORY);
-  groups.forming_pullback = sortByQuality(groups.forming_pullback).slice(0, MAX_PER_CATEGORY);
-  groups.forming_breakdown = sortByQuality(groups.forming_breakdown).slice(0, MAX_PER_CATEGORY);
+
+  const active = (processed.active as AnnotatedSignal[]).slice(0, MAX_PER_CATEGORY);
+  const near = (processed.near as AnnotatedSignal[]).slice(0, MAX_PER_CATEGORY);
+
+  // Sub-group forming signals by strategy for display
+  const forming_breakout: AnnotatedSignal[] = [];
+  const forming_pullback: AnnotatedSignal[] = [];
+  const forming_breakdown: AnnotatedSignal[] = [];
+  for (const sig of processed.forming as AnnotatedSignal[]) {
+    if (sig.strategy === 'consolidation_breakout') {
+      forming_breakout.push(sig);
+    } else if (sig.strategy === 'bear_breakdown') {
+      forming_breakdown.push(sig);
+    } else {
+      forming_pullback.push(sig);
+    }
+  }
+
+  // Sub-group none signals for display
+  const none_below_sma: AnnotatedSignal[] = [];
+  const none_other: AnnotatedSignal[] = [];
+  for (const sig of processed.none as AnnotatedSignal[]) {
+    const reason = sig.reason?.[0] ?? '';
+    if (reason.includes('below SMA(50)')) {
+      none_below_sma.push(sig);
+    } else {
+      none_other.push(sig);
+    }
+  }
 
   const lines: string[] = [];
 
@@ -1104,12 +943,12 @@ export function formatScanSummary(data: ScanSummaryData): string {
   lines.push(dim(`  ${headerParts.join(' · ')}`));
 
   // Sections
-  lines.push(renderActive(groups.active));
-  lines.push(renderNear(groups.near));
-  lines.push(renderFormingBreakouts(groups.forming_breakout));
-  lines.push(renderFormingPullbacks(groups.forming_pullback));
-  lines.push(renderFormingBreakdowns(groups.forming_breakdown));
-  lines.push(renderNoSetup([...groups.none_below_sma, ...groups.none_other], signals));
+  lines.push(renderActive(active));
+  lines.push(renderNear(near));
+  lines.push(renderFormingBreakouts(forming_breakout.slice(0, MAX_PER_CATEGORY)));
+  lines.push(renderFormingPullbacks(forming_pullback.slice(0, MAX_PER_CATEGORY)));
+  lines.push(renderFormingBreakdowns(forming_breakdown.slice(0, MAX_PER_CATEGORY)));
+  lines.push(renderNoSetup([...none_below_sma, ...none_other], signals));
 
   // Open Positions
   lines.push(renderOpenPositions(openPositions));

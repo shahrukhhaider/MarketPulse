@@ -3,3 +3,4 @@ node_modules
 dist
 .stock-tracker
 coverage
+.kiro

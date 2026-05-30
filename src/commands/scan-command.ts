@@ -21,6 +21,7 @@ import { detectSignal } from '../strategies/signal-detector.js';
 import type { DetectSignalOptions } from '../strategies/signal-detector.js';
 import type { SignalOutput } from '../strategies/strategy-registry.js';
 import { parallelScan } from '../pipeline/parallel-scan.js';
+import { runPipeline } from '../pipeline/signal-pipeline.js';
 import { RegimeDetector } from '../indicators/regime-detector.js';
 import type { RegimeResult, RegimeState } from '../indicators/regime-detector.js';
 import { load as loadJournal } from '../journal/journal-store.js';
@@ -514,6 +515,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
       return successResult('scan', {
         signals: mergedSignals,
+        processedSignals: runPipeline(mergedSignals),
         sections,
         warnings: [...allWarnings, ...positionsResult.warnings],
         total: allResults.reduce((sum, r) => sum + (r.total as number), 0),
@@ -658,6 +660,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
       const output: Record<string, unknown> = {
         signals: lineageAnnotatedSignals,
+        processedSignals: runPipeline(lineageAnnotatedSignals),
         warnings: [...result.warnings, ...positionsResult.warnings],
         total: result.total,
         scanned: result.scanned,
@@ -840,6 +843,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
     const output: Record<string, unknown> = {
       signals: lineageAnnotatedSignals,
+      processedSignals: runPipeline(lineageAnnotatedSignals),
       warnings: [...warnings, ...positionsResult.warnings],
       total: tickers.length,
       scanned: signals.length,
