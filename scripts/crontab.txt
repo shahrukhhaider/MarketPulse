@@ -12,3 +12,12 @@
 
 # Weekly tune at 9:00 AM on Sunday
 0 9 * * 0 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/weekly-tune.sh
+
+# Signal check at 10:00 AM ET, Monday through Friday
+0 10 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/signal-check.sh
+
+# Signal check at 12:00 PM ET, Monday through Friday
+0 12 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/signal-check.sh
+
+# Signal check at 3:30 PM ET, Monday through Friday
+30 15 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/signal-check.sh
