@@ -34,3 +34,15 @@ export function confluenceBadge(confluence: number | null | undefined): string {
   if (confluence >= 0.5) return '⚑ Confirmed';
   return '';
 }
+
+/**
+ * Map a fundamental tier to a badge label.
+ * @param tier - fundamental tier string: "strong", "mixed", or "weak"
+ * @returns badge string or "" if tier is unrecognized/null/undefined
+ */
+export function fundamentalBadge(tier: string | null | undefined): string {
+  if (tier === 'strong') return 'F 🟢';
+  if (tier === 'mixed') return 'F 🟡';
+  if (tier === 'weak') return 'F 🔴';
+  return '';
+}

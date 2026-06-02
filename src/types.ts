@@ -218,6 +218,23 @@ export const VALID_PERIODS: HistoricalPeriod[] = ['1mo', '3mo', '6mo', '1y', '2y
 export const VALID_INTERVALS: HistoricalInterval[] = ['1d', '1wk', '1mo'];
 
 // ============================================================
+// Fundamental Analysis Types
+// ============================================================
+
+export interface FundamentalData {
+  ticker: string;
+  fetched_at: string;                              // ISO 8601
+  fundamental_score: number;                       // 0–100
+  fundamental_tier: 'strong' | 'mixed' | 'weak';
+  eps_growth_yoy: number | null;
+  eps_accelerating: boolean | null;
+  revenue_growth_yoy: number | null;
+  earnings_beats: number | null;
+  earnings_quarters: number;                       // 0–8
+  profit_margin: number | null;
+}
+
+// ============================================================
 // Backtest Types
 // ============================================================
 

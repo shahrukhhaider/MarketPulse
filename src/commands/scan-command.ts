@@ -39,6 +39,9 @@ import { computeLineage } from '../indicators/signal-lineage.js';
 import type { SignalLineage } from '../indicators/signal-lineage.js';
 import { resolveUniverse, VALID_UNIVERSES } from '../utils/universe.js';
 import type { CapTier } from '../utils/universe.js';
+import { FundamentalsProvider } from '../data/fundamentals-provider.js';
+import { applyFundamentalAdjustment } from '../indicators/fundamental-scorer.js';
+import type { FundamentalData } from '../types.js';
 
 // ============================================================
 // Dependencies
@@ -441,6 +444,11 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
           }
         }
 
+        // Build fundamentals map (mirrors regimeStateMap pattern)
+        const fundamentalsProvider = new FundamentalsProvider({ cacheDir: dataDir });
+        const { map: fundamentalsMap, warnings: fundWarnings } = await fundamentalsProvider.buildFundamentalsMap(tickers);
+        allWarnings.push(...fundWarnings);
+
         // Use parallelScan for multi-ticker
         if (tickers.length > 1 && concurrency > 1) {
           const result = await parallelScan({
@@ -561,6 +569,11 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       }
     }
 
+    // Build fundamentals map (mirrors regimeStateMap pattern)
+    const fundamentalsProvider = new FundamentalsProvider({ cacheDir: dataDir });
+    const { map: fundamentalsMap, warnings: fundWarnings } = await fundamentalsProvider.buildFundamentalsMap(tickers);
+    const warnings: string[] = [...fundWarnings];
+
     // Parse concurrency from opts (set by command-wiring.ts)
     const concurrency = opts['_concurrency'] ? parseInt(opts['_concurrency'], 10) : 8;
 
@@ -629,10 +642,18 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         return { ...s, confidence: adjusted, lineage };
       });
 
+      // Apply fundamental confidence adjustment (after lineage, before runPipeline)
+      const fundamentalAnnotatedSignals = lineageAnnotatedSignals.map(s => {
+        const fundData = fundamentalsMap.get(s.ticker.toUpperCase());
+        if (!fundData) return s;
+        const adjusted = applyFundamentalAdjustment(s.confidence, fundData.fundamental_tier, s.strategy);
+        return { ...s, confidence: adjusted, fundamentalData: fundData };
+      });
+
       // Compute confluence for v3 scans (multiple strategies)
       if (strategyName === 'v3') {
         const byTicker = new Map<string, SignalOutput[]>();
-        for (const sig of lineageAnnotatedSignals) {
+        for (const sig of fundamentalAnnotatedSignals) {
           const group = byTicker.get(sig.ticker) ?? [];
           group.push(sig);
           byTicker.set(sig.ticker, group);
@@ -659,9 +680,9 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       }
 
       const output: Record<string, unknown> = {
-        signals: lineageAnnotatedSignals,
-        processedSignals: runPipeline(lineageAnnotatedSignals),
-        warnings: [...result.warnings, ...positionsResult.warnings],
+        signals: fundamentalAnnotatedSignals,
+        processedSignals: runPipeline(fundamentalAnnotatedSignals),
+        warnings: [...warnings, ...result.warnings, ...positionsResult.warnings],
         total: result.total,
         scanned: result.scanned,
         skipped: result.skipped,
@@ -679,7 +700,6 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
     // Sequential path: single ticker or concurrency === 1
     const signals: SignalOutput[] = [];
-    const warnings: string[] = [];
 
     // Process each ticker sequentially
     for (const ticker of tickers) {
@@ -828,6 +848,14 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       return { ...s, confidence: adjusted, lineage };
     });
 
+    // Apply fundamental confidence adjustment (after lineage, before runPipeline)
+    const fundamentalAnnotatedSignals = lineageAnnotatedSignals.map(s => {
+      const fundData = fundamentalsMap.get(s.ticker.toUpperCase());
+      if (!fundData) return s;
+      const adjusted = applyFundamentalAdjustment(s.confidence, fundData.fundamental_tier, s.strategy);
+      return { ...s, confidence: adjusted, fundamentalData: fundData };
+    });
+
     // Load and process open positions
     // Price data reuse happens transparently via the caching provider
     const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
@@ -842,8 +870,8 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     }
 
     const output: Record<string, unknown> = {
-      signals: lineageAnnotatedSignals,
-      processedSignals: runPipeline(lineageAnnotatedSignals),
+      signals: fundamentalAnnotatedSignals,
+      processedSignals: runPipeline(fundamentalAnnotatedSignals),
       warnings: [...warnings, ...positionsResult.warnings],
       total: tickers.length,
       scanned: signals.length,

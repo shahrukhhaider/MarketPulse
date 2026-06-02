@@ -1,4 +1,4 @@
-import type { HistoricalDataPoint, BacktestResult } from '../types.js';
+import type { HistoricalDataPoint, BacktestResult, FundamentalData } from '../types.js';
 import type { ParameterSpace } from './parameter-grid.js';
 import type { SignalLineage } from '../indicators/signal-lineage.js';
 
@@ -25,6 +25,7 @@ export interface SignalOutput {
   candlestickPatterns?: string[];   // detected pattern names from candlestick scorer
   candlestickAdjustment?: number;   // applied multiplier [0.85, 1.15]
   lineage?: SignalLineage;          // temporal context from signal history
+  fundamentalData?: FundamentalData; // fundamental analysis metrics from fundamentalsMap
 }
 
 export interface TunableStrategyInterface {

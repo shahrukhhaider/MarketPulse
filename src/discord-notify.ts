@@ -9,7 +9,8 @@ import {
   type MarketRegime,
 } from './slack-notify.js';
 import { narrateSignal } from './formatters/signal-narrator.js';
-import { confidenceBadge } from './formatters/badge-helpers.js';
+import { confidenceBadge, fundamentalBadge } from './formatters/badge-helpers.js';
+import type { FundamentalData } from './types.js';
 import { toExposureTier } from './formatters/market-exposure.js';
 import { generateChartImages } from './chart-image-generator.js';
 import { buildMultipartPayload } from './discord-multipart.js';
@@ -375,12 +376,15 @@ export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
     // Title: ticker — strategy (used for chart matching)
     const title = `${signal.ticker} — ${stratName}`;
 
-    // Header line: {sideIcon} **{SIDE}** · Day {N} · {confidence_badge} · RS {rs_rating}
+    // Header line: {sideIcon} **{SIDE}** · Day {N} · {confidence_badge} · RS {rs_rating} · F {badge}
     const headerParts: string[] = [`${sideIcon} **${sideLabel}**`, `Day ${dayStr}`];
     const badge = confidenceBadge((signal as any).confidence);
     if (badge) headerParts.push(badge);
     const rs = (signal as any).regimeState?.rs_rating;
     if (rs && rs > 0) headerParts.push(`RS ${rs}`);
+    const fundData = (signal as any).fundamentalData as FundamentalData | undefined;
+    const fundBadge = fundamentalBadge(fundData?.fundamental_tier);
+    if (fundBadge) headerParts.push(fundBadge);
     const headerLine = headerParts.join(' · ');
 
     // Metrics line: Entry → Stop → Target · Risk · R:R
@@ -424,6 +428,25 @@ export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
     if (rationale) descLines.push(rationale);
     descLines.push(priceLine);
     if (metricsLine) descLines.push(metricsLine);
+
+    // Fundamental metrics line for strong/weak tiers
+    if (fundData && (fundData.fundamental_tier === 'strong' || fundData.fundamental_tier === 'weak')) {
+      const fundParts: string[] = [];
+      if (fundData.eps_growth_yoy != null) {
+        const sign = fundData.eps_growth_yoy >= 0 ? '+' : '';
+        fundParts.push(`EPS ${sign}${fundData.eps_growth_yoy.toFixed(0)}% YoY`);
+      }
+      if (fundData.earnings_beats != null) {
+        const evaluatedQ = Math.min(fundData.earnings_quarters, 4);
+        fundParts.push(`${fundData.earnings_beats}/${evaluatedQ} beats`);
+      }
+      if (fundData.revenue_growth_yoy != null) {
+        const sign = fundData.revenue_growth_yoy >= 0 ? '+' : '';
+        fundParts.push(`Rev ${sign}${fundData.revenue_growth_yoy.toFixed(0)}%`);
+      }
+      if (fundParts.length > 0) descLines.push(fundParts.join(' · '));
+    }
+
     const description = descLines.join('\n');
 
     const embed: DiscordEmbed = {
