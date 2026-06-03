@@ -2,8 +2,8 @@
 // Badge Helpers — Tiered badge labels for confidence & confluence
 // ============================================================
 // Pure functions mapping numeric scores to human-readable badge
-// strings. Consumed by Slack and Discord notifiers for consistent
-// badge rendering across platforms.
+// strings. Consumed by Discord notifier for consistent
+// badge rendering.
 // ============================================================
 
 /**

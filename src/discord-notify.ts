@@ -7,7 +7,7 @@ import {
   type Signal,
   type OpenPosition,
   type MarketRegime,
-} from './slack-notify.js';
+} from './scan-types.js';
 import { narrateSignal } from './formatters/signal-narrator.js';
 import { confidenceBadge, fundamentalBadge } from './formatters/badge-helpers.js';
 import type { FundamentalData } from './types.js';

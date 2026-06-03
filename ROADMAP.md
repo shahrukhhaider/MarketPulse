@@ -4,7 +4,6 @@
 
 **Goal: Signal quality confidence before going public**
 
-- [ ] Fix Slack output — stop `0.00` on near signals, section headers, cleaner formatting
 - [ ] Signal history log — append every signal daily with entry, stop, strategy, confidence. Starts the live track record clock.
 - [ ] Paper trading — open a paper account, take every active signal the system generates. Logged, timestamped, public-ready.
 - [ ] Tune BB profiles — 280 missing bear_breakdown profiles means short signals are running on defaults.

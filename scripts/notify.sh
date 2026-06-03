@@ -1,5 +1,5 @@
 #!/bin/bash
-# Notify — Post latest scan results to Slack and Discord
+# Notify — Post latest scan results to Discord
 # Separate from scanning so egress can be triggered independently.
 #
 # Usage:
@@ -15,9 +15,7 @@ LOG_DIR="$PROJECT_DIR/.stock-tracker/logs"
 cd "$PROJECT_DIR"
 
 if [ -n "$1" ]; then
-  $NODE dist/src/slack-notify.js "$1"
   $NODE dist/src/discord-notify.js "$1"
 else
-  $NODE dist/src/slack-notify.js
   $NODE dist/src/discord-notify.js
 fi

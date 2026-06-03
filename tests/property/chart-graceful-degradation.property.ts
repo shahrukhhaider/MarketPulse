@@ -6,7 +6,7 @@ import {
   type DiscordPayload,
   type DiscordEmbed,
 } from '../../src/discord-notify.js';
-import type { ScanData, Signal, MarketRegime, OpenPosition } from '../../src/slack-notify.js';
+import type { ScanData, Signal, MarketRegime, OpenPosition } from '../../src/scan-types.js';
 
 // ============================================================
 // Generators

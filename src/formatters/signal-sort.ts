@@ -1,7 +1,7 @@
 // ============================================================
 // Signal Sort — Shared sorting logic for active signals
 // ============================================================
-// Used by terminal formatter, Slack, and Discord to ensure
+// Used by terminal formatter and Discord to ensure
 // consistent signal ordering across all output channels.
 // ============================================================
 

@@ -8,8 +8,8 @@
 import * as path from 'node:path';
 import { determineSide, enforcePayloadLimits, COLORS, readDiscordWebhookUrl, postToDiscord } from './discord-notify.js';
 import type { DiscordPayload } from './discord-notify.js';
-import { findLatestScanLog, parseScanJson } from './slack-notify.js';
-import type { Signal, ScanData } from './slack-notify.js';
+import { findLatestScanLog, parseScanJson } from './scan-types.js';
+import type { Signal, ScanData } from './scan-types.js';
 import { readProcessedSignals, flattenProcessedSignals } from './pipeline/read-processed-signals.js';
 import { PriceFeedClient } from './data/price-feed-client.js';
 import type { PricePoint } from './types.js';
