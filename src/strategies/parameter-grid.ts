@@ -5,7 +5,28 @@ import { resolveWeightPreset } from '../indicators/confidence-score.js';
 
 export type { TimeHorizon, TunableStrategy } from '../pipeline/tuning-engine.js';
 
-export type CapTier = 'large_cap' | 'mid_cap' | 'small_cap';
+export type VolatilityBucket = 'low' | 'medium' | 'high';
+
+/**
+ * Map a numeric ATR% to a discrete volatility bucket.
+ * - < 1.5  → "low"
+ * - 1.5–3.0 → "medium"
+ * - > 3.0  → "high"
+ *
+ * Returns "medium" for NaN, negative, or non-finite inputs.
+ */
+export function atrPctToBucket(atrPct: number): VolatilityBucket {
+  if (!Number.isFinite(atrPct) || atrPct < 0) {
+    return 'medium';
+  }
+  if (atrPct < 1.5) {
+    return 'low';
+  }
+  if (atrPct > 3.0) {
+    return 'high';
+  }
+  return 'medium';
+}
 
 export type ParameterSpace = Record<string, number[]>;
 
@@ -467,25 +488,25 @@ export function resolveExitPreset(preset: number): {
   }
 }
 
-export function getConsolidationBreakoutParameterSpace(tier: CapTier = 'large_cap'): ParameterSpace {
-  const maxRangePct: Record<CapTier, number[]> = {
-    large_cap: [4, 6, 8],
-    mid_cap: [6, 8, 10, 12],
-    small_cap: [8, 12, 16, 20],
+export function getConsolidationBreakoutParameterSpace(bucket: VolatilityBucket = 'medium'): ParameterSpace {
+  const maxRangePct: Record<VolatilityBucket, number[]> = {
+    low: [4, 6, 8],
+    medium: [6, 8, 10, 12],
+    high: [8, 12, 16, 20],
   };
-  const atrMultiple: Record<CapTier, number[]> = {
-    large_cap: [1.2, 1.6, 2.0],
-    mid_cap: [1.6, 2.0, 2.5],
-    small_cap: [2.0, 2.5, 3.0],
+  const atrMultiple: Record<VolatilityBucket, number[]> = {
+    low: [1.2, 1.6, 2.0],
+    medium: [1.6, 2.0, 2.5],
+    high: [2.0, 2.5, 3.0],
   };
 
   return {
     consolidation_window: [5, 10, 15],
-    max_range_pct: maxRangePct[tier],
+    max_range_pct: maxRangePct[bucket],
     atr_ratio_threshold: [0.8, 1.0],
     volume_multiplier: [1.2, 1.5],
     overextension_pct: [5, 8, 12],
-    atr_multiple: atrMultiple[tier],
+    atr_multiple: atrMultiple[bucket],
     swing_lookback: [10, 15, 20],
     max_risk_pct: [3, 5, 8],
     r_multiple: [2, 2.5, 3],
@@ -553,8 +574,8 @@ export function buildConsolidationBreakoutConfig(
  * Returns a generator to avoid materializing all entries in memory at once.
  * Consumers iterate with for...of and only keep what they need.
  */
-export function* generateConsolidationBreakoutGrid(tier: CapTier = 'large_cap'): Generator<ConsolidationBreakoutGridEntry> {
-  const space = getConsolidationBreakoutParameterSpace(tier);
+export function* generateConsolidationBreakoutGrid(bucket: VolatilityBucket = 'medium'): Generator<ConsolidationBreakoutGridEntry> {
+  const space = getConsolidationBreakoutParameterSpace(bucket);
   const paramNames = Object.keys(space);
   const paramArrays = paramNames.map(name => space[name]);
 
@@ -572,25 +593,25 @@ export function* generateConsolidationBreakoutGrid(tier: CapTier = 'large_cap'):
 /**
  * Return the trend-pullback parameter space with 10 tunable parameters.
  */
-export function getTrendPullbackParameterSpace(tier: CapTier = 'large_cap'): ParameterSpace {
-  const pullbackProximityPct: Record<CapTier, number[]> = {
-    large_cap: [2, 3, 5],
-    mid_cap: [3, 5, 7, 10],
-    small_cap: [5, 8, 12, 15],
+export function getTrendPullbackParameterSpace(bucket: VolatilityBucket = 'medium'): ParameterSpace {
+  const pullbackProximityPct: Record<VolatilityBucket, number[]> = {
+    low: [2, 3, 5],
+    medium: [3, 5, 7, 10],
+    high: [5, 8, 12, 15],
   };
-  const stopAtrMultiple: Record<CapTier, number[]> = {
-    large_cap: [1.5, 2.0, 2.5],
-    mid_cap: [2.0, 2.5, 3.0],
-    small_cap: [2.5, 3.0, 3.5],
+  const stopAtrMultiple: Record<VolatilityBucket, number[]> = {
+    low: [1.5, 2.0, 2.5],
+    medium: [2.0, 2.5, 3.0],
+    high: [2.5, 3.0, 3.5],
   };
 
   return {
-    pullback_proximity_pct: pullbackProximityPct[tier],
+    pullback_proximity_pct: pullbackProximityPct[bucket],
     atr_contraction_threshold: [0.7, 0.8, 1.0],
     volume_below_avg_multiplier: [0.8, 1.0],
     trigger_volume_multiplier: [1.0, 1.2, 1.5],
     overextension_pct: [5, 8, 12],
-    stop_atr_multiple: stopAtrMultiple[tier],
+    stop_atr_multiple: stopAtrMultiple[bucket],
     r_multiple: [2, 2.5, 3],
     swing_lookback: [5, 10, 15],
     // Active presets: 0=fixed baseline, 5=trailing ATR highest_close aggressive
@@ -681,8 +702,8 @@ export function buildTrendPullbackGridConfig(
  *
  * Returns a generator to avoid materializing all entries in memory at once.
  */
-export function* generateTrendPullbackGrid(tier: CapTier = 'large_cap'): Generator<TrendPullbackGridEntry> {
-  const space = getTrendPullbackParameterSpace(tier);
+export function* generateTrendPullbackGrid(bucket: VolatilityBucket = 'medium'): Generator<TrendPullbackGridEntry> {
+  const space = getTrendPullbackParameterSpace(bucket);
   const paramNames = Object.keys(space);
   const paramArrays = paramNames.map(name => space[name]);
 
@@ -700,27 +721,27 @@ export function* generateTrendPullbackGrid(tier: CapTier = 'large_cap'): Generat
 
 /**
  * Return the bear-breakdown parameter space with 8 tunable parameters.
- * Tier-specific values for max_range_pct and atr_multiple allow wider ranges
- * for smaller-cap stocks which exhibit higher volatility.
+ * Bucket-specific values for max_range_pct and atr_multiple allow wider ranges
+ * for higher-volatility stocks.
  */
-export function getBearBreakdownParameterSpace(tier: CapTier = 'large_cap'): ParameterSpace {
-  const maxRangePct: Record<CapTier, number[]> = {
-    large_cap: [4, 6, 8],
-    mid_cap: [6, 8, 10, 12],
-    small_cap: [8, 12, 16, 20],
+export function getBearBreakdownParameterSpace(bucket: VolatilityBucket = 'medium'): ParameterSpace {
+  const maxRangePct: Record<VolatilityBucket, number[]> = {
+    low: [4, 6, 8],
+    medium: [6, 8, 10, 12],
+    high: [8, 12, 16, 20],
   };
-  const atrMultiple: Record<CapTier, number[]> = {
-    large_cap: [1.2, 1.6, 2.0],
-    mid_cap: [1.6, 2.0, 2.5],
-    small_cap: [2.0, 2.5, 3.0],
+  const atrMultiple: Record<VolatilityBucket, number[]> = {
+    low: [1.2, 1.6, 2.0],
+    medium: [1.6, 2.0, 2.5],
+    high: [2.0, 2.5, 3.0],
   };
 
   return {
     consolidation_window: [5, 10, 15],
-    max_range_pct: maxRangePct[tier],
+    max_range_pct: maxRangePct[bucket],
     atr_ratio_threshold: [0.8, 1.0],
     volume_multiplier: [1.2, 1.5],
-    atr_multiple: atrMultiple[tier],
+    atr_multiple: atrMultiple[bucket],
     swing_lookback: [10, 15, 20],
     max_risk_pct: [3, 5, 8],
     r_multiple: [2, 2.5, 3],
@@ -765,8 +786,8 @@ export function buildBearBreakdownConfig(
  *
  * Returns a generator to avoid materializing all entries in memory at once.
  */
-export function* generateBearBreakdownGrid(tier: CapTier = 'large_cap'): Generator<BearBreakdownGridEntry> {
-  const space = getBearBreakdownParameterSpace(tier);
+export function* generateBearBreakdownGrid(bucket: VolatilityBucket = 'medium'): Generator<BearBreakdownGridEntry> {
+  const space = getBearBreakdownParameterSpace(bucket);
   const paramNames = Object.keys(space);
   const paramArrays = paramNames.map(name => space[name]);
 
@@ -856,32 +877,32 @@ export function* generatePostEarningsDriftGrid(): Generator<PostEarningsDriftGri
  * Return the keltner-mean-reversion parameter space with 9 tunable parameters.
  * Total combinations: 4 × 4 × 4 × 3 × 3 × 4 × 4 × 3 × 4 = 110,592
  *
- * Tier-specific parameters (only small_cap differs):
- *   band_multiplier: large_cap/mid_cap=[1.5,2.0,2.5,3.0], small_cap=[2.0,2.5,3.0,3.5]
- *   band_proximity_pct: large_cap/mid_cap=[2,3,5,8], small_cap=[3,5,8,12]
+ * Bucket-specific parameters (only high differs):
+ *   band_multiplier: low/medium=[1.5,2.0,2.5,3.0], high=[2.0,2.5,3.0,3.5]
+ *   band_proximity_pct: low/medium=[2,3,5,8], high=[3,5,8,12]
  */
-export function getKeltnerMeanReversionParameterSpace(tier: CapTier = 'large_cap'): ParameterSpace {
-  const bandMultiplier: Record<CapTier, number[]> = {
-    large_cap: [1.5, 2.0, 2.5, 3.0],
-    mid_cap: [1.5, 2.0, 2.5, 3.0],
-    small_cap: [2.0, 2.5, 3.0, 3.5],
+export function getKeltnerMeanReversionParameterSpace(bucket: VolatilityBucket = 'medium'): ParameterSpace {
+  const bandMultiplier: Record<VolatilityBucket, number[]> = {
+    low: [1.5, 2.0, 2.5, 3.0],
+    medium: [1.5, 2.0, 2.5, 3.0],
+    high: [2.0, 2.5, 3.0, 3.5],
   };
-  const bandProximityPct: Record<CapTier, number[]> = {
-    large_cap: [2, 3, 5, 8],
-    mid_cap: [2, 3, 5, 8],
-    small_cap: [3, 5, 8, 12],
+  const bandProximityPct: Record<VolatilityBucket, number[]> = {
+    low: [2, 3, 5, 8],
+    medium: [2, 3, 5, 8],
+    high: [3, 5, 8, 12],
   };
 
   return {
     ema_period: [10, 20, 30, 50],
     atr_period: [5, 10, 14, 20],
-    band_multiplier: bandMultiplier[tier],
+    band_multiplier: bandMultiplier[bucket],
     trend_filter_period: [20, 50, 100],
     reclaim_lookback: [2, 5, 10],
     stop_atr_multiple: [1.0, 1.5, 2.0, 3.0],
     r_multiple: [1.5, 2.0, 2.5, 3.0],
     max_risk_pct: [3, 5, 8],
-    band_proximity_pct: bandProximityPct[tier],
+    band_proximity_pct: bandProximityPct[bucket],
   };
 }
 
@@ -910,8 +931,8 @@ export function buildKeltnerMeanReversionConfig(
  *
  * Returns a generator to avoid materializing all entries in memory at once.
  */
-export function* generateKeltnerMeanReversionGrid(tier: CapTier = 'large_cap'): Generator<KeltnerMeanReversionGridEntry> {
-  const space = getKeltnerMeanReversionParameterSpace(tier);
+export function* generateKeltnerMeanReversionGrid(bucket: VolatilityBucket = 'medium'): Generator<KeltnerMeanReversionGridEntry> {
+  const space = getKeltnerMeanReversionParameterSpace(bucket);
   const paramNames = Object.keys(space);
   const paramArrays = paramNames.map(name => space[name]);
 

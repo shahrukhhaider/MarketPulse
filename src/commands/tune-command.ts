@@ -17,24 +17,7 @@ import type { TuneResult, V3TuneResult } from '../pipeline/pipeline-functions.js
 import { saveStrategyProfile, computeExpiry } from '../data/profile-store.js';
 import type { StrategyProfile, WalkForwardMetrics } from '../data/profile-store.js';
 import type { TuningPerformanceMetrics } from '../pipeline/tuning-engine.js';
-import type { CapTier } from '../strategies/parameter-grid.js';
 import { resolveUniverse } from '../utils/universe.js';
-
-// ============================================================
-// Cap-Tier Validation
-// ============================================================
-
-export const VALID_CAP_TIERS: CapTier[] = ['large_cap', 'mid_cap', 'small_cap'];
-
-export function parseCapTier(value: string | undefined): CapTier | { error: string } {
-  if (value === undefined || value === '') {
-    return 'large_cap';
-  }
-  if (VALID_CAP_TIERS.includes(value as CapTier)) {
-    return value as CapTier;
-  }
-  return { error: `Invalid --cap-tier value '${value}'. Valid options: ${VALID_CAP_TIERS.join(', ')}` };
-}
 
 // ============================================================
 // Dependencies
@@ -59,7 +42,6 @@ export interface TuneSummary {
   configurations_evaluated?: number;
   profile_saved: boolean;
   error_message?: string;
-  cap_tier?: CapTier;
 }
 
 export interface TuneBatchResult {
@@ -101,7 +83,7 @@ function resolveTickerList(
     }
   }
 
-  // Explicit ticker list provided — use as-is (capTier still inherited from universe)
+  // Explicit ticker list provided — use as-is
   return tickersArg.split(',').map(t => t.trim().toUpperCase()).filter(t => t.length > 0);
 }
 
@@ -134,16 +116,15 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
     const noCache = opts['no-cache'] !== undefined;
     const isV3 = opts['v3'] !== undefined;
 
-    // Resolve universe (replaces --cap-tier)
+    // Resolve universe (for watchlist file resolution)
     const universeResult = resolveUniverse(opts['universe']);
     if ('error' in universeResult) {
       return errorResult('tune', 'INVALID_PARAM_RANGE', universeResult.error);
     }
-    const tier: CapTier = universeResult.capTier;
 
     // V3 path: tune both strategies in parallel
     if (isV3) {
-      return handleV3Tune(tickersArg, shouldSave, noCache, cachingProvider, dataDir, tier, universeResult.watchlistFile);
+      return handleV3Tune(tickersArg, shouldSave, noCache, cachingProvider, dataDir, universeResult.watchlistFile);
     }
 
     // Resolve strategy from registry
@@ -193,7 +174,7 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
         const dataPoints = dataResult.data.dataPoints;
 
         // Run tuneParams
-        const tuneResult = tuneParams(dataPoints, strategyName, paramSpace, tier);
+        const tuneResult = tuneParams(dataPoints, strategyName, paramSpace);
 
         if ('error' in tuneResult) {
           // Classify the error
@@ -247,7 +228,6 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
             walk_forward_metrics: toWalkForwardMetrics(result.oosMetrics),
             last_tuned_at: lastTunedAt,
             valid_until: validUntil,
-            ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
           };
 
           const saveResult = saveStrategyProfile(profile, dataDir);
@@ -263,7 +243,6 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
           out_of_sample: result.oosMetrics,
           configurations_evaluated: result.configurationsEvaluated,
           profile_saved: profileSaved,
-          cap_tier: tier,
         });
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
@@ -300,7 +279,6 @@ async function handleV3Tune(
   noCache: boolean,
   cachingProvider: HistoricalDataCache,
   dataDir: string,
-  tier: CapTier = 'large_cap',
   watchlistFile: string = 'watchlist.json',
 ) {
   // Resolve ticker list from universe-resolved watchlist
@@ -360,29 +338,29 @@ async function handleV3Tune(
       const dataPoints = dataResult.data.dataPoints;
 
       // Run tuneV3 — tunes all strategies on the same data
-      const v3Result: V3TuneResult = tuneV3(dataPoints, tier);
+      const v3Result: V3TuneResult = tuneV3(dataPoints);
 
       // Process consolidation_breakout result
       const cbSummary = buildV3StrategySummary(
-        ticker, 'consolidation_breakout', v3Result.consolidation_breakout, shouldSave, dataDir, tier
+        ticker, 'consolidation_breakout', v3Result.consolidation_breakout, shouldSave, dataDir
       );
       summaries.push(cbSummary);
 
       // Process trend_pullback result
       const tpSummary = buildV3StrategySummary(
-        ticker, 'trend_pullback', v3Result.trend_pullback, shouldSave, dataDir, tier
+        ticker, 'trend_pullback', v3Result.trend_pullback, shouldSave, dataDir
       );
       summaries.push(tpSummary);
 
       // Process bear_breakdown result
       const bbSummary = buildV3StrategySummary(
-        ticker, 'bear_breakdown', v3Result.bear_breakdown, shouldSave, dataDir, tier
+        ticker, 'bear_breakdown', v3Result.bear_breakdown, shouldSave, dataDir
       );
       summaries.push(bbSummary);
 
       // Process keltner_mean_reversion result
       const kmrSummary = buildV3StrategySummary(
-        ticker, 'keltner_mean_reversion', v3Result.keltner_mean_reversion, shouldSave, dataDir, tier
+        ticker, 'keltner_mean_reversion', v3Result.keltner_mean_reversion, shouldSave, dataDir
       );
       summaries.push(kmrSummary);
 
@@ -458,7 +436,6 @@ function buildV3StrategySummary(
   result: TuneResult | { error: string },
   shouldSave: boolean,
   dataDir: string,
-  tier: CapTier = 'large_cap',
 ): TuneSummary {
   if ('error' in result) {
     const errorMsg = result.error;
@@ -506,7 +483,6 @@ function buildV3StrategySummary(
       walk_forward_metrics: toWalkForwardMetrics(result.oosMetrics),
       last_tuned_at: lastTunedAt,
       valid_until: validUntil,
-      ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
     };
 
     const saveResult = saveStrategyProfile(profile, dataDir);
@@ -521,6 +497,5 @@ function buildV3StrategySummary(
     out_of_sample: result.oosMetrics,
     configurations_evaluated: result.configurationsEvaluated,
     profile_saved: profileSaved,
-    cap_tier: tier,
   };
 }

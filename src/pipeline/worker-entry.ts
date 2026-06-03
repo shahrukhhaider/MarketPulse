@@ -1,7 +1,6 @@
 import { parentPort } from 'node:worker_threads';
 import { tuneV3 } from './pipeline-functions.js';
 import type { V3TuneResult } from './pipeline-functions.js';
-import type { CapTier } from '../strategies/parameter-grid.js';
 import { detectSignal } from '../strategies/signal-detector.js';
 import type { DetectSignalOptions } from '../strategies/signal-detector.js';
 import type { SignalOutput } from '../strategies/strategy-registry.js';
@@ -28,7 +27,7 @@ parentPort.on('message', (msg: MainToWorkerMessage) => {
       let result: V3TuneResult | SignalOutput;
 
       if (payload.taskType === 'tune') {
-        result = tuneV3(payload.data, (payload.tier as CapTier) ?? 'large_cap');
+        result = tuneV3(payload.data);
       } else if (payload.taskType === 'scan') {
         const options: DetectSignalOptions | undefined = payload.earningsDates
           ? { earningsDates: payload.earningsDates }

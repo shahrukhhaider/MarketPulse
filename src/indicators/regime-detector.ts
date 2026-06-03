@@ -37,6 +37,7 @@ export interface RegimeDetectorOptions {
   cachingProvider: HistoricalDataCache;
   superTrendParams?: Partial<SuperTrendParams>;
   cacheDir: string;  // path to store regime-cache.json
+  universeSuffix?: string;  // when set, cache file becomes regime-cache-${suffix}.json
 }
 
 export interface RegimeResult {
@@ -126,7 +127,10 @@ export class RegimeDetector {
     this.cache = options.cachingProvider;
     this.superTrendParams = options.superTrendParams;
     this.cacheDir = options.cacheDir;
-    this.cacheFilePath = path.join(options.cacheDir, 'regime-cache.json');
+    const cacheFileName = options.universeSuffix
+      ? `regime-cache-${options.universeSuffix}.json`
+      : 'regime-cache.json';
+    this.cacheFilePath = path.join(options.cacheDir, cacheFileName);
   }
 
   /**

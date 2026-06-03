@@ -15,7 +15,7 @@ import type { SignalOutput } from '../strategies/strategy-registry.js';
 import { detectSignal } from '../strategies/signal-detector.js';
 import type { DetectSignalOptions } from '../strategies/signal-detector.js';
 import { loadStrategyProfile } from '../data/profile-store.js';
-import { sortBySignalPriority, isProfileScopedToUniverse } from '../commands/scan-command.js';
+import { sortBySignalPriority } from '../commands/scan-command.js';
 import { WorkerPool } from './worker-pool.js';
 import type { WorkerTask, WorkerResult } from './worker-pool.js';
 import { fetchHistoricalDataStream } from '../data/data-fetcher.js';
@@ -25,7 +25,7 @@ import { createProgressReporter } from '../formatters/progress-reporter.js';
 import type { HistoricalDataPoint } from '../types.js';
 import { computeConfluence } from '../indicators/confluence-calculator.js';
 import { computeRvol } from './rvol.js';
-import type { CapTier } from '../utils/universe.js';
+
 
 // ============================================================
 // Options and Result Interfaces
@@ -38,7 +38,6 @@ export interface ParallelScanOptions {
   allowStale: boolean;
   cachingProvider: HistoricalDataCache;
   dataDir: string;
-  activeUniverse?: CapTier;
 }
 
 export interface ParallelScanResult {
@@ -130,16 +129,7 @@ async function scanSingleTicker(options: ParallelScanOptions): Promise<ParallelS
           continue;
         }
 
-        // Profile scoping: check cap_tier matches active universe
-        if (options.activeUniverse && !isProfileScopedToUniverse(profileResult.data, options.activeUniverse)) {
-          process.stderr.write(
-            `[WARN] Skipping profile for ${ticker}: profile cap_tier '${profileResult.data.cap_tier}' does not match active universe '${options.activeUniverse}'. Re-tune with --universe ${options.activeUniverse}.\n`
-          );
-          // Use default params for this ticker's signal detection
-          params = {};
-        } else {
-          params = profileResult.data.params;
-        }
+        params = profileResult.data.params;
       }
 
       const signal = detectSignal(dataPoints, params, strat, signalOptions);
@@ -318,16 +308,7 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
             continue;
           }
 
-          // Profile scoping: check cap_tier matches active universe
-          if (options.activeUniverse && !isProfileScopedToUniverse(profileResult.data, options.activeUniverse)) {
-            process.stderr.write(
-              `[WARN] Skipping profile for ${fetchResult.ticker}: profile cap_tier '${profileResult.data.cap_tier}' does not match active universe '${options.activeUniverse}'. Re-tune with --universe ${options.activeUniverse}.\n`
-            );
-            // Use default params for this ticker's signal detection
-            params = {};
-          } else {
-            params = profileResult.data.params;
-          }
+          params = profileResult.data.params;
         }
 
         // Create and submit scan task to worker pool

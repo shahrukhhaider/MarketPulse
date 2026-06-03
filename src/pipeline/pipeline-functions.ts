@@ -1,8 +1,9 @@
 import type { HistoricalDataPoint, BacktestResult, PerformanceSummary, Trade } from '../types.js';
 import type { TuningPerformanceMetrics } from './tuning-engine.js';
 import type { ConsolidationBreakoutGridEntry, TrendPullbackGridEntry, BearBreakdownGridEntry, KeltnerMeanReversionGridEntry } from '../strategies/parameter-grid.js';
-import { generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig, generateTrendPullbackGrid, buildTrendPullbackGridConfig, generateBearBreakdownGrid, buildBearBreakdownConfig, buildPostEarningsDriftConfig, generateKeltnerMeanReversionGrid, buildKeltnerMeanReversionConfig } from '../strategies/parameter-grid.js';
-import type { CapTier } from '../strategies/parameter-grid.js';
+import { generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig, generateTrendPullbackGrid, buildTrendPullbackGridConfig, generateBearBreakdownGrid, buildBearBreakdownConfig, buildPostEarningsDriftConfig, generateKeltnerMeanReversionGrid, buildKeltnerMeanReversionConfig, atrPctToBucket } from '../strategies/parameter-grid.js';
+import type { VolatilityBucket } from '../strategies/parameter-grid.js';
+import { computeAtrPct } from '../indicators/indicators.js';
 import { splitData, evaluateV3Configuration, evaluateTrendPullbackConfiguration, evaluateBearBreakdownConfiguration, evaluateKeltnerMeanReversionConfiguration } from './walk-forward-validator.js';
 import { VduBacktestEngine, DEFAULT_VDU_CONFIG } from '../strategies/vdu-engine.js';
 import type { VduConfig, VduParams } from '../strategies/vdu-engine.js';
@@ -41,6 +42,7 @@ export interface V3TuneResult {
   bear_breakdown: TuneResult | { error: string };
   keltner_mean_reversion: TuneResult | { error: string };
   volume_dry_up: TuneResult | { error: string };
+  bucket: VolatilityBucket;
 }
 
 // ============================================================
@@ -95,7 +97,7 @@ export function tuneParams(
   data: HistoricalDataPoint[],
   strategy: string,
   _paramSpace: Record<string, number[]>,
-  tier: CapTier = 'large_cap'
+  bucket: VolatilityBucket = 'medium'
 ): TuneResult | { error: string } {
   // Step 1: Split data into IS/OOS
   const splitResult = splitData(data);
@@ -118,15 +120,15 @@ export function tuneParams(
 
   const grid: Iterable<ConsolidationBreakoutGridEntry | TrendPullbackGridEntry | BearBreakdownGridEntry | KeltnerMeanReversionGridEntry | VduGridEntry> =
     strategy === 'consolidation_breakout'
-      ? generateConsolidationBreakoutGrid(tier)
+      ? generateConsolidationBreakoutGrid(bucket)
       : strategy === 'trend_pullback'
-        ? generateTrendPullbackGrid(tier)
+        ? generateTrendPullbackGrid(bucket)
         : strategy === 'bear_breakdown'
-          ? generateBearBreakdownGrid(tier)
+          ? generateBearBreakdownGrid(bucket)
           : strategy === 'keltner_mean_reversion'
-            ? generateKeltnerMeanReversionGrid(tier)
+            ? generateKeltnerMeanReversionGrid(bucket)
             : strategy === 'volume_dry_up'
-              ? generateVduGrid(tier)
+              ? generateVduGrid(bucket)
               : [];
 
   if (strategy !== 'consolidation_breakout' && strategy !== 'trend_pullback' && strategy !== 'bear_breakdown' && strategy !== 'keltner_mean_reversion' && strategy !== 'volume_dry_up') {
@@ -206,12 +208,15 @@ export function tuneParams(
  * Each strategy is tuned independently via tuneParams().
  * Returns a V3TuneResult with results (or errors) for both strategies.
  */
-export function tuneV3(data: HistoricalDataPoint[], tier: CapTier = 'large_cap'): V3TuneResult {
-  const cbResult = tuneParams(data, 'consolidation_breakout', {}, tier);
-  const tpResult = tuneParams(data, 'trend_pullback', {}, tier);
-  const bbResult = tuneParams(data, 'bear_breakdown', {}, tier);
-  const kmrResult = tuneParams(data, 'keltner_mean_reversion', {}, tier);
-  const vduResult = tuneParams(data, 'volume_dry_up', {}, tier);
+export function tuneV3(data: HistoricalDataPoint[]): V3TuneResult {
+  const atrPct = computeAtrPct(data);
+  const bucket: VolatilityBucket = atrPct === null ? 'medium' : atrPctToBucket(atrPct);
+
+  const cbResult = tuneParams(data, 'consolidation_breakout', {}, bucket);
+  const tpResult = tuneParams(data, 'trend_pullback', {}, bucket);
+  const bbResult = tuneParams(data, 'bear_breakdown', {}, bucket);
+  const kmrResult = tuneParams(data, 'keltner_mean_reversion', {}, bucket);
+  const vduResult = tuneParams(data, 'volume_dry_up', {}, bucket);
 
   return {
     consolidation_breakout: cbResult,
@@ -219,6 +224,7 @@ export function tuneV3(data: HistoricalDataPoint[], tier: CapTier = 'large_cap')
     bear_breakdown: bbResult,
     keltner_mean_reversion: kmrResult,
     volume_dry_up: vduResult,
+    bucket,
   };
 }
 
@@ -547,29 +553,29 @@ export interface VduGridEntry {
 /**
  * Generate VDU parameter grid entries for walk-forward tuning.
  */
-export function* generateVduGrid(tier: CapTier = 'large_cap'): Iterable<VduGridEntry> {
+export function* generateVduGrid(bucket: VolatilityBucket = 'medium'): Iterable<VduGridEntry> {
   const consolidation_windows = [10, 12, 15, 18, 20];
 
-  const maxRangePcts: Record<CapTier, number[]> = {
-    large_cap: [4, 5, 6, 7, 8],
-    mid_cap: [5, 6, 7, 8, 10, 12],
-    small_cap: [6, 8, 10, 12, 15],
+  const maxRangePcts: Record<VolatilityBucket, number[]> = {
+    low: [4, 5, 6, 7, 8],
+    medium: [5, 6, 7, 8, 10, 12],
+    high: [6, 8, 10, 12, 15],
   };
-  const volumeThresholdActives: Record<CapTier, number[]> = {
-    large_cap: [0.45, 0.55, 0.65, 0.75],
-    mid_cap: [0.45, 0.55, 0.65, 0.75, 0.85],
-    small_cap: [0.35, 0.40, 0.45, 0.55, 0.65],
+  const volumeThresholdActives: Record<VolatilityBucket, number[]> = {
+    low: [0.45, 0.55, 0.65, 0.75],
+    medium: [0.45, 0.55, 0.65, 0.75, 0.85],
+    high: [0.35, 0.40, 0.45, 0.55, 0.65],
   };
-  const volumeThresholdNears: Record<CapTier, number[]> = {
-    large_cap: [0.60, 0.70, 0.80],
-    mid_cap: [0.60, 0.70, 0.80, 0.90],
-    small_cap: [0.50, 0.60, 0.70, 0.80],
+  const volumeThresholdNears: Record<VolatilityBucket, number[]> = {
+    low: [0.60, 0.70, 0.80],
+    medium: [0.60, 0.70, 0.80, 0.90],
+    high: [0.50, 0.60, 0.70, 0.80],
   };
 
-  const max_range_pcts = maxRangePcts[tier];
+  const max_range_pcts = maxRangePcts[bucket];
   const atr_ratio_thresholds = [0.80, 0.90, 1.0, 1.2, 1.5];
-  const volume_threshold_actives = volumeThresholdActives[tier];
-  const volume_threshold_nears = volumeThresholdNears[tier];
+  const volume_threshold_actives = volumeThresholdActives[bucket];
+  const volume_threshold_nears = volumeThresholdNears[bucket];
   const volume_threshold_formings = [0.80, 0.85, 0.90, 0.95];
   const min_declining_days_arr = [2, 3, 4];
   const r_multiples = [2.0, 3.0];

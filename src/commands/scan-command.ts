@@ -16,7 +16,6 @@ import { successResult, errorResult } from '../command-router.js';
 import type { CommandHandler } from '../command-router.js';
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import { loadStrategyProfile } from '../data/profile-store.js';
-import type { StrategyProfile } from '../data/profile-store.js';
 import { detectSignal } from '../strategies/signal-detector.js';
 import type { DetectSignalOptions } from '../strategies/signal-detector.js';
 import type { SignalOutput } from '../strategies/strategy-registry.js';
@@ -38,7 +37,7 @@ import type { Bar } from '../indicators/candlestick-scorer.js';
 import { computeLineage } from '../indicators/signal-lineage.js';
 import type { SignalLineage } from '../indicators/signal-lineage.js';
 import { resolveUniverse, VALID_UNIVERSES } from '../utils/universe.js';
-import type { CapTier } from '../utils/universe.js';
+import type { UniverseValue } from '../utils/universe.js';
 import { FundamentalsProvider } from '../data/fundamentals-provider.js';
 import { applyFundamentalAdjustment } from '../indicators/fundamental-scorer.js';
 import type { FundamentalData } from '../types.js';
@@ -169,22 +168,7 @@ function resolveTickerList(tickersArg: string, dataDir: string, watchlistFile: s
   return tickersArg.split(',').map(t => t.trim().toUpperCase()).filter(t => t.length > 0);
 }
 
-// ============================================================
-// Profile Scoping — Universe-aware profile filtering
-// ============================================================
 
-/**
- * Check if a strategy profile is scoped to the active universe.
- * Legacy profiles (no cap_tier field) are accepted for any universe.
- * Profiles with a defined cap_tier must match the active universe.
- */
-export function isProfileScopedToUniverse(
-  profile: StrategyProfile,
-  activeUniverse: CapTier
-): boolean {
-  if (profile.cap_tier === undefined) return true;
-  return profile.cap_tier === activeUniverse;
-}
 
 // ============================================================
 // Open Positions Processing
@@ -401,7 +385,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
     // Handle --universe all: iterate over defined tiers, scan each independently, merge results
     if (universeArg === 'all') {
-      const universesToScan: CapTier[] = ['large_cap', 'mid_cap'];
+      const universesToScan: UniverseValue[] = ['large_cap', 'mid_cap'];
       const allResults: Record<string, unknown>[] = [];
       const allWarnings: string[] = [];
 
@@ -437,7 +421,8 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         let regimeStateMap: Map<string, RegimeState> | undefined;
 
         if (regimeFlag && regimeDetector) {
-          regimeResult = await regimeDetector.detect(tickers);
+          const universeDetector = new RegimeDetector({ cachingProvider, cacheDir: dataDir, universeSuffix: tier });
+          regimeResult = await universeDetector.detect(tickers);
           regimeStateMap = new Map<string, RegimeState>();
           for (const state of regimeResult.tickers) {
             regimeStateMap.set(state.ticker, state);
@@ -458,7 +443,6 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
             allowStale,
             cachingProvider,
             dataDir,
-            activeUniverse: tier,
           });
 
           // Annotate signals with regime state + RS confidence adjustment
@@ -562,7 +546,8 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     let regimeStateMap: Map<string, RegimeState> | undefined;
 
     if (regimeFlag && regimeDetector) {
-      regimeResult = await regimeDetector.detect(tickers);
+      const universeDetector = new RegimeDetector({ cachingProvider, cacheDir: dataDir, universeSuffix: universeArg ?? 'large_cap' });
+      regimeResult = await universeDetector.detect(tickers);
       regimeStateMap = new Map<string, RegimeState>();
       for (const state of regimeResult.tickers) {
         regimeStateMap.set(state.ticker, state);
@@ -586,7 +571,6 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         allowStale,
         cachingProvider,
         dataDir,
-        activeUniverse: universeResult.capTier,
       });
 
       // Annotate signals with regime state + RS confidence adjustment if available
@@ -754,16 +738,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
               continue;
             }
 
-            // Profile scoping: check cap_tier matches active universe
-            if (!isProfileScopedToUniverse(profileResult.data, universeResult.capTier)) {
-              process.stderr.write(
-                `[WARN] Skipping profile for ${ticker}: profile cap_tier '${profileResult.data.cap_tier}' does not match active universe '${universeResult.capTier}'. Re-tune with --universe ${universeResult.capTier}.\n`
-              );
-              // Use default params for this ticker's signal detection
-              params = {};
-            } else {
-              params = profileResult.data.params;
-            }
+            params = profileResult.data.params;
           }
 
           const signal = detectSignal(dataPoints, params, strat, signalOptions);

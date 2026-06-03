@@ -33,7 +33,7 @@ import { generateChartHtml, generateCombinedChartHtml, getChartFilePath } from '
 import { writeFileSync, readFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { buildConfig, buildV2Config, generateV2Grid, generateConsolidationBreakoutGrid, buildConsolidationBreakoutConfig } from './strategies/parameter-grid.js';
-import type { CapTier, ConsolidationBreakoutGridEntry } from './strategies/parameter-grid.js';
+import type { ConsolidationBreakoutGridEntry } from './strategies/parameter-grid.js';
 import { evaluateV3Configuration, splitData } from './pipeline/walk-forward-validator.js';
 import { StrategyRegistry } from './strategies/strategy-registry.js';
 import { ConsolidationBreakoutStrategy } from './strategies/consolidation-breakout-strategy.js';
@@ -41,7 +41,7 @@ import { BearBreakdownStrategy } from './strategies/bear-breakdown-strategy.js';
 import { PostEarningsDriftStrategy } from './strategies/post-earnings-drift-strategy.js';
 import { KeltnerMeanReversionStrategy } from './strategies/keltner-mean-reversion-strategy.js';
 import { VduEngine } from './strategies/vdu-engine.js';
-import { createTuneHandler, parseCapTier } from './commands/tune-command.js';
+import { createTuneHandler } from './commands/tune-command.js';
 import { resolveUniverse, VALID_UNIVERSES } from './utils/universe.js';
 import { createScanHandler } from './commands/scan-command.js';
 import { createChartHandler } from './commands/chart-command.js';
@@ -427,7 +427,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
     // Handle --universe all: iterate over defined tiers, backtest each independently
     if (universeArg === 'all') {
-      const universesToBacktest: CapTier[] = ['large_cap', 'mid_cap'];
+      const universesToBacktest = ['large_cap', 'mid_cap'] as const;
       const allResults: Record<string, unknown>[] = [];
       const allWarnings: string[] = [];
 
@@ -454,7 +454,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
           continue;
         }
 
-        // If --ticker is also provided, use only that ticker but with this tier's capTier
+        // If --ticker is also provided, use only that ticker within this universe
         if (opts['ticker']) {
           tickers = [opts['ticker'].toUpperCase()];
         }
@@ -514,7 +514,6 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     if ('error' in universeResult) {
       return errorResult('backtest', 'INVALID_PARAM_RANGE', universeResult.error);
     }
-    const resolvedCapTier: CapTier = universeResult.capTier;
 
     // When --universe provided without --ticker, load ticker list from resolved watchlist
     if (!opts['ticker'] && universeArg !== undefined) {
@@ -573,7 +572,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
       }
 
       return successResult('backtest', {
-        universe: resolvedCapTier,
+        universe: universeArg ?? 'large_cap',
         results,
         warnings: warnings.length > 0 ? warnings : undefined,
         v3: true,
@@ -1189,13 +1188,6 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
       const period = '5y';
       const forceTune = opts['force'] !== undefined;
 
-      // Validate --cap-tier flag
-      const tierResult = parseCapTier(opts['cap-tier']);
-      if (typeof tierResult === 'object' && 'error' in tierResult) {
-        return errorResult('tune-and-chart', 'INVALID_PARAM_RANGE', tierResult.error);
-      }
-      const tier: CapTier = tierResult;
-
       try {
         // Step 1: Fetch data
         let dataResult;
@@ -1246,7 +1238,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
 
         if (!tuningSkipped) {
           // Run full tuning
-          const v3TuneResult = tuneV3(dataPoints, tier);
+          const v3TuneResult = tuneV3(dataPoints);
 
           cbTuneResult = v3TuneResult.consolidation_breakout;
           tpTuneResult = v3TuneResult.trend_pullback;
@@ -1327,7 +1319,6 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
               },
               last_tuned_at: lastTunedAt,
               valid_until: validUntil,
-              ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
             };
             saveStrategyProfile(cbProfile, dataDir);
           }
@@ -1348,7 +1339,6 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
               },
               last_tuned_at: lastTunedAt,
               valid_until: validUntil,
-              ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
             };
             saveStrategyProfile(tpProfile, dataDir);
           }
@@ -1369,7 +1359,6 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
               },
               last_tuned_at: lastTunedAt,
               valid_until: validUntil,
-              ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
             };
             saveStrategyProfile(bbProfile, dataDir);
           }
@@ -1390,7 +1379,6 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
               },
               last_tuned_at: lastTunedAt,
               valid_until: validUntil,
-              ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
             };
             saveStrategyProfile(kmrProfile, dataDir);
           }
@@ -1411,7 +1399,6 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
               },
               last_tuned_at: lastTunedAt,
               valid_until: validUntil,
-              ...(tier !== 'large_cap' ? { cap_tier: tier } : {}),
             };
             saveStrategyProfile(vduProfile, dataDir);
           }
@@ -1701,7 +1688,6 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     if ('error' in universeResult) {
       return errorResult('tune-pipeline', 'INVALID_PARAM_RANGE', universeResult.error);
     }
-    const tier: CapTier = universeResult.capTier;
 
     // Resolve ticker list to determine if we should use parallel execution
     const tickers = resolveV3TickerList(tickersArg, dataDir);
@@ -1723,7 +1709,6 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         runBacktest: false,
         cachingProvider,
         dataDir,
-        tier,
       });
 
       return successResult('tune-pipeline', batchResult);
@@ -1755,7 +1740,6 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
     if ('error' in universeResult) {
       return errorResult('v3', 'INVALID_PARAM_RANGE', universeResult.error);
     }
-    const tier: CapTier = universeResult.capTier;
 
     // Resolve ticker list: 'top100' loads from data/top100.json, comma-separated splits
     const tickers = resolveV3TickerList(tickerArg, dataDir);
@@ -1777,7 +1761,6 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
         runBacktest: true,
         cachingProvider,
         dataDir,
-        tier,
       });
 
       return successResult('v3', batchResult);

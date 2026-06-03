@@ -1,12 +1,7 @@
-// Re-export CapTier locally to avoid circular dependency with parameter-grid.ts
-// This type is identical to the one in parameter-grid.ts
-export type CapTier = 'large_cap' | 'mid_cap' | 'small_cap';
-
-export type UniverseValue = 'large_cap' | 'mid_cap' | 'small_cap';
+export type UniverseValue = 'large_cap' | 'mid_cap' | 'small_cap' | 'tech';
 
 export interface UniverseResolution {
   watchlistFile: string;
-  capTier: CapTier;
 }
 
 export interface UniverseError {
@@ -16,15 +11,16 @@ export interface UniverseError {
 export type UniverseResult = UniverseResolution | UniverseError;
 
 const UNIVERSE_MAP: Record<UniverseValue, UniverseResolution> = {
-  large_cap: { watchlistFile: 'watchlist.json', capTier: 'large_cap' },
-  mid_cap: { watchlistFile: 'watchlist-midcap.json', capTier: 'mid_cap' },
-  small_cap: { watchlistFile: 'watchlist-smallcap.json', capTier: 'small_cap' },
+  large_cap: { watchlistFile: 'watchlist.json' },
+  mid_cap: { watchlistFile: 'watchlist-midcap.json' },
+  small_cap: { watchlistFile: 'watchlist-smallcap.json' },
+  tech: { watchlistFile: 'watchlist-tech.json' },
 };
 
-export const VALID_UNIVERSES: UniverseValue[] = ['large_cap', 'mid_cap', 'small_cap'];
+export const VALID_UNIVERSES: UniverseValue[] = ['large_cap', 'mid_cap', 'small_cap', 'tech'];
 
 /**
- * Resolve a --universe flag value to watchlist file and CapTier.
+ * Resolve a --universe flag value to its watchlist file.
  * Returns an error object for invalid values.
  * Defaults to 'large_cap' when undefined.
  */
@@ -45,14 +41,15 @@ const SIGNAL_HISTORY_MAP: Record<UniverseValue, string> = {
   large_cap: 'signal-history.ndjson',
   mid_cap: 'signal-history-midcap.ndjson',
   small_cap: 'signal-history-smallcap.ndjson',
+  tech: 'signal-history-tech.ndjson',
 };
 
 /**
  * Resolve the signal history filename for a given universe.
- * Defaults to large_cap when capTier is not a valid universe.
+ * Defaults to large_cap when universe is not a valid value.
  */
-export function resolveSignalHistoryFile(capTier: CapTier): string {
-  return SIGNAL_HISTORY_MAP[capTier] ?? SIGNAL_HISTORY_MAP.large_cap;
+export function resolveSignalHistoryFile(universe: UniverseValue): string {
+  return SIGNAL_HISTORY_MAP[universe] ?? SIGNAL_HISTORY_MAP.large_cap;
 }
 
 /**

@@ -469,3 +469,23 @@ export function obvSlope(dataPoints: HistoricalDataPoint[], lookback: number): b
 
   return obvSeries[last] > obvSeries[last - lookback];
 }
+
+/**
+ * Compute ATR as a percentage of the latest closing price.
+ * ATR% = ATR(14) / lastClose × 100
+ *
+ * Returns null when:
+ * - data has fewer than 15 points (ATR(14) needs period + 1)
+ * - last closing price is 0 (division by zero)
+ */
+export function computeAtrPct(data: HistoricalDataPoint[]): number | null {
+  if (data.length < 15) return null;
+
+  const lastClose = data[data.length - 1].close;
+  if (lastClose === 0) return null;
+
+  const atrValue = atr(data, 14);
+  if (atrValue === undefined) return null;
+
+  return (atrValue / lastClose) * 100;
+}

@@ -17,6 +17,7 @@ import { extractSignalEntry } from './extractor.js';
 import type { ScanOutput } from './extractor.js';
 import { upsertSignalEntry } from './upsert.js';
 import { resolveUniverse, resolveSignalHistoryFile } from '../utils/universe.js';
+import type { UniverseValue } from '../utils/universe.js';
 
 // ============================================================
 // Dependencies
@@ -52,7 +53,7 @@ export function createSignalHistoryHandler(deps: SignalHistoryCommandDeps): Comm
       process.stderr.write(`[signal-history] Error: ${universeResult.error}\n`);
       return errorResult('signal-history', 'INVALID_PARAM_RANGE', universeResult.error);
     }
-    const historyFilename = resolveSignalHistoryFile(universeResult.capTier);
+    const historyFilename = resolveSignalHistoryFile(opts['universe'] as UniverseValue ?? 'large_cap');
 
     // --scan-output is required
     if (!scanOutputPath) {
