@@ -4,14 +4,22 @@
 # Remove with: crontab -r
 #
 # Note: Times are in local system timezone. Adjust if your Mac isn't set to ET.
-# 9:30 AM ET = market open (Mon-Fri)
-# 9:00 AM ET = Sunday tune
+# 4:30 PM ET = large_cap daily scan (Mon-Fri)
+# 4:45 PM ET = tech daily scan (Mon-Fri, after large_cap for warm OHLCV cache)
+# 9:00 AM ET = Sunday large_cap tune
+# 11:00 AM ET = Sunday tech tune (after large_cap tune)
 
-# Daily scan at 9:30 AM, Monday through Friday
-30 9 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/daily-scan.sh
+# Daily scan (large_cap) at 4:30 PM ET, Monday through Friday
+30 16 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/daily-scan.sh
 
-# Weekly tune at 9:00 AM on Sunday
+# Daily scan (tech) at 4:45 PM ET, Monday through Friday
+45 16 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/daily-scan-tech.sh
+
+# Weekly tune (large_cap) at 9:00 AM on Sunday
 0 9 * * 0 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/weekly-tune.sh
+
+# Weekly tune (tech) at 11:00 AM ET on Sunday
+0 11 * * 0 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/weekly-tune-tech.sh
 
 # Signal check at 10:00 AM ET, Monday through Friday
 0 10 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/signal-check.sh

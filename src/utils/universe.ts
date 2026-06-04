@@ -53,8 +53,21 @@ export function resolveSignalHistoryFile(universe: UniverseValue): string {
 }
 
 /**
- * Validate that no ticker appears in more than one watchlist.
- * Returns an error if duplicates are found.
+ * Check whether a universe pair is allowed to share tickers.
+ * Per Requirement 1.7, tech and large_cap may overlap.
+ */
+function isOverlapPermitted(a: UniverseValue, b: UniverseValue): boolean {
+  return (
+    (a === 'tech' && b === 'large_cap') ||
+    (a === 'large_cap' && b === 'tech')
+  );
+}
+
+/**
+ * Validate that no ticker appears in more than one watchlist,
+ * unless the overlap is between the tech and large_cap universes
+ * (which is permitted per Requirement 1.7).
+ * Returns an error if non-permitted duplicates are found.
  */
 export function validateUniverseExclusivity(
   watchlists: { universe: UniverseValue; tickers: string[] }[]
@@ -66,7 +79,9 @@ export function validateUniverseExclusivity(
     for (const ticker of tickers) {
       const existing = seen.get(ticker);
       if (existing) {
-        duplicates.push({ ticker, universes: [existing, universe] });
+        if (!isOverlapPermitted(existing, universe)) {
+          duplicates.push({ ticker, universes: [existing, universe] });
+        }
       } else {
         seen.set(ticker, universe);
       }

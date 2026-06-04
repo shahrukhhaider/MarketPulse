@@ -494,6 +494,32 @@ export function readDiscordWebhookUrl(basePath: string): string | null {
   return trimmed;
 }
 
+// --- Tech Webhook URL Reader ---
+
+export function readDiscordWebhookTechUrl(basePath: string): string | null {
+  const filePath = path.join(basePath, '.stock-tracker', 'discord-webhook-tech.txt');
+
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, 'utf-8');
+  } catch (err: unknown) {
+    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+      process.stderr.write(`[discord-notify] Tech webhook file not found: ${filePath}\n`);
+    } else {
+      process.stderr.write(`[discord-notify] Cannot read tech webhook file: ${filePath}\n`);
+    }
+    return null;
+  }
+
+  const trimmed = content.trim();
+  if (trimmed.length === 0) {
+    process.stderr.write(`[discord-notify] Tech webhook URL is empty: ${filePath}\n`);
+    return null;
+  }
+
+  return trimmed;
+}
+
 // --- Chart Toggle ---
 
 /**
@@ -613,9 +639,9 @@ export async function postMultipartToDiscord(
 // --- Main Entry Point ---
 
 async function main(): Promise<void> {
-  // 1. Read webhook URL — exit 0 if null (no stdout, no further operations)
-  const webhookUrl = readDiscordWebhookUrl(process.cwd());
-  if (webhookUrl === null) {
+  // 1. Read webhook URL — prefer DISCORD_WEBHOOK_URL env var, then fall back to file
+  const webhookUrl = process.env.DISCORD_WEBHOOK_URL?.trim() || readDiscordWebhookUrl(process.cwd());
+  if (webhookUrl === null || webhookUrl === '') {
     process.exit(0);
   }
 
