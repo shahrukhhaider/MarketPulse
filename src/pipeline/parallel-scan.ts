@@ -25,6 +25,7 @@ import { createProgressReporter } from '../formatters/progress-reporter.js';
 import type { HistoricalDataPoint } from '../types.js';
 import { computeConfluence } from '../indicators/confluence-calculator.js';
 import { computeRvol } from './rvol.js';
+import { V3_STRATEGIES } from '../strategies/v3-strategies.js';
 
 
 // ============================================================
@@ -58,11 +59,11 @@ function generateTaskId(taskType: string, ticker: string, strategy: string): str
 
 /**
  * Resolve which strategies to scan based on the strategyName option.
- * 'v3' expands to both consolidation_breakout and trend_pullback.
+ * 'v3' expands to all V3_STRATEGIES (6 strategies).
  */
 function resolveStrategies(strategyName: string): string[] {
   if (strategyName === 'v3') {
-    return ['consolidation_breakout', 'trend_pullback', 'bear_breakdown', 'post_earnings_drift', 'keltner_mean_reversion', 'volume_dry_up'];
+    return [...V3_STRATEGIES];
   }
   return [strategyName];
 }

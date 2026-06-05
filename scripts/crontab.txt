@@ -10,16 +10,16 @@
 # 11:00 AM ET = Sunday tech tune (after large_cap tune)
 
 # Daily scan (large_cap) at 4:30 PM ET, Monday through Friday
-30 16 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/daily-scan.sh
+30 16 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/daily-scan.sh large_cap
 
 # Daily scan (tech) at 4:45 PM ET, Monday through Friday
-45 16 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/daily-scan-tech.sh
+45 16 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/daily-scan.sh tech
 
 # Weekly tune (large_cap) at 9:00 AM on Sunday
-0 9 * * 0 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/weekly-tune.sh
+0 9 * * 0 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/weekly-tune.sh large_cap
 
 # Weekly tune (tech) at 11:00 AM ET on Sunday
-0 11 * * 0 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/weekly-tune-tech.sh
+0 11 * * 0 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/weekly-tune.sh tech
 
 # Signal check at 10:00 AM ET, Monday through Friday
 0 10 * * 1-5 /Users/haidex/Documents/projects/liveTrack/stock-price-tracker/scripts/signal-check.sh

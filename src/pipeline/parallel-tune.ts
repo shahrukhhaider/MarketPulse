@@ -12,16 +12,14 @@
 import { join } from 'node:path';
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import type { TuneSummary, TuneBatchResult } from '../commands/tune-command.js';
-import type { V3TuneResult, TuneResult } from './pipeline-functions.js';
+import type { V3TuneResult } from './pipeline-functions.js';
 import { tuneV3, backtestV3, renderChart } from './pipeline-functions.js';
-import { saveStrategyProfile, computeExpiry } from '../data/profile-store.js';
-import type { StrategyProfile, WalkForwardMetrics } from '../data/profile-store.js';
-import type { TuningPerformanceMetrics } from './tuning-engine.js';
 import { WorkerPool } from './worker-pool.js';
 import type { WorkerTask, WorkerResult } from './worker-pool.js';
 import { fetchHistoricalDataStream } from '../data/data-fetcher.js';
 import { createProgressReporter } from '../formatters/progress-reporter.js';
 import type { HistoricalDataPoint } from '../types.js';
+import { buildStrategySummary, toWalkForwardMetrics } from './strategy-summary.js';
 
 
 // ============================================================
@@ -37,91 +35,6 @@ export interface ParallelTuneOptions {
   runBacktest: boolean;
   cachingProvider: HistoricalDataCache;
   dataDir: string;
-}
-
-// ============================================================
-// Internal Helpers
-// ============================================================
-
-function toWalkForwardMetrics(m: TuningPerformanceMetrics): WalkForwardMetrics {
-  return {
-    return: m.totalReturnPercent,
-    benchmark: 0,
-    win_rate: m.winRate,
-    trades: m.tradeCount,
-    max_drawdown: m.maxDrawdownPercent,
-    sharpe: m.sharpeRatio,
-  };
-}
-
-function buildStrategySummary(
-  ticker: string,
-  strategyName: string,
-  result: TuneResult | { error: string },
-  shouldSave: boolean,
-  dataDir: string,
-): TuneSummary {
-  if ('error' in result) {
-    const errorMsg = result.error;
-    const isInsufficientData = errorMsg.toLowerCase().includes('insufficient data');
-    const isNoViable = errorMsg.toLowerCase().includes('no viable');
-
-    if (isInsufficientData) {
-      return {
-        ticker,
-        strategy: strategyName,
-        status: 'insufficient_data',
-        profile_saved: false,
-        error_message: errorMsg,
-      };
-    } else if (isNoViable) {
-      return {
-        ticker,
-        strategy: strategyName,
-        status: 'no_viable_configs',
-        profile_saved: false,
-        error_message: errorMsg,
-      };
-    } else {
-      return {
-        ticker,
-        strategy: strategyName,
-        status: 'error',
-        profile_saved: false,
-        error_message: errorMsg,
-      };
-    }
-  }
-
-  // Successful tune — save profile if requested
-  let profileSaved = false;
-
-  if (shouldSave) {
-    const lastTunedAt = new Date().toISOString();
-    const validUntil = computeExpiry(lastTunedAt);
-
-    const profile: StrategyProfile = {
-      ticker,
-      strategy: strategyName,
-      params: result.bestParams,
-      walk_forward_metrics: toWalkForwardMetrics(result.oosMetrics),
-      last_tuned_at: lastTunedAt,
-      valid_until: validUntil,
-    };
-
-    const saveResult = saveStrategyProfile(profile, dataDir);
-    profileSaved = saveResult.success;
-  }
-
-  return {
-    ticker,
-    strategy: strategyName,
-    status: 'success',
-    in_sample: result.isMetrics,
-    out_of_sample: result.oosMetrics,
-    configurations_evaluated: result.configurationsEvaluated,
-    profile_saved: profileSaved,
-  };
 }
 
 function generateTaskId(taskType: string, ticker: string): string {

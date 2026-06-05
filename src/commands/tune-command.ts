@@ -6,9 +6,8 @@
 // --save (optional), --no-cache (optional).
 // ============================================================
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { successResult, errorResult } from '../command-router.js';
+import { resolveTickerList } from '../utils/ticker-resolver.js';
 import type { CommandHandler } from '../command-router.js';
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import type { StrategyRegistry } from '../strategies/strategy-registry.js';
@@ -18,6 +17,7 @@ import { saveStrategyProfile, computeExpiry } from '../data/profile-store.js';
 import type { StrategyProfile, WalkForwardMetrics } from '../data/profile-store.js';
 import type { TuningPerformanceMetrics } from '../pipeline/tuning-engine.js';
 import { resolveUniverse } from '../utils/universe.js';
+import { buildStrategySummary, toWalkForwardMetrics } from '../pipeline/strategy-summary.js';
 
 // ============================================================
 // Dependencies
@@ -52,55 +52,6 @@ export interface TuneBatchResult {
   skipped: number;
 }
 
-
-// ============================================================
-// Ticker Resolution — loads from universe-resolved watchlist or explicit list
-// ============================================================
-
-function resolveTickerList(
-  tickersArg: string | undefined,
-  dataDir: string,
-  watchlistFile: string = 'watchlist.json',
-): string[] | { error: string } {
-  // When --tickers is not provided, 'watchlist', or 'top100', load from universe-resolved watchlist
-  if (
-    tickersArg === undefined ||
-    tickersArg === '' ||
-    tickersArg.toLowerCase() === 'watchlist' ||
-    tickersArg.toLowerCase() === 'top100'
-  ) {
-    try {
-      const watchlistPath = join(dataDir, 'data', watchlistFile);
-      const content = readFileSync(watchlistPath, 'utf-8');
-      const parsed = JSON.parse(content) as { tickers?: string[] };
-      if (!Array.isArray(parsed.tickers) || parsed.tickers.length === 0) {
-        return { error: `Watchlist file '${watchlistFile}' at ${watchlistPath} is missing or has empty 'tickers' array` };
-      }
-      return parsed.tickers.map((t: string) => t.toUpperCase());
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      return { error: `Failed to load watchlist file '${watchlistFile}': ${message}` };
-    }
-  }
-
-  // Explicit ticker list provided — use as-is
-  return tickersArg.split(',').map(t => t.trim().toUpperCase()).filter(t => t.length > 0);
-}
-
-// ============================================================
-// Metrics Conversion
-// ============================================================
-
-function toWalkForwardMetrics(m: TuningPerformanceMetrics): WalkForwardMetrics {
-  return {
-    return: m.totalReturnPercent,
-    benchmark: 0,
-    win_rate: m.winRate,
-    trades: m.tradeCount,
-    max_drawdown: m.maxDrawdownPercent,
-    sharpe: m.sharpeRatio,
-  };
-}
 
 // ============================================================
 // createTuneHandler
@@ -341,25 +292,25 @@ async function handleV3Tune(
       const v3Result: V3TuneResult = tuneV3(dataPoints);
 
       // Process consolidation_breakout result
-      const cbSummary = buildV3StrategySummary(
+      const cbSummary = buildStrategySummary(
         ticker, 'consolidation_breakout', v3Result.consolidation_breakout, shouldSave, dataDir
       );
       summaries.push(cbSummary);
 
       // Process trend_pullback result
-      const tpSummary = buildV3StrategySummary(
+      const tpSummary = buildStrategySummary(
         ticker, 'trend_pullback', v3Result.trend_pullback, shouldSave, dataDir
       );
       summaries.push(tpSummary);
 
       // Process bear_breakdown result
-      const bbSummary = buildV3StrategySummary(
+      const bbSummary = buildStrategySummary(
         ticker, 'bear_breakdown', v3Result.bear_breakdown, shouldSave, dataDir
       );
       summaries.push(bbSummary);
 
       // Process keltner_mean_reversion result
-      const kmrSummary = buildV3StrategySummary(
+      const kmrSummary = buildStrategySummary(
         ticker, 'keltner_mean_reversion', v3Result.keltner_mean_reversion, shouldSave, dataDir
       );
       summaries.push(kmrSummary);
@@ -424,78 +375,4 @@ async function handleV3Tune(
   };
 
   return successResult('tune', batchResult);
-}
-
-// ============================================================
-// buildV3StrategySummary — Build a TuneSummary from a single strategy's TuneResult
-// ============================================================
-
-function buildV3StrategySummary(
-  ticker: string,
-  strategyName: string,
-  result: TuneResult | { error: string },
-  shouldSave: boolean,
-  dataDir: string,
-): TuneSummary {
-  if ('error' in result) {
-    const errorMsg = result.error;
-    const isInsufficientData = errorMsg.toLowerCase().includes('insufficient data');
-    const isNoViable = errorMsg.toLowerCase().includes('no viable');
-
-    if (isInsufficientData) {
-      return {
-        ticker,
-        strategy: strategyName,
-        status: 'insufficient_data',
-        profile_saved: false,
-        error_message: errorMsg,
-      };
-    } else if (isNoViable) {
-      return {
-        ticker,
-        strategy: strategyName,
-        status: 'no_viable_configs',
-        profile_saved: false,
-        error_message: errorMsg,
-      };
-    } else {
-      return {
-        ticker,
-        strategy: strategyName,
-        status: 'error',
-        profile_saved: false,
-        error_message: errorMsg,
-      };
-    }
-  }
-
-  // Successful tune
-  let profileSaved = false;
-
-  if (shouldSave) {
-    const lastTunedAt = new Date().toISOString();
-    const validUntil = computeExpiry(lastTunedAt);
-
-    const profile: StrategyProfile = {
-      ticker,
-      strategy: strategyName,
-      params: result.bestParams,
-      walk_forward_metrics: toWalkForwardMetrics(result.oosMetrics),
-      last_tuned_at: lastTunedAt,
-      valid_until: validUntil,
-    };
-
-    const saveResult = saveStrategyProfile(profile, dataDir);
-    profileSaved = saveResult.success;
-  }
-
-  return {
-    ticker,
-    strategy: strategyName,
-    status: 'success',
-    in_sample: result.isMetrics,
-    out_of_sample: result.oosMetrics,
-    configurations_evaluated: result.configurationsEvaluated,
-    profile_saved: profileSaved,
-  };
 }

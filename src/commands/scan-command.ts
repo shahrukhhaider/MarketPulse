@@ -19,6 +19,7 @@ import { loadStrategyProfile } from '../data/profile-store.js';
 import { detectSignal } from '../strategies/signal-detector.js';
 import type { DetectSignalOptions } from '../strategies/signal-detector.js';
 import type { SignalOutput } from '../strategies/strategy-registry.js';
+import { V3_STRATEGIES } from '../strategies/v3-strategies.js';
 import { parallelScan } from '../pipeline/parallel-scan.js';
 import { runPipeline } from '../pipeline/signal-pipeline.js';
 import { RegimeDetector } from '../indicators/regime-detector.js';
@@ -41,6 +42,7 @@ import type { UniverseValue } from '../utils/universe.js';
 import { FundamentalsProvider } from '../data/fundamentals-provider.js';
 import { applyFundamentalAdjustment } from '../indicators/fundamental-scorer.js';
 import type { FundamentalData } from '../types.js';
+import { resolveTickerList } from '../utils/ticker-resolver.js';
 
 // ============================================================
 // Dependencies
@@ -143,29 +145,6 @@ function applyCandlestickAdjustment(signal: SignalOutput, bars: Bar[]): SignalOu
     // Retain original confidence on error
     return signal;
   }
-}
-
-// ============================================================
-// Top-100 Ticker Resolution
-// ============================================================
-
-function resolveTickerList(tickersArg: string, dataDir: string, watchlistFile: string = 'watchlist.json'): string[] | { error: string } {
-  if (tickersArg.toLowerCase() === 'watchlist' || tickersArg.toLowerCase() === 'top100') {
-    try {
-      const watchlistPath = join(dataDir, 'data', watchlistFile);
-      const content = readFileSync(watchlistPath, 'utf-8');
-      const parsed = JSON.parse(content) as { tickers?: string[] };
-      if (!Array.isArray(parsed.tickers) || parsed.tickers.length === 0) {
-        return { error: `Watchlist file '${watchlistFile}' at ${watchlistPath} is missing or has empty 'tickers' array` };
-      }
-      return parsed.tickers.map((t: string) => t.toUpperCase());
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      return { error: `Failed to load watchlist file '${watchlistFile}': ${message}` };
-    }
-  }
-
-  return tickersArg.split(',').map(t => t.trim().toUpperCase()).filter(t => t.length > 0);
 }
 
 
@@ -298,7 +277,7 @@ async function runSingleTickerScan(
       }
       const dataPoints = dataResult.data.dataPoints;
       const strategiesToScan = strategyName === 'v3'
-        ? ['consolidation_breakout', 'trend_pullback', 'bear_breakdown', 'post_earnings_drift', 'keltner_mean_reversion']
+        ? [...V3_STRATEGIES]
         : [strategyName];
 
       for (const strat of strategiesToScan) {
@@ -700,7 +679,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
         // Determine which strategies to scan
         const strategiesToScan = strategyName === 'v3'
-          ? ['consolidation_breakout', 'trend_pullback', 'bear_breakdown', 'post_earnings_drift', 'keltner_mean_reversion']
+          ? [...V3_STRATEGIES]
           : [strategyName];
 
         for (const strat of strategiesToScan) {
