@@ -33,6 +33,8 @@
     "signal-charts": "npx --yes tsx scripts/generate-signal-charts.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "discord.js": "^14.16.0",
     "express": "^4.21.0",
     "lightweight-charts": "^5.2.0",
     "node-cron": "^3.0.3",

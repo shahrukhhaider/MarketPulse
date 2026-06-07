@@ -2,6 +2,7 @@ import express from 'express';
 import cron from 'node-cron';
 import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
+import { initDiscordBot } from './discord-bot/index.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -257,6 +258,14 @@ app.get('/health', (_req, res) => {
 
 const server = app.listen(PORT, () => {
   log('worker', `Health check server listening on port ${PORT}`);
+});
+
+// ---------------------------------------------------------------------------
+// Discord bot (non-blocking — failure does not crash worker)
+// ---------------------------------------------------------------------------
+
+initDiscordBot().catch((err) => {
+  console.error('[worker] Discord bot init failed:', err instanceof Error ? err.message : String(err));
 });
 
 // ---------------------------------------------------------------------------
