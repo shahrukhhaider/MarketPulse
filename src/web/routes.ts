@@ -24,6 +24,26 @@ function setCommonHeaders(res: Response): void {
   res.set('Access-Control-Allow-Origin', '*');
 }
 
+/**
+ * Reads the last daily change % for a ticker from history-cache.
+ * Returns null if data is unavailable.
+ */
+function getLastDailyChange(stockTrackerHome: string, ticker: string): number | null {
+  const cachePath = path.join(stockTrackerHome, '.stock-tracker', 'history-cache', `${ticker}.json`);
+  try {
+    const raw = fs.readFileSync(cachePath, 'utf-8');
+    const data = JSON.parse(raw);
+    const points: Array<{ close: number }> = data.dataPoints ?? data.quotes ?? data;
+    if (!Array.isArray(points) || points.length < 2) return null;
+    const last = points[points.length - 1];
+    const prev = points[points.length - 2];
+    if (typeof last.close !== 'number' || typeof prev.close !== 'number' || prev.close === 0) return null;
+    return ((last.close - prev.close) / prev.close) * 100;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/market
 // ---------------------------------------------------------------------------
@@ -55,6 +75,8 @@ function handleMarket(stockTrackerHome: string) {
         breadth_label: market.breadth_label,
         spy_trend: mapTrend(market.spy_trend),
         qqq_trend: mapTrend(market.qqq_trend),
+        spy_change_pct: getLastDailyChange(stockTrackerHome, 'SPY'),
+        qqq_change_pct: getLastDailyChange(stockTrackerHome, 'QQQ'),
         exposure_tier: deriveExposureTier(market.market_mood, market.vix_regime),
         updated_at: data.computedAt,
       });
