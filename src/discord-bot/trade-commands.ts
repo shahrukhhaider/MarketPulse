@@ -138,7 +138,7 @@ async function handleTradeAdd(interaction: ChatInputCommandInteraction): Promise
     )
     .setColor(0x00c853);
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ embeds: [embed] });
 }
 
 // ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ async function handleTradeClose(interaction: ChatInputCommandInteraction): Promi
     )
     .setColor(pnl >= 0 ? 0x00c853 : 0xff1744);
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ embeds: [embed] });
 }
 
 // ---------------------------------------------------------------------------
@@ -248,5 +248,5 @@ async function handleTradePositions(interaction: ChatInputCommandInteraction): P
     content += '\n_Prices updated after 4:30 PM ET daily_';
   }
 
-  await interaction.reply({ content, ephemeral: true });
+  await interaction.reply({ content });
 }

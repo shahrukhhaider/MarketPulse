@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/cli.js",
+    "start": "node dist/src/cli.js",
     "start:worker": "node dist/src/worker.js",
     "test": "vitest run",
     "test:watch": "vitest",
