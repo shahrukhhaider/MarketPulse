@@ -1728,7 +1728,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   router.register('scan-chart', ['ticker', 'strategy'], scanChartHandler);
 
   // --- v3: shorthand for tune-and-chart --v3 --save (only requires --ticker) ---
-  // Supports: single ticker, comma-separated tickers, or --ticker top100
+  // Supports: single ticker, comma-separated tickers, or --ticker watchlist
   // Multi-ticker → parallelTune(); single ticker → existing tune-and-chart handler
   router.register('v3', ['ticker'], async (opts) => {
     // Parse --concurrency flag
@@ -1815,7 +1815,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
  * Supports: single ticker, comma-separated list, or 'watchlist' keyword.
  */
 function resolveV3TickerList(tickerArg: string, dataDir: string): string[] | { error: string } {
-  if (tickerArg.toLowerCase() === 'watchlist' || tickerArg.toLowerCase() === 'top100') {
+  if (tickerArg.toLowerCase() === 'watchlist') {
     try {
       // Look for watchlist.json in the data/ directory relative to CWD (project root)
       // Fallback: also check relative to dataDir

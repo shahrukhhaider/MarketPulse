@@ -2,7 +2,7 @@
 // Regime Command — Standalone regime detection CLI handler
 // ============================================================
 // Runs the RegimeDetector for all configured tickers plus SPY/QQQ.
-// Accepts --tickers (optional, defaults to top100 or configured list),
+// Accepts --tickers (optional, defaults to watchlist),
 // --json (raw JSON output), --st-period and --st-multiplier
 // (SuperTrend parameter overrides).
 // ============================================================
@@ -26,14 +26,14 @@ export interface RegimeCommandDeps {
 }
 
 // ============================================================
-// Top-100 Ticker Resolution
+// Ticker Resolution
 // ============================================================
 
 function resolveTickerList(tickersArg: string | undefined, dataDir: string): string[] | { error: string } {
   // If no tickers specified, default to watchlist
   const effectiveArg = tickersArg ?? 'watchlist';
 
-  if (effectiveArg.toLowerCase() === 'watchlist' || effectiveArg.toLowerCase() === 'top100') {
+  if (effectiveArg.toLowerCase() === 'watchlist') {
     try {
       const watchlistPath = join(dataDir, 'data', 'watchlist.json');
       const content = readFileSync(watchlistPath, 'utf-8');

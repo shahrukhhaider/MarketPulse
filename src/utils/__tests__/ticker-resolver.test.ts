@@ -66,10 +66,6 @@ describe('resolveTickerList', () => {
       expect(result).toEqual(['NVDA', 'AMD', 'INTC', 'AVGO']);
     });
 
-    it('"top100" behaves same as "watchlist" (loads default watchlist.json)', () => {
-      const result = resolveTickerList('top100', tempDataDir);
-      expect(result).toEqual(['AAPL', 'MSFT', 'GOOG', 'AMZN', 'TSLA']);
-    });
   });
 
   describe('comma-separated ticker parsing', () => {

@@ -4,7 +4,7 @@
 // Combines logic from scan-command.ts and tune-command.ts into a single
 // canonical implementation. Handles:
 //   - undefined/empty string → default to watchlist (tune-command behavior)
-//   - 'watchlist'/'top100' keywords → load universe-resolved watchlist JSON
+//   - 'watchlist' keyword → load universe-resolved watchlist JSON
 //   - comma-separated string → split, trim, uppercase, filter empty
 // ============================================================
 
@@ -24,12 +24,11 @@ export function resolveTickerList(
   dataDir: string,
   watchlistFile: string = 'watchlist.json',
 ): string[] | { error: string } {
-  // When --tickers is not provided, empty, 'watchlist', or 'top100', load from watchlist file
+  // When --tickers is not provided, empty, or 'watchlist', load from watchlist file
   if (
     tickersArg === undefined ||
     tickersArg === '' ||
-    tickersArg.toLowerCase() === 'watchlist' ||
-    tickersArg.toLowerCase() === 'top100'
+    tickersArg.toLowerCase() === 'watchlist'
   ) {
     try {
       const watchlistPath = join(dataDir, 'data', watchlistFile);

@@ -26,6 +26,7 @@ import { RegimeDetector } from '../indicators/regime-detector.js';
 import type { RegimeResult, RegimeState } from '../indicators/regime-detector.js';
 import { load as loadJournal } from '../journal/journal-store.js';
 import { JOURNAL_DEFAULTS } from '../journal/journal-types.js';
+import { autoJournal } from '../journal/auto-journal.js';
 import { EarningsDateProvider } from '../data/earnings-date-provider.js';
 import { DEFAULT_PEAD_CONFIG } from '../strategies/strategy-configs.js';
 import type { JournalEntry } from '../journal/journal-types.js';
@@ -472,8 +473,52 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         mergedSignals.push(...(r.signals as SignalOutput[]));
       }
 
+      // Auto-journal qualifying signals
+      const allJournalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
+      const autoJournalResult = autoJournal(mergedSignals, allJournalPath);
+      if (autoJournalResult.errors.length > 0) {
+        allWarnings.push(...autoJournalResult.errors);
+      }
+      if (autoJournalResult.entered.length > 0) {
+        const enteredTickers = autoJournalResult.entered.map(e => e.ticker).join(', ');
+        console.log(`[scan] Auto-journaled: ${enteredTickers}`);
+      }
+
       // Load open positions
       const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
+
+      // Scan dedup: suppress active/near signals for tickers already held in journal
+      const allJournalLoadForDedup = loadJournal(allJournalPath);
+      let dedupFilteredSignals = mergedSignals;
+      if (allJournalLoadForDedup.success) {
+        const openTickers = new Set(
+          allJournalLoadForDedup.data
+            .filter(e => e.status === 'open')
+            .map(e => e.ticker.toUpperCase())
+        );
+        if (openTickers.size > 0) {
+          const beforeCount = dedupFilteredSignals.length;
+          dedupFilteredSignals = mergedSignals.filter(s => {
+            if (s.signal === 'forming') return true; // keep forming signals
+            return !openTickers.has(s.ticker.toUpperCase());
+          });
+          const suppressedCount = beforeCount - dedupFilteredSignals.length;
+          if (suppressedCount > 0) {
+            const suppressedTickers = [...new Set(
+              mergedSignals
+                .filter(s => s.signal !== 'forming' && openTickers.has(s.ticker.toUpperCase()))
+                .map(s => s.ticker.toUpperCase())
+            )].join(', ');
+            console.log(`[scan] Suppressed ${suppressedCount} signals for tickers already in portfolio: ${suppressedTickers}`);
+          }
+        }
+      }
+
+      // Also filter within sections for consistent display
+      const filteredSections = sections.map(section => ({
+        ...section,
+        signals: section.signals.filter(s => dedupFilteredSignals.includes(s)),
+      }));
 
       // Compute journal total P&L
       const journalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
@@ -485,9 +530,9 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       }
 
       return successResult('scan', {
-        signals: mergedSignals,
-        processedSignals: runPipeline(mergedSignals),
-        sections,
+        signals: dedupFilteredSignals,
+        processedSignals: runPipeline(dedupFilteredSignals),
+        sections: filteredSections,
         warnings: [...allWarnings, ...positionsResult.warnings],
         total: allResults.reduce((sum, r) => sum + (r.total as number), 0),
         scanned: allResults.reduce((sum, r) => sum + (r.scanned as number), 0),
@@ -629,9 +674,47 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         }
       }
 
+      // Auto-journal qualifying signals (after all confidence adjustments)
+      const parallelJournalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
+      const parallelAutoJournalResult = autoJournal(fundamentalAnnotatedSignals, parallelJournalPath);
+      if (parallelAutoJournalResult.errors.length > 0) {
+        warnings.push(...parallelAutoJournalResult.errors);
+      }
+      if (parallelAutoJournalResult.entered.length > 0) {
+        const enteredTickers = parallelAutoJournalResult.entered.map(e => e.ticker).join(', ');
+        console.log(`[scan] Auto-journaled: ${enteredTickers}`);
+      }
+
       // Load and process open positions
       // Price data reuse happens transparently via the caching provider
       const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
+
+      // Scan dedup: suppress active/near signals for tickers already held in journal
+      const parallelJournalLoadForDedup = loadJournal(parallelJournalPath);
+      let parallelDedupFiltered = fundamentalAnnotatedSignals;
+      if (parallelJournalLoadForDedup.success) {
+        const openTickers = new Set(
+          parallelJournalLoadForDedup.data
+            .filter(e => e.status === 'open')
+            .map(e => e.ticker.toUpperCase())
+        );
+        if (openTickers.size > 0) {
+          const beforeCount = parallelDedupFiltered.length;
+          parallelDedupFiltered = fundamentalAnnotatedSignals.filter(s => {
+            if (s.signal === 'forming') return true; // keep forming signals
+            return !openTickers.has(s.ticker.toUpperCase());
+          });
+          const suppressedCount = beforeCount - parallelDedupFiltered.length;
+          if (suppressedCount > 0) {
+            const suppressedTickers = [...new Set(
+              fundamentalAnnotatedSignals
+                .filter(s => s.signal !== 'forming' && openTickers.has(s.ticker.toUpperCase()))
+                .map(s => s.ticker.toUpperCase())
+            )].join(', ');
+            console.log(`[scan] Suppressed ${suppressedCount} signals for tickers already in portfolio: ${suppressedTickers}`);
+          }
+        }
+      }
 
       // Compute journal total P&L from closed trades
       const journalPath2 = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
@@ -643,8 +726,8 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       }
 
       const output: Record<string, unknown> = {
-        signals: fundamentalAnnotatedSignals,
-        processedSignals: runPipeline(fundamentalAnnotatedSignals),
+        signals: parallelDedupFiltered,
+        processedSignals: runPipeline(parallelDedupFiltered),
         warnings: [...warnings, ...result.warnings, ...positionsResult.warnings],
         total: result.total,
         scanned: result.scanned,
@@ -810,9 +893,47 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       return { ...s, confidence: adjusted, fundamentalData: fundData };
     });
 
+    // Auto-journal qualifying signals (after all confidence adjustments)
+    const seqJournalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
+    const seqAutoJournalResult = autoJournal(fundamentalAnnotatedSignals, seqJournalPath);
+    if (seqAutoJournalResult.errors.length > 0) {
+      warnings.push(...seqAutoJournalResult.errors);
+    }
+    if (seqAutoJournalResult.entered.length > 0) {
+      const enteredTickers = seqAutoJournalResult.entered.map(e => e.ticker).join(', ');
+      console.log(`[scan] Auto-journaled: ${enteredTickers}`);
+    }
+
     // Load and process open positions
     // Price data reuse happens transparently via the caching provider
     const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
+
+    // Scan dedup: suppress active/near signals for tickers already held in journal
+    const seqJournalLoadForDedup = loadJournal(seqJournalPath);
+    let seqDedupFiltered = fundamentalAnnotatedSignals;
+    if (seqJournalLoadForDedup.success) {
+      const openTickers = new Set(
+        seqJournalLoadForDedup.data
+          .filter(e => e.status === 'open')
+          .map(e => e.ticker.toUpperCase())
+      );
+      if (openTickers.size > 0) {
+        const beforeCount = seqDedupFiltered.length;
+        seqDedupFiltered = fundamentalAnnotatedSignals.filter(s => {
+          if (s.signal === 'forming') return true; // keep forming signals
+          return !openTickers.has(s.ticker.toUpperCase());
+        });
+        const suppressedCount = beforeCount - seqDedupFiltered.length;
+        if (suppressedCount > 0) {
+          const suppressedTickers = [...new Set(
+            fundamentalAnnotatedSignals
+              .filter(s => s.signal !== 'forming' && openTickers.has(s.ticker.toUpperCase()))
+              .map(s => s.ticker.toUpperCase())
+          )].join(', ');
+          console.log(`[scan] Suppressed ${suppressedCount} signals for tickers already in portfolio: ${suppressedTickers}`);
+        }
+      }
+    }
 
     // Compute journal total P&L from closed trades
     const journalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
@@ -824,8 +945,8 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     }
 
     const output: Record<string, unknown> = {
-      signals: fundamentalAnnotatedSignals,
-      processedSignals: runPipeline(fundamentalAnnotatedSignals),
+      signals: seqDedupFiltered,
+      processedSignals: runPipeline(seqDedupFiltered),
       warnings: [...warnings, ...positionsResult.warnings],
       total: tickers.length,
       scanned: signals.length,
