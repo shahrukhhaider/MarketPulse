@@ -35,9 +35,11 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "discord.js": "^14.16.0",
+    "drizzle-orm": "^0.45.2",
     "express": "^4.21.0",
     "lightweight-charts": "^5.2.0",
     "node-cron": "^3.0.3",
+    "postgres": "^3.4.9",
     "puppeteer": "^24.0.0",
     "yahoo-finance2": "^3.14.0"
   },
@@ -45,7 +47,9 @@
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
     "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.20.0",
     "@vitest/coverage-v8": "^2.1.9",
+    "drizzle-kit": "^0.31.10",
     "fast-check": "^3.22.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"

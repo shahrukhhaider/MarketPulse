@@ -3,22 +3,22 @@
 # Scans all tickers from universe-specific watchlist for trade opportunities
 #
 # Usage:
-#   daily-scan.sh              # defaults to large_cap (backward compatible)
+#   daily-scan.sh              # defaults to large_cap, scan only (no notification)
 #   daily-scan.sh large_cap
 #   daily-scan.sh tech
-#   daily-scan.sh --no-notify large_cap
-#   daily-scan.sh large_cap --no-notify
+#   daily-scan.sh --notify large_cap
+#   daily-scan.sh large_cap --notify
 
 set -e
 
 # --- Parse arguments ---
-NO_NOTIFY=false
+NOTIFY=false
 UNIVERSE="large_cap"
 
 for arg in "$@"; do
   case "$arg" in
-    --no-notify)
-      NO_NOTIFY=true
+    --notify)
+      NOTIFY=true
       ;;
     *)
       UNIVERSE="$arg"
@@ -69,8 +69,8 @@ if [ "$UNIVERSE" = "large_cap" ]; then
   $NODE dist/src/cli.js journal-update >> "$LOG_DIR/cron.log" 2>&1
 fi
 
-# --- Conditional: Discord notification (when universe-specific webhook file exists) ---
-if [ "$NO_NOTIFY" = false ]; then
+# --- Conditional: Discord notification (when --notify passed and universe-specific webhook file exists) ---
+if [ "$NOTIFY" = true ]; then
   WEBHOOK_FILE="$PROJECT_DIR/.stock-tracker/discord-webhook-${UNIVERSE}.txt"
   if [ -f "$WEBHOOK_FILE" ]; then
     WEBHOOK_URL=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "$WEBHOOK_FILE")
@@ -80,8 +80,8 @@ if [ "$NO_NOTIFY" = false ]; then
   fi
 fi
 
-# --- Conditional: notify.sh (large_cap only, if script exists) ---
-if [ "$UNIVERSE" = "large_cap" ] && [ "$NO_NOTIFY" = false ]; then
+# --- Conditional: notify.sh (large_cap only, if script exists and --notify passed) ---
+if [ "$UNIVERSE" = "large_cap" ] && [ "$NOTIFY" = true ]; then
   NOTIFY_SCRIPT="$PROJECT_DIR/scripts/notify.sh"
   if [ -f "$NOTIFY_SCRIPT" ]; then
     "$NOTIFY_SCRIPT" "$LOG_FILE" 2>> "$LOG_DIR/cron.log" || true

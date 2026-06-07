@@ -50,6 +50,7 @@ import { parallelTune } from './pipeline/parallel-tune.js';
 import { createJournalStatusHandler, createJournalRecordHandler, createJournalUpdateHandler } from './commands/journal-command.js';
 import { createRegimeHandler } from './commands/regime-command.js';
 import { createSignalHistoryHandler } from './signal-history/signal-history-command.js';
+import { createSentimentCheckHandler } from './commands/sentiment-check-command.js';
 import { RegimeDetector } from './indicators/regime-detector.js';
 
 export interface WiringOptions {
@@ -1791,6 +1792,10 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   // --- Signal history command ---
   const signalHistoryHandler = createSignalHistoryHandler({ dataDir });
   router.register('signal-history', [], signalHistoryHandler);
+
+  // --- Sentiment check command ---
+  const sentimentCheckHandler = createSentimentCheckHandler({ dataDir });
+  router.register('sentiment-check', [], sentimentCheckHandler);
 
   return {
     router,

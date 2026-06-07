@@ -2,8 +2,10 @@
 // Discord bot initialisation — creates Client, registers event handler, connects
 // ---------------------------------------------------------------------------
 
-import { Client, GatewayIntentBits, Events } from 'discord.js';
+import { Client, GatewayIntentBits, Events, REST, Routes } from 'discord.js';
 import { handleMessage } from './handler.js';
+import { handleTradeInteraction, buildTradeCommands } from './trade-commands.js';
+import { getDb } from '../db/database.js';
 
 /**
  * Creates a discord.js Client with the required gateway intents, registers the
@@ -27,6 +29,9 @@ export async function initDiscordBot(): Promise<void> {
     return;
   }
 
+  // Task 6.3 — Validate DATABASE_URL early before the bot starts handling interactions
+  getDb();
+
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -35,8 +40,46 @@ export async function initDiscordBot(): Promise<void> {
     ],
   });
 
-  client.once(Events.ClientReady, (readyClient) => {
+  // Task 6.2 — Register trade slash commands guild-scoped on ready
+  client.once(Events.ClientReady, async (readyClient) => {
     console.log(`[discord-bot] Connected as ${readyClient.user.tag}`);
+
+    const clientId = process.env.DISCORD_CLIENT_ID?.trim();
+    const guildId = process.env.DISCORD_GUILD_ID?.trim();
+
+    if (!clientId || !guildId) {
+      console.warn(
+        '[discord-bot] Skipping slash command registration — missing DISCORD_CLIENT_ID or DISCORD_GUILD_ID',
+      );
+      return;
+    }
+
+    try {
+      const rest = new REST({ version: '10' }).setToken(token);
+      const commands = buildTradeCommands().map((c) => c.toJSON());
+      await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
+      console.log(`[discord-bot] Registered ${commands.length} trade slash commands`);
+    } catch (err) {
+      console.error('[discord-bot] Failed to register slash commands:', err);
+    }
+  });
+
+  // Task 6.1 — Route trade slash commands to handleTradeInteraction
+  client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (!interaction.commandName.startsWith('trade-')) return;
+
+    try {
+      await handleTradeInteraction(interaction);
+    } catch (err) {
+      console.error('[discord-bot] Trade command error:', err);
+      const content = 'Something went wrong processing your trade command.';
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({ content, ephemeral: true }).catch(() => {});
+      } else {
+        await interaction.reply({ content, ephemeral: true }).catch(() => {});
+      }
+    }
   });
 
   client.on(Events.MessageCreate, (message) => {

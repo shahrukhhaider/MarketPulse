@@ -1,0 +1,18 @@
+import { pgTable, serial, text, real, timestamp } from 'drizzle-orm/pg-core';
+
+export const memberTrades = pgTable('member_trades', {
+  id:          serial('id').primaryKey(),
+  userId:      text('user_id').notNull(),
+  ticker:      text('ticker').notNull(),
+  entryPrice:  real('entry_price').notNull(),
+  stopPrice:   real('stop_price').notNull(),
+  targetPrice: real('target_price').notNull(),
+  openedAt:    timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
+  closedAt:    timestamp('closed_at', { withTimezone: true }),
+  exitPrice:   real('exit_price'),
+  pnlPercent:  real('pnl_percent'),
+  result:      text('result'),
+  status:      text('status').notNull().default('open'),
+  lastPrice:   real('last_price'),
+  updatedAt:   timestamp('updated_at', { withTimezone: true }),
+});

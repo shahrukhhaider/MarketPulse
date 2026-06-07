@@ -3,6 +3,7 @@ import cron from 'node-cron';
 import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import { initDiscordBot } from './discord-bot/index.js';
+import { updateMemberTradePnL } from './db/update-member-pnl.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -242,6 +243,10 @@ async function signalCheck(): Promise<void> {
   await runSignalCheck('signal-check');
 }
 
+async function morningSentimentDigest(): Promise<void> {
+  await runCli('morning-sentiment-digest', ['sentiment-check']);
+}
+
 // ---------------------------------------------------------------------------
 // Health check server
 // ---------------------------------------------------------------------------
@@ -273,12 +278,26 @@ initDiscordBot().catch((err) => {
 // ---------------------------------------------------------------------------
 
 // Weekday scans at market close
-cron.schedule('30 16 * * 1-5', () => { dailyScanLargeCap(); });
-cron.schedule('45 16 * * 1-5', () => { dailyScanTech(); });
+cron.schedule('30 16 * * 1-5', () => {
+  (async () => {
+    await dailyScanLargeCap();
+    await dailyScanTech();
+    try {
+      await updateMemberTradePnL();
+    } catch (err) {
+      console.warn('[worker] updateMemberTradePnL error:', err);
+    }
+  })();
+});
 
 // Weekly tunes on Sunday
 cron.schedule('0 9 * * 0', () => { weeklyTuneLargeCap(); });
 cron.schedule('0 11 * * 0', () => { weeklyTuneTech(); });
+
+// Morning sentiment digest at 8 AM ET on weekdays
+cron.schedule('0 8 * * 1-5', () => { morningSentimentDigest(); }, {
+  timezone: 'America/New_York',
+});
 
 // Signal checks during market hours on weekdays
 cron.schedule('0 10 * * 1-5', () => { signalCheck(); });

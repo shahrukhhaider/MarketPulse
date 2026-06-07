@@ -81,6 +81,28 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: ['ticker'],
     },
   },
+  {
+    name: 'get_market_news',
+    description:
+      'Get a summary of news headlines and sentiment bands for all tickers in the cache. Answers questions like "what\'s happening in the market today?", "any news today?", "what\'s the overall sentiment?"',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'get_ticker_news',
+    description:
+      'Get news headlines and StockTwits sentiment for a specific ticker. Answers questions like "what\'s the news on NVDA?", "is there any catalyst for AAPL?", "what\'s the StockTwits sentiment for MSFT?"',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Ticker symbol (e.g. "NVDA")' },
+      },
+      required: ['ticker'],
+    },
+  },
 ];
 
 /**
@@ -99,6 +121,10 @@ export async function executeTool(
       return getTickerHistory(input as { ticker: string; universe?: string });
     case 'get_ticker_profile':
       return getTickerProfile(input as { ticker: string; strategy?: string });
+    case 'get_market_news':
+      return getMarketNews();
+    case 'get_ticker_news':
+      return getTickerNews(input as { ticker: string });
     default:
       return { error: `Unknown tool: ${name}` };
   }
@@ -519,4 +545,105 @@ async function getTickerProfile(input: { ticker: string; strategy?: string }): P
   }
 
   return { ticker, profiles };
+}
+
+
+// ---------------------------------------------------------------------------
+// get_market_news implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads sentiment-cache.json and returns a summary of news/sentiment for all tickers.
+ * Returns an array of { ticker, band, top_headline, fetched_at } for each ticker in the cache.
+ */
+async function getMarketNews(): Promise<unknown> {
+  const filePath = path.join(getDataDir(), 'sentiment-cache.json');
+
+  let raw: string;
+  try {
+    raw = await readFile(filePath, 'utf-8');
+  } catch {
+    return 'No sentiment data available yet \u2014 digest runs at 8 AM ET on trading days.';
+  }
+
+  if (!raw.trim()) {
+    return 'No sentiment data available yet \u2014 digest runs at 8 AM ET on trading days.';
+  }
+
+  let cache: Record<string, {
+    ticker: string;
+    band: string;
+    top_headlines: Array<{ title: string; url: string }>;
+    fetched_at: string;
+  }>;
+  try {
+    cache = JSON.parse(raw);
+  } catch {
+    return 'Sentiment cache is being rebuilt \u2014 try again after the next morning digest.';
+  }
+
+  const entries = Object.values(cache).map((entry) => {
+    const topHeadline = entry.top_headlines?.[0]
+      ? `${entry.top_headlines[0].title} (${entry.top_headlines[0].url})`
+      : null;
+
+    return {
+      ticker: entry.ticker,
+      band: entry.band,
+      top_headline: topHeadline,
+      fetched_at: entry.fetched_at,
+    };
+  });
+
+  return entries;
+}
+
+// ---------------------------------------------------------------------------
+// get_ticker_news implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads sentiment-cache.json and returns news/sentiment data for a specific ticker.
+ * The cache is keyed by uppercase ticker symbol.
+ */
+async function getTickerNews(input: { ticker: string }): Promise<unknown> {
+  const ticker = input.ticker.toUpperCase();
+  const filePath = path.join(getDataDir(), 'sentiment-cache.json');
+
+  let raw: string;
+  try {
+    raw = await readFile(filePath, 'utf-8');
+  } catch {
+    return 'No sentiment data available yet \u2014 digest runs at 8 AM ET on trading days.';
+  }
+
+  let cache: Record<string, {
+    ticker: string;
+    band: string;
+    st_bullish_count: number;
+    st_bearish_count: number;
+    st_message_volume: number;
+    top_headlines: Array<{ title: string; url: string; source_domain: string; published_at: string }>;
+    fetched_at: string;
+  }>;
+  try {
+    cache = JSON.parse(raw);
+  } catch {
+    return 'No sentiment data available yet \u2014 digest runs at 8 AM ET on trading days.';
+  }
+
+  const entry = cache[ticker];
+  if (!entry) {
+    return `No news data for ${ticker} \u2014 it may not be in the current active/near signal list.`;
+  }
+
+  return {
+    ticker: entry.ticker,
+    band: entry.band,
+    st_bullish_count: entry.st_bullish_count,
+    st_bearish_count: entry.st_bearish_count,
+    st_message_volume: entry.st_message_volume,
+    top_headlines: entry.top_headlines,
+    fetched_at: entry.fetched_at,
+  };
 }
