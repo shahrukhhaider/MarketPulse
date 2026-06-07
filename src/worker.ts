@@ -4,6 +4,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import { initDiscordBot } from './discord-bot/index.js';
 import { updateMemberTradePnL } from './db/update-member-pnl.js';
+import { registerApiRoutes } from './web/routes.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -45,7 +46,7 @@ function log(jobName: string, message: string): void {
 // Child process spawner
 // ---------------------------------------------------------------------------
 
-function runCli(jobName: string, args: string[]): Promise<number> {
+function runCli(jobName: string, args: string[], entryScript?: string): Promise<number> {
   const job = getOrCreateJob(jobName);
 
   if (job.running) {
@@ -55,10 +56,12 @@ function runCli(jobName: string, args: string[]): Promise<number> {
 
   job.running = true;
 
-  return new Promise<number>((resolve) => {
-    log(jobName, `starting: node ${path.basename(CLI_PATH)} ${args.join(' ')}`);
+  const script = entryScript ?? CLI_PATH;
 
-    const child = spawn('node', [CLI_PATH, ...args], {
+  return new Promise<number>((resolve) => {
+    log(jobName, `starting: node ${path.basename(script)} ${args.join(' ')}`);
+
+    const child = spawn('node', [script, ...args], {
       cwd: STOCK_TRACKER_HOME,
       env: { ...process.env, STOCK_TRACKER_HOME },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -100,56 +103,8 @@ function runCli(jobName: string, args: string[]): Promise<number> {
  * Run the standalone discord-signal-check script.
  */
 function runSignalCheck(jobName: string): Promise<number> {
-  const job = getOrCreateJob(jobName);
-
-  if (job.running) {
-    log(jobName, 'skipped — previous run still in progress');
-    return Promise.resolve(-1);
-  }
-
-  job.running = true;
-
   const scriptPath = path.join(__dirname, 'discord-signal-check.js');
-
-  return new Promise<number>((resolve) => {
-    log(jobName, `starting: node discord-signal-check.js`);
-
-    const child = spawn('node', [scriptPath], {
-      cwd: STOCK_TRACKER_HOME,
-      env: { ...process.env, STOCK_TRACKER_HOME },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    job.process = child;
-
-    child.stdout?.on('data', (data: Buffer) => {
-      const lines = data.toString().trim().split('\n');
-      for (const line of lines) {
-        log(jobName, `stdout: ${line}`);
-      }
-    });
-
-    child.stderr?.on('data', (data: Buffer) => {
-      const lines = data.toString().trim().split('\n');
-      for (const line of lines) {
-        log(jobName, `stderr: ${line}`);
-      }
-    });
-
-    child.on('close', (code) => {
-      job.running = false;
-      job.process = null;
-      log(jobName, `exited with code ${code ?? 'null'}`);
-      resolve(code ?? 1);
-    });
-
-    child.on('error', (err) => {
-      job.running = false;
-      job.process = null;
-      log(jobName, `spawn error: ${err.message}`);
-      resolve(1);
-    });
-  });
+  return runCli(jobName, [], scriptPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +216,8 @@ app.get('/health', (_req, res) => {
   });
 });
 
+registerApiRoutes(app, STOCK_TRACKER_HOME);
+
 const server = app.listen(PORT, () => {
   log('worker', `Health check server listening on port ${PORT}`);
 });
@@ -277,6 +234,8 @@ initDiscordBot().catch((err) => {
 // Cron schedules (TZ controlled by Railway TZ env var)
 // ---------------------------------------------------------------------------
 
+const ET = { timezone: 'America/New_York' } as const;
+
 // Weekday scans at market close
 cron.schedule('30 16 * * 1-5', () => {
   (async () => {
@@ -288,21 +247,19 @@ cron.schedule('30 16 * * 1-5', () => {
       console.warn('[worker] updateMemberTradePnL error:', err);
     }
   })();
-});
+}, ET);
 
 // Weekly tunes on Sunday
-cron.schedule('0 9 * * 0', () => { weeklyTuneLargeCap(); });
-cron.schedule('0 11 * * 0', () => { weeklyTuneTech(); });
+cron.schedule('0 9 * * 0', () => { weeklyTuneLargeCap(); }, ET);
+cron.schedule('0 11 * * 0', () => { weeklyTuneTech(); }, ET);
 
 // Morning sentiment digest at 8 AM ET on weekdays
-cron.schedule('0 8 * * 1-5', () => { morningSentimentDigest(); }, {
-  timezone: 'America/New_York',
-});
+cron.schedule('0 8 * * 1-5', () => { morningSentimentDigest(); }, ET);
 
 // Signal checks during market hours on weekdays
-cron.schedule('0 10 * * 1-5', () => { signalCheck(); });
-cron.schedule('0 12 * * 1-5', () => { signalCheck(); });
-cron.schedule('30 15 * * 1-5', () => { signalCheck(); });
+cron.schedule('0 10 * * 1-5', () => { signalCheck(); }, ET);
+cron.schedule('0 12 * * 1-5', () => { signalCheck(); }, ET);
+cron.schedule('30 15 * * 1-5', () => { signalCheck(); }, ET);
 
 log('worker', 'All cron jobs scheduled');
 
