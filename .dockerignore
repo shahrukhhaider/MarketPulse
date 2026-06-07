@@ -1,0 +1,12 @@
+node_modules
+.git
+.stock-tracker
+.DS_Store
+dist
+drizzle
+*.log
+.env*
+tests
+coverage
+.claude
+.kiro

@@ -77,21 +77,26 @@ export async function generateChartImages(
   }
 
   // Dynamic import of Puppeteer with graceful catch
+  // Tries puppeteer (local dev with bundled Chromium), falls back to puppeteer-core (Railway)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let puppeteerModule: any;
   try {
-    // Use variable to prevent TypeScript from resolving the module statically
     const moduleName = 'puppeteer';
     puppeteerModule = await import(moduleName);
-  } catch (err: unknown) {
-    const reason =
-      err instanceof Error ? err.message : 'Puppeteer module not available';
-    return signals.map((signal) => ({
-      success: false as const,
-      ticker: signal.ticker,
-      strategy: signal.strategy,
-      reason: `Puppeteer unavailable: ${reason}`,
-    }));
+  } catch {
+    try {
+      const coreModuleName = 'puppeteer-core';
+      puppeteerModule = await import(coreModuleName);
+    } catch (err: unknown) {
+      const reason =
+        err instanceof Error ? err.message : 'Puppeteer module not available';
+      return signals.map((signal) => ({
+        success: false as const,
+        ticker: signal.ticker,
+        strategy: signal.strategy,
+        reason: `Puppeteer unavailable: ${reason}`,
+      }));
+    }
   }
 
   // Launch shared browser instance
@@ -100,7 +105,14 @@ export async function generateChartImages(
   let browserDisconnected = false;
 
   try {
-    browser = await puppeteerModule.launch({ headless: true });
+    browser = await puppeteerModule.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      // On Railway, puppeteer-core needs the system chromium path
+      ...(process.env.PUPPETEER_EXECUTABLE_PATH
+        ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH }
+        : {}),
+    });
 
     // Listen for browser disconnect
     browser.on('disconnected', () => {
