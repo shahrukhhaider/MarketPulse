@@ -575,7 +575,7 @@ function classifyMarketMood(
     : -1; // narrow
 
   const total = vixScore + regimeScore + breadthScore;
-  if (total >= 2) return 'bullish';
+  if (total >= 3) return 'bullish';
   if (total >= 0) return 'neutral';
   return 'bearish';
 }
