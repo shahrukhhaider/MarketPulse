@@ -9,7 +9,6 @@ tests
 coverage
 .claude
 .kiro
-scripts
 .gitignore
 README.md
 vitest.config.*

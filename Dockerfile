@@ -10,6 +10,7 @@ RUN npm ci --omit=dev --ignore-scripts
 
 COPY tsconfig.json ./
 COPY src ./src
+COPY scripts ./scripts
 
 # Install dev deps for build only
 RUN npm install --ignore-scripts typescript@5
