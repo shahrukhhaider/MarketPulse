@@ -76,8 +76,7 @@ export async function generateChartImages(
     return [];
   }
 
-  // Dynamic import of Puppeteer with graceful catch
-  // Tries puppeteer (local dev with bundled Chromium), falls back to puppeteer-core (Railway)
+  // Dynamic import: try puppeteer (local dev), fall back to puppeteer-core (production)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let puppeteerModule: any;
   try {
