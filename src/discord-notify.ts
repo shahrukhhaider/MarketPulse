@@ -497,6 +497,12 @@ export function readDiscordWebhookUrl(basePath: string): string | null {
 // --- Tech Webhook URL Reader ---
 
 export function readDiscordWebhookTechUrl(basePath: string): string | null {
+  // Prefer env var (set in Railway) over local file
+  const envUrl = process.env.DISCORD_WEBHOOK_TECH_URL?.trim();
+  if (envUrl) {
+    return envUrl;
+  }
+
   const filePath = path.join(basePath, '.stock-tracker', 'discord-webhook-tech.txt');
 
   let content: string;

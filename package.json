@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/cli.js",
+    "start:worker": "node dist/src/worker.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:property": "vitest run tests/property",
@@ -32,12 +33,16 @@
     "signal-charts": "npx --yes tsx scripts/generate-signal-charts.ts"
   },
   "dependencies": {
+    "express": "^4.21.0",
     "lightweight-charts": "^5.2.0",
+    "node-cron": "^3.0.3",
     "puppeteer": "^24.0.0",
     "yahoo-finance2": "^3.14.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
     "@vitest/coverage-v8": "^2.1.9",
     "fast-check": "^3.22.0",
     "typescript": "^5.6.0",
