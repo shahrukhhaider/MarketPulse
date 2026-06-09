@@ -43,4 +43,4 @@ COPY package.json ./
 
 EXPOSE 3000
 
-CMD ["node", "dist/cli.js", "worker"]
+CMD ["node", "dist/src/cli.js", "worker"]
