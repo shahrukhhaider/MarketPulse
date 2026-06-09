@@ -141,6 +141,10 @@ async function dailyScanLargeCap(): Promise<void> {
 
   // Journal update (large_cap only)
   await runCli(`${jobName}:journal-update`, ['journal-update']);
+
+  // Discord notification
+  const notifyScript = path.join(__dirname, 'discord-notify.js');
+  await runCli(`${jobName}:notify`, [logFile], notifyScript);
 }
 
 async function dailyScanTech(): Promise<void> {
@@ -170,6 +174,10 @@ async function dailyScanTech(): Promise<void> {
     '--scan-output', logFile,
     '--universe', 'tech',
   ]);
+
+  // Discord notification
+  const notifyScript = path.join(__dirname, 'discord-notify.js');
+  await runCli(`${jobName}:notify`, [logFile], notifyScript);
 }
 
 async function weeklyTuneLargeCap(): Promise<void> {
