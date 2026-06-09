@@ -104,6 +104,7 @@ function formatNewsSection(selectedItems: NewsItem[], date: Date): string {
   for (const item of selectedItems) {
     const timeAgo = computeTimeAgo(item.published_at, date);
     lines.push(`• ${item.title} — *${item.source_domain}* (${timeAgo})`);
+    lines.push(`  ${item.url}`);
   }
 
   return '\n' + lines.join('\n');

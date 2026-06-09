@@ -96,7 +96,7 @@ describe('formatMorningDigest', () => {
         }),
       ];
       const result = formatMorningDigest(TEST_DATE, new Map(), items);
-      expect(result).toContain('• Apple hits all-time high — reuters.com (2h ago)');
+      expect(result).toContain('• Apple hits all-time high — *reuters.com* (2h ago)');
       expect(result).toContain('  https://reuters.com/apple');
     });
 
@@ -145,8 +145,8 @@ describe('formatMorningDigest', () => {
       expect(result).toContain('AAPL: 🟢 Bullish');
       expect(result).toContain('TSLA: 🔴 Bearish');
       // News present
-      expect(result).toContain('• News 1 — cnn.com');
-      expect(result).toContain('• News 2 — bbc.com');
+      expect(result).toContain('• News 1 — *cnn.com*');
+      expect(result).toContain('• News 2 — *bbc.com*');
       // No fallback
       expect(result).not.toContain('No new headlines since last digest.');
     });
