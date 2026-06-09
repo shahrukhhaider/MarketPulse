@@ -103,8 +103,7 @@ function formatNewsSection(selectedItems: NewsItem[], date: Date): string {
   const lines: string[] = [''];
   for (const item of selectedItems) {
     const timeAgo = computeTimeAgo(item.published_at, date);
-    lines.push(`• ${item.title} — ${item.source_domain} (${timeAgo})`);
-    lines.push(`  ${item.url}`);
+    lines.push(`• ${item.title} — *${item.source_domain}* (${timeAgo})`);
   }
 
   return '\n' + lines.join('\n');
