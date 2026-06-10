@@ -51,6 +51,7 @@ import { createJournalStatusHandler, createJournalRecordHandler, createJournalUp
 import { createRegimeHandler } from './commands/regime-command.js';
 import { createSignalHistoryHandler } from './signal-history/signal-history-command.js';
 import { createSentimentCheckHandler } from './commands/sentiment-check-command.js';
+import { createNewsTimelineHandler } from './commands/news-timeline-command.js';
 import { RegimeDetector } from './indicators/regime-detector.js';
 
 export interface WiringOptions {
@@ -1796,6 +1797,10 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   // --- Sentiment check command ---
   const sentimentCheckHandler = createSentimentCheckHandler({ dataDir });
   router.register('sentiment-check', [], sentimentCheckHandler);
+
+  // --- News timeline command ---
+  const newsTimelineHandler = createNewsTimelineHandler({ dataDir });
+  router.register('news-timeline', [], newsTimelineHandler);
 
   return {
     router,

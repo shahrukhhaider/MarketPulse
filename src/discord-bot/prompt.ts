@@ -55,7 +55,9 @@ Two tools provide news and social sentiment data:
 
 - **get_market_news** — Use for broad market or news questions when no specific ticker is mentioned. Examples: "what's happening in the market today?", "any news today?", "what's the overall sentiment?" Returns headline and sentiment band data for all tracked tickers.
 
-- **get_ticker_news** — Use for ticker-specific news and social sentiment questions. Examples: "what's the news on NVDA?", "is there any catalyst for AAPL?", "what's the StockTwits sentiment for MSFT?" Returns headlines, sentiment band, and StockTwits bullish/bearish counts for the requested ticker.
+- **get_ticker_news** — Use for ticker-specific news and social sentiment questions. Examples: "what's the news on NVDA?", "is there any catalyst for AAPL?", "what's the StockTwits sentiment for MSFT?" Returns headlines, sentiment band, and StockTwits bullish/bearish counts for the requested ticker. When the nightly summary pipeline has run, also returns a \`news_summary\` field — a 2–3 sentence narrative covering the last 7 days of headlines for that ticker.
+
+When \`news_summary\` is present in the tool result, lead your answer with it to give the user immediate weekly context, then follow with today's sentiment band and StockTwits counts.
 
 News and sentiment data is refreshed once per day at 8 AM ET on trading days. Early in the morning or on weekends/holidays the data may not yet be available — if so, let the user know and suggest checking back after the morning digest runs.
 

@@ -2,9 +2,9 @@
   "name": "stock-price-tracker",
   "version": "1.0.0",
   "description": "A CLI tool for stock price tracking with watchlist management, strategy evaluation, and signal generation",
-  "main": "dist/cli.js",
+  "main": "dist/src/cli.js",
   "bin": {
-    "stock-tracker": "dist/cli.js"
+    "stock-tracker": "dist/src/cli.js"
   },
   "scripts": {
     "build": "tsc",

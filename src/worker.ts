@@ -264,6 +264,9 @@ cron.schedule('0 11 * * 0', () => { weeklyTuneTech(); }, ET);
 // Morning sentiment digest at 8 AM ET on weekdays
 cron.schedule('0 8 * * 1-5', () => { morningSentimentDigest(); }, ET);
 
+// Nightly news timeline at 9 PM ET on weekdays
+cron.schedule('0 21 * * 1-5', () => { runCli('news-timeline', ['news-timeline']); }, ET);
+
 // Signal checks during market hours on weekdays
 cron.schedule('0 10 * * 1-5', () => { signalCheck(); }, ET);
 cron.schedule('0 12 * * 1-5', () => { signalCheck(); }, ET);

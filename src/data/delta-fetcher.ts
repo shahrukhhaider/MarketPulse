@@ -29,7 +29,7 @@ function addDays(isoDate: string, days: number): string {
  * Returns today's date as an ISO date string (YYYY-MM-DD).
  */
 function todayISO(): string {
-  return new Date().toISOString().split('T')[0];
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
 }
 
 // ============================================================

@@ -637,7 +637,27 @@ async function getTickerNews(input: { ticker: string }): Promise<unknown> {
     return `No news data for ${ticker} \u2014 it may not be in the current active/near signal list.`;
   }
 
-  return {
+  // Attempt to read the rolling news summary (Task 4.1–4.3)
+  let newsSummary: string | undefined;
+  try {
+    const summaryPath = path.join(getDataDir(), 'news-summary', `${ticker}.json`);
+    const summaryRaw = await readFile(summaryPath, 'utf-8');
+    const summaryData: { summary?: string; generated_at?: string } = JSON.parse(summaryRaw);
+
+    // Only include if generated_at is within the last 48 hours
+    if (summaryData.generated_at && summaryData.summary) {
+      const generatedAt = new Date(summaryData.generated_at).getTime();
+      const now = Date.now();
+      const fortyEightHoursMs = 48 * 60 * 60 * 1000;
+      if (now - generatedAt <= fortyEightHoursMs) {
+        newsSummary = summaryData.summary;
+      }
+    }
+  } catch {
+    // Missing or malformed summary file — silently omit news_summary
+  }
+
+  const result: Record<string, unknown> = {
     ticker: entry.ticker,
     band: entry.band,
     st_bullish_count: entry.st_bullish_count,
@@ -646,4 +666,10 @@ async function getTickerNews(input: { ticker: string }): Promise<unknown> {
     top_headlines: entry.top_headlines,
     fetched_at: entry.fetched_at,
   };
+
+  if (newsSummary) {
+    result.news_summary = newsSummary;
+  }
+
+  return result;
 }
