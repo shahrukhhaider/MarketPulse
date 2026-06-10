@@ -70,6 +70,40 @@ function decodeHtmlEntities(text: string): string {
 }
 
 // ============================================================
+// URL Resolution (Google News redirect → actual article URL)
+// ============================================================
+
+/**
+ * Resolves a Google News redirect URL (CBMi...) to the actual article URL
+ * by following HTTP redirects. Returns the original URL on any failure.
+ */
+async function resolveGoogleNewsUrl(googleUrl: string): Promise<string> {
+  if (!googleUrl.includes('news.google.com')) return googleUrl;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
+
+    const response = await fetch(googleUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    // response.url is the final URL after all redirects
+    const resolved = response.url;
+    return resolved && resolved !== googleUrl ? resolved : googleUrl;
+  } catch {
+    return googleUrl;
+  }
+}
+
+// ============================================================
 // fetchNewsItems
 // ============================================================
 
@@ -79,6 +113,7 @@ function decodeHtmlEntities(text: string): string {
  * - Requests with 15s timeout and User-Agent `stock-tracker-bot/1.0`
  * - Parses RSS XML using string split + regex (no external XML parser)
  * - Filters to items published within the last 48 hours
+ * - Resolves Google News redirect URLs (CBMi...) to actual article URLs
  * - Returns at most 10 items sorted newest-first
  * - Returns `[]` on any fetch/parse failure
  */
@@ -97,7 +132,29 @@ export async function fetchNewsItems(ticker: string): Promise<NewsItem[]> {
     if (!response.ok) return [];
 
     const body = await response.text();
-    return parseRssItems(body, ticker);
+    const items = parseRssItems(body, ticker);
+
+    // Resolve redirect URLs concurrently (5s timeout each, fail-safe)
+    const resolved = await Promise.all(
+      items.map(async (item) => {
+        const resolvedUrl = await resolveGoogleNewsUrl(item.url);
+        if (resolvedUrl === item.url) return item;
+
+        // Re-derive source_domain from resolved URL
+        let sourceDomain = item.source_domain;
+        if (!sourceDomain || sourceDomain === 'news.google.com') {
+          try {
+            sourceDomain = new URL(resolvedUrl).hostname.replace(/^www\./, '');
+          } catch {
+            // keep original
+          }
+        }
+
+        return { ...item, url: resolvedUrl, source_domain: sourceDomain };
+      })
+    );
+
+    return resolved;
   } catch {
     return [];
   }

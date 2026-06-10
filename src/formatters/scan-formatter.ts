@@ -828,7 +828,7 @@ export function renderMarketContext(
   const slotsMax = tier.slots[1];
   const slotsOpen = Math.max(0, slotsMax - slotsUsed);
   const barWidth = 10;
-  const filled = slotsMax > 0 ? Math.round((slotsUsed / slotsMax) * barWidth) : 0;
+  const filled = Math.min(barWidth, slotsMax > 0 ? Math.round((slotsUsed / slotsMax) * barWidth) : 0);
   const bar = '█'.repeat(filled) + '░'.repeat(barWidth - filled);
   const fillPct = slotsMax > 0 ? (slotsUsed / slotsMax) * 100 : 0;
   const coloredBar = fillPct >= 80 ? red(bar) : fillPct >= 40 ? cyan(bar) : yellow(bar);

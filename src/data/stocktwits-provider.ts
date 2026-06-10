@@ -51,7 +51,7 @@ export async function fetchStockTwitsSentiment(ticker: string): Promise<StockTwi
   };
 
   try {
-    const url = `https://api.stocktwits.com/api/2/streams/symbol/${encodeURIComponent(ticker)}.json`;
+    const url = `https://api.stocktwits.com/api/2/symbols/${encodeURIComponent(ticker)}/sentiment.json`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
 
@@ -61,28 +61,27 @@ export async function fetchStockTwitsSentiment(ticker: string): Promise<StockTwi
     if (!response.ok) return failureResult;
 
     const json = await response.json() as {
-      messages?: Array<{
-        sentiment?: { basic?: string } | null;
-      }>;
+      data?: Array<{ bullish: number; bearish: number; timestamp: string }>;
     };
 
-    const messages = json.messages ?? [];
-    const capped = messages.slice(0, 30);
+    // Use the most recent day's aggregated sentiment
+    const latest = json.data?.[0];
+    if (!latest) return failureResult;
 
-    let bullishCount = 0;
-    let bearishCount = 0;
+    const bullishPct = latest.bullish;
+    const bearishPct = latest.bearish;
 
-    for (const msg of capped) {
-      const basic = msg.sentiment?.basic;
-      if (basic === 'Bullish') bullishCount++;
-      else if (basic === 'Bearish') bearishCount++;
-    }
+    // Convert percentages to band using same thresholds
+    let band: SentimentBand;
+    if (bullishPct >= 60) band = 'bullish';
+    else if (bearishPct >= 60) band = 'bearish';
+    else band = 'neutral';
 
     return {
-      band: classifyBand(bullishCount, bearishCount),
-      st_bullish_count: bullishCount,
-      st_bearish_count: bearishCount,
-      st_message_volume: capped.length,
+      band,
+      st_bullish_count: Math.round(bullishPct),
+      st_bearish_count: Math.round(bearishPct),
+      st_message_volume: 0, // not available from this endpoint
     };
   } catch {
     return failureResult;
