@@ -244,8 +244,8 @@ initDiscordBot().catch((err) => {
 
 const ET = { timezone: 'America/New_York' } as const;
 
-// Weekday scans at market close
-cron.schedule('30 16 * * 1-5', () => {
+// Weekday scans at 5 PM ET (data settled ~1h after close)
+cron.schedule('0 17 * * 1-5', () => {
   (async () => {
     await dailyScanLargeCap();
     await dailyScanTech();
