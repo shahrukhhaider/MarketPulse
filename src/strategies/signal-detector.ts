@@ -14,6 +14,7 @@ import { BreakoutContextAnalyzer } from '../indicators/breakout-context.js';
 import type { MarketRegime } from '../indicators/regime-detector.js';
 import { atr as computeAtr, sma } from '../indicators/indicators.js';
 import { computePeadConfidenceScore } from '../indicators/confidence-score.js';
+import { todayPST } from '../utils/date-utils.js';
 
 // ============================================================
 // Signal State Type
@@ -76,7 +77,7 @@ export function detectSignal(
   }
 
   // Unknown strategy — return none
-  const date = data.length > 0 ? data[data.length - 1].date : new Date().toISOString().slice(0, 10);
+  const date = data.length > 0 ? data[data.length - 1].date : todayPST();
   return {
     ticker: '',
     strategy,
@@ -111,7 +112,7 @@ function detectConsolidationBreakoutSignal(
 ): SignalOutput {
   const config: ConsolidationBreakoutConfiguration = buildConsolidationBreakoutConfig(params);
   const barIndex = data.length - 1;
-  const date = data.length > 0 ? data[barIndex].date : new Date().toISOString().slice(0, 10);
+  const date = data.length > 0 ? data[barIndex].date : todayPST();
 
   const noneOutput: SignalOutput = {
     ticker: '',
@@ -297,7 +298,7 @@ function detectTrendPullbackSignal(
 ): SignalOutput {
   const config: TrendPullbackConfiguration = buildTrendPullbackGridConfig(params);
   const barIndex = data.length - 1;
-  const date = data.length > 0 ? data[barIndex].date : new Date().toISOString().slice(0, 10);
+  const date = data.length > 0 ? data[barIndex].date : todayPST();
 
   const noneOutput: SignalOutput = {
     ticker: '',
@@ -441,7 +442,7 @@ function detectBearBreakdownSignal(
 ): SignalOutput {
   const config: BearBreakdownConfiguration = buildBearBreakdownConfig(params);
   const barIndex = data.length - 1;
-  const date = data.length > 0 ? data[barIndex].date : new Date().toISOString().slice(0, 10);
+  const date = data.length > 0 ? data[barIndex].date : todayPST();
 
   const noneOutput: SignalOutput = {
     ticker: '',
@@ -588,7 +589,7 @@ export function detectPostEarningsDriftSignal(
 ): SignalOutput {
   const config = buildPeadConfigFromParams(params);
   const barIndex = data.length - 1;
-  const date = data.length > 0 ? data[barIndex].date : new Date().toISOString().slice(0, 10);
+  const date = data.length > 0 ? data[barIndex].date : todayPST();
   const earningsDates = options?.earningsDates ?? [];
   const marketRegime: MarketRegime = options?.marketRegime ?? 'unknown';
 
@@ -1029,7 +1030,7 @@ function detectKeltnerMeanReversionSignal(
 ): SignalOutput {
   const config: KeltnerMeanReversionConfiguration = buildKeltnerMeanReversionConfig(params);
   const barIndex = data.length - 1;
-  const date = data.length > 0 ? data[barIndex].date : new Date().toISOString().slice(0, 10);
+  const date = data.length > 0 ? data[barIndex].date : todayPST();
 
   const noneOutput: SignalOutput = {
     ticker: '',

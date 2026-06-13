@@ -162,14 +162,14 @@ export function buildHeaderPayload(data: ScanData): DiscordPayload {
       ? activeSignals[0].date
       : nearSignals.length > 0
         ? nearSignals[0].date
-        : new Date().toISOString().slice(0, 10);
+        : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
 
   // Parse date and format as full English: "Monday, January 6, 2025"
   const dateObj = new Date(dateStr + 'T12:00:00'); // noon to avoid timezone issues
-  const weekday = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
-  const month = dateObj.toLocaleDateString('en-US', { month: 'long' });
-  const day = dateObj.getDate();
-  const year = dateObj.getFullYear();
+  const weekday = dateObj.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/Los_Angeles' });
+  const month = dateObj.toLocaleDateString('en-US', { month: 'long', timeZone: 'America/Los_Angeles' });
+  const day = new Intl.DateTimeFormat('en-US', { day: 'numeric', timeZone: 'America/Los_Angeles' }).format(dateObj);
+  const year = new Intl.DateTimeFormat('en-US', { year: 'numeric', timeZone: 'America/Los_Angeles' }).format(dateObj);
   const title = `📊 Daily Scan — ${weekday}, ${month} ${day}, ${year}`;
 
   // --- Description line 1: Mood ---
@@ -700,11 +700,11 @@ async function main(): Promise<void> {
       const lineage = (s as any).lineage as SignalLineage | undefined;
       let signalStartDate: string | undefined;
       if (lineage && lineage.daysInState > 0) {
-        // Compute start date by subtracting daysInState - 1 from today
-        const today = new Date();
-        const startDate = new Date(today);
+        // Compute start date by subtracting daysInState - 1 from today (in PST)
+        const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
+        const startDate = new Date(todayStr + 'T12:00:00');
         startDate.setDate(startDate.getDate() - (lineage.daysInState - 1));
-        signalStartDate = startDate.toISOString().slice(0, 10);
+        signalStartDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(startDate);
       }
       return {
         ticker: s.ticker,

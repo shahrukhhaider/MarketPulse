@@ -8,7 +8,7 @@ import { parseEntries } from '../signal-history/ndjson.js';
 function getTodayET(): string {
   const now = new Date();
   const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
+    timeZone: 'America/Los_Angeles',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -21,9 +21,9 @@ function getTodayET(): string {
  */
 function getSevenDaysAgoET(): string {
   const now = new Date();
-  // Compute "today in ET" then subtract 6 days to get inclusive 7-day window
+  // Compute "today in PT" then subtract 6 days to get inclusive 7-day window
   const etDate = new Date(
-    now.toLocaleString('en-US', { timeZone: 'America/New_York' })
+    now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })
   );
   etDate.setDate(etDate.getDate() - 6);
   const year = etDate.getFullYear();

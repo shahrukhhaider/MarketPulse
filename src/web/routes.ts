@@ -168,7 +168,8 @@ function handleSignalsWeekAgo(stockTrackerHome: string) {
     }
 
     const now = new Date();
-    const sevenDaysAgo = new Date(now);
+    const todayPST = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(now);
+    const sevenDaysAgo = new Date(todayPST + 'T12:00:00');
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
     const dayBefore = new Date(sevenDaysAgo);
@@ -176,8 +177,8 @@ function handleSignalsWeekAgo(stockTrackerHome: string) {
     const dayAfter = new Date(sevenDaysAgo);
     dayAfter.setDate(dayAfter.getDate() + 1);
 
-    const minDate = dayBefore.toISOString().slice(0, 10);
-    const maxDate = dayAfter.toISOString().slice(0, 10);
+    const minDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(dayBefore);
+    const maxDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(dayAfter);
 
     const allLines = (mainLines + '\n' + techLines)
       .split('\n')

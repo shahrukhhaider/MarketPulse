@@ -6,6 +6,7 @@ import type { CacheFile } from './cache-file-store.js';
 import { periodToStartDate } from '../utils/period-converter.js';
 import { fetchDelta } from './delta-fetcher.js';
 import type { DateRangeProvider } from './delta-fetcher.js';
+import { todayPST } from '../utils/date-utils.js';
 
 // ============================================================
 // Options
@@ -96,7 +97,7 @@ export class HistoricalDataCache implements DataProvider {
     endDate?: string
   ): Promise<Result<HistoricalResult>> {
     const normalized = ticker.toUpperCase();
-    const effectiveEnd = endDate ?? todayISO();
+    const effectiveEnd = endDate ?? todayPST();
 
     // If noCache, bypass cache entirely
     if (this.noCache) {
@@ -188,13 +189,6 @@ export class HistoricalDataCache implements DataProvider {
 // ============================================================
 // Helper Functions
 // ============================================================
-
-/**
- * Returns today's date as an ISO date string (YYYY-MM-DD).
- */
-function todayISO(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-}
 
 /**
  * Slices bars to only include those within [startDate, endDate] inclusive.

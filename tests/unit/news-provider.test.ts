@@ -50,9 +50,15 @@ describe('fetchNewsItems', () => {
         sourceUrl: 'https://www.reuters.com/article/123',
       },
     ]);
+    // First call: RSS fetch
     fetchSpy.mockResolvedValueOnce({
       ok: true,
       text: () => Promise.resolve(xml),
+    } as unknown as Response);
+    // Second call: URL redirect resolution (returns same URL = no redirect)
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      url: 'https://news.google.com/rss/articles/abc123',
     } as unknown as Response);
 
     const items = await fetchNewsItems('AAPL');

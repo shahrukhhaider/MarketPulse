@@ -242,9 +242,9 @@ initDiscordBot().catch((err) => {
 // Cron schedules (TZ controlled by Railway TZ env var)
 // ---------------------------------------------------------------------------
 
-const ET = { timezone: 'America/New_York' } as const;
+const ET = { timezone: 'America/Los_Angeles' } as const;
 
-// Weekday scans at 5 PM ET (data settled ~1h after close)
+// Weekday scans at 5 PM PT (data settled ~4h after close)
 cron.schedule('0 17 * * 1-5', () => {
   (async () => {
     await dailyScanLargeCap();
@@ -261,10 +261,10 @@ cron.schedule('0 17 * * 1-5', () => {
 cron.schedule('0 9 * * 0', () => { weeklyTuneLargeCap(); }, ET);
 cron.schedule('0 11 * * 0', () => { weeklyTuneTech(); }, ET);
 
-// Morning sentiment digest at 8 AM ET on weekdays
+// Morning sentiment digest at 8 AM PT on weekdays
 cron.schedule('0 8 * * 1-5', () => { morningSentimentDigest(); }, ET);
 
-// Nightly news timeline at 9 PM ET on weekdays
+// Nightly news timeline at 9 PM PT on weekdays
 cron.schedule('0 21 * * 1-5', () => { runCli('news-timeline', ['news-timeline']); }, ET);
 
 // Signal checks during market hours on weekdays

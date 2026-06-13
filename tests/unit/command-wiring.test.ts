@@ -33,10 +33,11 @@ function createMockYahooClient(): YahooFinanceClient {
       if (!knownTickers.has(upper)) {
         throw new Error(`Symbol not found: ${upper}`);
       }
-      // Use recent dates so they fall within any period-based date range
+      // Use fixed recent dates that are always within a 1y period window
       const today = new Date();
+      today.setDate(today.getDate() - 2); // 2 days ago (avoids today edge cases)
       const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
+      yesterday.setDate(yesterday.getDate() - 1); // 3 days ago
       return {
         quotes: [
           { date: yesterday, open: 100, high: 105, low: 99, close: 103, volume: 1000000 },
@@ -70,9 +71,9 @@ describe('Command Wiring', () => {
   // ============================================================
 
   describe('initialization', () => {
-    it('creates a router with all 24 commands registered', () => {
+    it('creates a router with all 25 commands registered', () => {
       const commands = wired.router.getRegisteredCommands();
-      expect(commands).toHaveLength(24);
+      expect(commands).toHaveLength(25);
       expect(commands).toContain('add-stock');
       expect(commands).toContain('remove-stock');
       expect(commands).toContain('list-watchlist');

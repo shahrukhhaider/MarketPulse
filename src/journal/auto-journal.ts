@@ -10,6 +10,7 @@ import { load, record } from './journal-store.js';
 import type { JournalEntry } from './journal-types.js';
 import type { SignalOutput } from '../strategies/strategy-registry.js';
 import type { ErrorResult } from './journal-store.js';
+import { todayPST } from '../utils/date-utils.js';
 
 // ============================================================
 // Types
@@ -68,7 +69,7 @@ export function autoJournal(
   );
 
   // 3. Filter signals to qualifying candidates
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayPST();
 
   for (const signal of signals) {
     // Only active signals qualify

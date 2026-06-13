@@ -251,8 +251,9 @@ function getLatestSignals(input: Record<string, unknown>): unknown {
  */
 function isStalerThan2TradingDays(cacheDateStr: string): boolean {
   const cacheDate = new Date(cacheDateStr + 'T00:00:00');
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // Use explicit PST to determine "today" regardless of server timezone
+  const nowStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
+  const today = new Date(nowStr + 'T00:00:00');
 
   let tradingDaysBack = 0;
   const cursor = new Date(today);

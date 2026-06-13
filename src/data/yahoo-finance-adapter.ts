@@ -280,9 +280,9 @@ function computePeriodStartDate(period: HistoricalPeriod): Date {
 }
 
 /**
- * Convert a Date object to an ISO 8601 date string (YYYY-MM-DD).
+ * Convert a Date object to an ISO 8601 date string (YYYY-MM-DD) in Pacific time.
  */
 function toISODateString(date: Date | string): string {
   const d = typeof date === 'string' ? new Date(date) : date;
-  return d.toISOString().split('T')[0];
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(d);
 }

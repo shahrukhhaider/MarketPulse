@@ -1,6 +1,7 @@
 import type { HistoricalDataPoint } from '../types.js';
 import type { Result } from './config-store.js';
 import type { HistoricalResult } from './data-provider.js';
+import { todayPST } from '../utils/date-utils.js';
 
 // ============================================================
 // DeltaFetchResult Interface
@@ -23,13 +24,6 @@ function addDays(isoDate: string, days: number): string {
   const d = new Date(isoDate + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().split('T')[0];
-}
-
-/**
- * Returns today's date as an ISO date string (YYYY-MM-DD).
- */
-function todayISO(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
 }
 
 // ============================================================
@@ -102,7 +96,7 @@ export async function fetchDelta(
   existingBars: HistoricalDataPoint[],
   provider: DateRangeProvider
 ): Promise<Result<DeltaFetchResult>> {
-  const effectiveEnd = endDate || todayISO();
+  const effectiveEnd = endDate || todayPST();
 
   // Case 1: No existing bars — fetch the full range
   if (existingBars.length === 0) {

@@ -154,13 +154,13 @@ describe('PriceFeedClient – fetchHistoricalData', () => {
   it('filters out entries with null OHLCV fields', async () => {
     const mock = createMockClient({
       quotes: [
-        { date: new Date('2024-01-15'), open: 100, high: 105, low: 99, close: 103, volume: 1000000 },
-        { date: new Date('2024-01-16'), open: null, high: 108, low: 101, close: 107, volume: 1200000 },
-        { date: new Date('2024-01-17'), open: 110, high: null, low: 108, close: 112, volume: 900000 },
-        { date: new Date('2024-01-18'), open: 112, high: 115, low: null, close: 114, volume: 800000 },
-        { date: new Date('2024-01-19'), open: 114, high: 118, low: 112, close: null, volume: 700000 },
-        { date: new Date('2024-01-20'), open: 116, high: 120, low: 114, close: 118, volume: null },
-        { date: new Date('2024-01-21'), open: 118, high: 122, low: 116, close: 120, volume: 600000 },
+        { date: new Date('2024-01-15T12:00:00Z'), open: 100, high: 105, low: 99, close: 103, volume: 1000000 },
+        { date: new Date('2024-01-16T12:00:00Z'), open: null, high: 108, low: 101, close: 107, volume: 1200000 },
+        { date: new Date('2024-01-17T12:00:00Z'), open: 110, high: null, low: 108, close: 112, volume: 900000 },
+        { date: new Date('2024-01-18T12:00:00Z'), open: 112, high: 115, low: null, close: 114, volume: 800000 },
+        { date: new Date('2024-01-19T12:00:00Z'), open: 114, high: 118, low: 112, close: null, volume: 700000 },
+        { date: new Date('2024-01-20T12:00:00Z'), open: 116, high: 120, low: 114, close: 118, volume: null },
+        { date: new Date('2024-01-21T12:00:00Z'), open: 118, high: 122, low: 116, close: 120, volume: 600000 },
       ],
     });
     const client = new PriceFeedClient(mock);

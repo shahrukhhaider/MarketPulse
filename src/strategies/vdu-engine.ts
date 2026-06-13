@@ -3,6 +3,7 @@ import type { TunableStrategyInterface, SignalOutput } from './strategy-registry
 import type { ParameterSpace } from './parameter-grid.js';
 import { atr, sma } from '../indicators/indicators.js';
 import { scoreCandlesticks } from '../indicators/candlestick-scorer.js';
+import { todayPST } from '../utils/date-utils.js';
 
 // ============================================================
 // VDU Configuration Interface
@@ -870,7 +871,7 @@ export class VduEngine implements TunableStrategyInterface {
    */
   detectSignal(data: HistoricalDataPoint[], params: Record<string, number>): SignalOutput {
     const barIndex = data.length - 1;
-    const date = data.length > 0 ? data[barIndex].date : new Date().toISOString().slice(0, 10);
+    const date = data.length > 0 ? data[barIndex].date : todayPST();
 
     // Build config from params (fall back to defaults for missing values)
     const config = buildVduConfigFromParams(params);

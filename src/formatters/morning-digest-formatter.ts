@@ -51,13 +51,13 @@ function computeTimeAgo(publishedAt: string, now: Date): string {
 function formatHeader(date: Date): string {
   const weekdayFmt = new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
-    timeZone: 'America/New_York',
+    timeZone: 'America/Los_Angeles',
   });
   const dateFmt = new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-    timeZone: 'America/New_York',
+    timeZone: 'America/Los_Angeles',
   });
 
   const weekday = weekdayFmt.format(date);

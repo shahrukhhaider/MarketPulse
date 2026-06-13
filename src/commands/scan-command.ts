@@ -44,6 +44,7 @@ import { FundamentalsProvider } from '../data/fundamentals-provider.js';
 import { applyFundamentalAdjustment } from '../indicators/fundamental-scorer.js';
 import type { FundamentalData } from '../types.js';
 import { resolveTickerList } from '../utils/ticker-resolver.js';
+import { todayPST } from '../utils/date-utils.js';
 
 // ============================================================
 // Dependencies
@@ -631,7 +632,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
       // Apply signal lineage adjustment to active signals (after candlestick adjustment)
       const historyPath = join(dataDir, 'signal-history.ndjson');
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayPST();
       const currentMood = regimeResult?.market?.market_mood ?? 'unknown';
 
       const lineageAnnotatedSignals = candlestickAnnotatedSignals.map(s => {
@@ -866,7 +867,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
     // Apply signal lineage adjustment to active signals (after candlestick adjustment)
     const seqHistoryPath = join(dataDir, 'signal-history.ndjson');
-    const seqToday = new Date().toISOString().slice(0, 10);
+    const seqToday = todayPST();
     const seqCurrentMood = regimeResult?.market?.market_mood ?? 'unknown';
 
     const lineageAnnotatedSignals = candlestickAnnotatedSignals.map(s => {

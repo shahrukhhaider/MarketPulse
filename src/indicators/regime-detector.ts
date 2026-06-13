@@ -9,6 +9,7 @@ import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import type { SuperTrendParams } from './supertrend.js';
 import { computeSuperTrend } from './supertrend.js';
 import { atr, adx } from './indicators.js';
+import { todayPST } from '../utils/date-utils.js';
 
 // ============================================================
 // Types
@@ -152,7 +153,7 @@ export class RegimeDetector {
    */
   async detectFresh(tickers: string[]): Promise<RegimeResult> {
     const warnings: string[] = [];
-    const today = todayISO();
+    const today = todayPST();
 
     // Compute market regime (SPY/QQQ + VIX)
     const marketResult = await this.computeMarketRegime(warnings);
@@ -411,7 +412,7 @@ export class RegimeDetector {
       const cached: RegimeCacheFile = JSON.parse(raw);
 
       // Check if cache is from today
-      const today = todayISO();
+      const today = todayPST();
       if (cached.date !== today) {
         return null;
       }
@@ -436,7 +437,7 @@ export class RegimeDetector {
       }
 
       const cacheFile: RegimeCacheFile = {
-        date: todayISO(),
+        date: todayPST(),
         computedAt: new Date().toISOString(),
         market: result.market,
         tickers: result.tickers,
@@ -583,7 +584,3 @@ function classifyMarketMood(
 // ============================================================
 // Helpers
 // ============================================================
-
-function todayISO(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-}

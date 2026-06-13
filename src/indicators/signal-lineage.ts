@@ -11,6 +11,7 @@
 // ============================================================
 
 import { readFileSync } from 'fs';
+import { todayPST } from '../utils/date-utils.js';
 
 // ============================================================
 // Exported Interfaces
@@ -457,7 +458,7 @@ function detectPrecededByVdu(
  */
 export function computeLineage(input: LineageInput): SignalLineage {
   try {
-    const today = input.today ?? new Date().toISOString().slice(0, 10);
+    const today = input.today ?? todayPST();
 
     // Step 1: Load history
     const entries = loadHistory(input.historyPath, today);

@@ -18,6 +18,7 @@ import type { ScanOutput } from './extractor.js';
 import { upsertSignalEntry } from './upsert.js';
 import { resolveUniverse, resolveSignalHistoryFile } from '../utils/universe.js';
 import type { UniverseValue } from '../utils/universe.js';
+import { todayPST } from '../utils/date-utils.js';
 
 // ============================================================
 // Dependencies
@@ -110,7 +111,7 @@ export function createSignalHistoryHandler(deps: SignalHistoryCommandDeps): Comm
     };
 
     // Extract the SignalEntry for today's date
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const today = todayPST();
     const entry = extractSignalEntry(scanOutput, today);
 
     // Upsert into universe-specific signal history file

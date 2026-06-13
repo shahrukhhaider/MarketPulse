@@ -13,6 +13,7 @@ import type { Signal, ScanData } from './scan-types.js';
 import { readProcessedSignals, flattenProcessedSignals } from './pipeline/read-processed-signals.js';
 import { PriceFeedClient } from './data/price-feed-client.js';
 import type { PricePoint } from './types.js';
+import { todayPST } from './utils/date-utils.js';
 
 // --- Type Definitions ---
 
@@ -271,14 +272,14 @@ export function selectSignals(data: ScanData): { selected: SelectedSignals; tick
  */
 function detectTimeWindow(): string {
   const now = new Date();
-  // Convert to ET by formatting with the America/New_York timezone
-  const etHour = parseInt(
-    now.toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/New_York' }),
+  // Convert to PT by formatting with the America/Los_Angeles timezone
+  const ptHour = parseInt(
+    now.toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/Los_Angeles' }),
     10,
   );
-  if (etHour < 11) return '10:00 AM';
-  if (etHour < 14) return '12:00 PM';
-  return '3:30 PM';
+  if (ptHour < 8) return '7:00 AM';
+  if (ptHour < 11) return '9:00 AM';
+  return '12:30 PM';
 }
 
 /**
@@ -286,9 +287,9 @@ function detectTimeWindow(): string {
  */
 function formatScanDate(dateStr: string): string {
   const dateObj = new Date(dateStr + 'T12:00:00'); // noon to avoid timezone issues
-  const month = dateObj.toLocaleDateString('en-US', { month: 'short' });
-  const day = dateObj.getDate();
-  const year = dateObj.getFullYear();
+  const month = dateObj.toLocaleDateString('en-US', { month: 'short', timeZone: 'America/Los_Angeles' });
+  const day = new Intl.DateTimeFormat('en-US', { day: 'numeric', timeZone: 'America/Los_Angeles' }).format(dateObj);
+  const year = new Intl.DateTimeFormat('en-US', { year: 'numeric', timeZone: 'America/Los_Angeles' }).format(dateObj);
   return `${month} ${day}, ${year}`;
 }
 
@@ -442,7 +443,7 @@ export async function main(): Promise<void> {
   const scanDate =
     selected.combined.length > 0
       ? selected.combined[0].date
-      : new Date().toISOString().slice(0, 10);
+      : todayPST();
 
   // Step 6: Build payload (Req 5.1–5.7)
   const payload = buildSignalCheckPayload(selected.combined, priceMap, scanDate);
