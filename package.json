@@ -21,8 +21,8 @@
     "scan:notify": "mkdir -p .stock-tracker/logs && node dist/src/cli.js scan --tickers watchlist --strategy v3 --universe large_cap --allow-stale --summary --log .stock-tracker/logs/scan_latest.json && node dist/src/discord-notify.js .stock-tracker/logs/scan_latest.json",
     "scan:tech": "node dist/src/cli.js scan --tickers watchlist --strategy v3 --universe tech --allow-stale --summary",
     "scan:tech:notify": "mkdir -p .stock-tracker/logs && node dist/src/cli.js scan --tickers watchlist --strategy v3 --universe tech --allow-stale --summary --log .stock-tracker/logs/scan_tech_latest.json && node dist/src/discord-notify.js .stock-tracker/logs/scan_tech_latest.json",
-    "scan:all": "npm run scan:lc && npm run scan:tech",
-    "scan-summary": "node dist/src/cli.js scan --summary",
+    "scan:all": "npm run scan && npm run scan:tech",
+    "scan-summary": "node dist/src/cli.js scan --tickers watchlist --strategy v3 --universe large_cap --allow-stale --summary",
     "chart": "node dist/src/cli.js chart",
     "scan-chart": "node dist/src/cli.js scan-chart",
     "paper:status": "python3 scripts/webull-trade.py status",
@@ -60,6 +60,6 @@
     "vitest": "^2.1.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   }
 }

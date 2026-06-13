@@ -20,16 +20,11 @@ function getTodayET(): string {
  * Get the date 7 days ago as a YYYY-MM-DD string (inclusive boundary).
  */
 function getSevenDaysAgoET(): string {
-  const now = new Date();
-  // Compute "today in PT" then subtract 6 days to get inclusive 7-day window
-  const etDate = new Date(
-    now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })
-  );
-  etDate.setDate(etDate.getDate() - 6);
-  const year = etDate.getFullYear();
-  const month = String(etDate.getMonth() + 1).padStart(2, '0');
-  const day = String(etDate.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  // Get today in PT, then subtract 6 days for inclusive 7-day window
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
+  const d = new Date(todayStr + 'T12:00:00'); // noon avoids DST edge cases
+  d.setDate(d.getDate() - 6);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(d);
 }
 
 /**

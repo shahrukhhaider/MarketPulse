@@ -14,6 +14,15 @@ const PORT = Number(process.env.PORT) || 3000;
 const STOCK_TRACKER_HOME = process.env.STOCK_TRACKER_HOME ?? process.cwd();
 const CLI_PATH = path.join(__dirname, 'cli.js');
 
+// Warn if running in production without STOCK_TRACKER_HOME — data may be ephemeral
+if (process.env.NODE_ENV === 'production' && !process.env.STOCK_TRACKER_HOME) {
+  console.error(
+    '[worker] WARNING: STOCK_TRACKER_HOME is not set. Data will write to ephemeral ' +
+    `${STOCK_TRACKER_HOME}/.stock-tracker/ which is lost on redeploy. ` +
+    'Set STOCK_TRACKER_HOME to your persistent volume mount path.'
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Job registry & guard
 // ---------------------------------------------------------------------------
@@ -244,8 +253,8 @@ initDiscordBot().catch((err) => {
 
 const ET = { timezone: 'America/Los_Angeles' } as const;
 
-// Weekday scans at 5 PM PT (data settled ~4h after close)
-cron.schedule('0 17 * * 1-5', () => {
+// Weekday scans at 2 PM PT (1h after market close for data to settle)
+cron.schedule('0 14 * * 1-5', () => {
   (async () => {
     await dailyScanLargeCap();
     await dailyScanTech();
@@ -261,16 +270,16 @@ cron.schedule('0 17 * * 1-5', () => {
 cron.schedule('0 9 * * 0', () => { weeklyTuneLargeCap(); }, ET);
 cron.schedule('0 11 * * 0', () => { weeklyTuneTech(); }, ET);
 
-// Morning sentiment digest at 8 AM PT on weekdays
-cron.schedule('0 8 * * 1-5', () => { morningSentimentDigest(); }, ET);
+// Morning sentiment digest at 6 AM PT on weekdays (before market open)
+cron.schedule('0 6 * * 1-5', () => { morningSentimentDigest(); }, ET);
 
-// Nightly news timeline at 9 PM PT on weekdays
-cron.schedule('0 21 * * 1-5', () => { runCli('news-timeline', ['news-timeline']); }, ET);
+// Nightly news timeline at 6 PM PT on weekdays
+cron.schedule('0 18 * * 1-5', () => { runCli('news-timeline', ['news-timeline']); }, ET);
 
-// Signal checks during market hours on weekdays
-cron.schedule('0 10 * * 1-5', () => { signalCheck(); }, ET);
-cron.schedule('0 12 * * 1-5', () => { signalCheck(); }, ET);
-cron.schedule('30 15 * * 1-5', () => { signalCheck(); }, ET);
+// Signal checks during market hours on weekdays (market: 6:30 AM – 1 PM PT)
+cron.schedule('0 7 * * 1-5', () => { signalCheck(); }, ET);
+cron.schedule('0 9 * * 1-5', () => { signalCheck(); }, ET);
+cron.schedule('30 12 * * 1-5', () => { signalCheck(); }, ET);
 
 log('worker', 'All cron jobs scheduled');
 

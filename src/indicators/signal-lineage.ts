@@ -24,7 +24,7 @@ export interface LineageInput {
   currentState: string;       // "active" | "near" | "forming" | "none"
   currentMood: string;        // today's market_mood
   historyPath: string;        // absolute path to signal-history.ndjson
-  today?: string;             // ISO date string (default: new Date().toISOString().slice(0,10))
+  today?: string;             // ISO date string (default: todayPST())
 }
 
 /** Output of the lineage computation */

@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Build TypeScript
 # ---------------------------------------------------------------------------
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ RUN npx tsc
 # ---------------------------------------------------------------------------
 # Stage 2: Production image with Chromium
 # ---------------------------------------------------------------------------
-FROM node:20-slim
+FROM node:22-slim
 
 # Install Chromium (pulls all required system libraries as dependencies)
 RUN apt-get update && apt-get install -y --no-install-recommends \
