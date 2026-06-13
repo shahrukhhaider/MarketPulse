@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import type Anthropic from '@anthropic-ai/sdk';
 import { toExposureTier } from '../formatters/market-exposure.js';
+import { executeScanTicker } from './scan-ticker-executor.js';
 
 // ---------------------------------------------------------------------------
 // Tool definitions (Claude JSON schema) and executor
@@ -103,6 +104,18 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: ['ticker'],
     },
   },
+  {
+    name: 'scan_ticker',
+    description:
+      'Perform a real-time technical analysis scan using v3 strategies for any ticker — not limited to the watchlist. Returns signal state, confidence, entry/stop/target levels for each strategy, and identifies the best current setup.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Ticker symbol to scan (e.g. "TSLA")' },
+      },
+      required: ['ticker'],
+    },
+  },
 ];
 
 /**
@@ -125,6 +138,10 @@ export async function executeTool(
       return getMarketNews();
     case 'get_ticker_news':
       return getTickerNews(input as { ticker: string });
+    case 'scan_ticker': {
+      const ticker = input.ticker as string;
+      return executeScanTicker(ticker);
+    }
     default:
       return { error: `Unknown tool: ${name}` };
   }

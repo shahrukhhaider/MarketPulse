@@ -645,14 +645,17 @@ export async function postMultipartToDiscord(
 // --- Main Entry Point ---
 
 async function main(): Promise<void> {
+  // Base path: use STOCK_TRACKER_HOME env var, fall back to cwd
+  const basePath = process.env.STOCK_TRACKER_HOME ?? process.cwd();
+
   // 1. Read webhook URL — prefer DISCORD_WEBHOOK_URL env var, then fall back to file
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL?.trim() || readDiscordWebhookUrl(process.cwd());
+  const webhookUrl = process.env.DISCORD_WEBHOOK_URL?.trim() || readDiscordWebhookUrl(basePath);
   if (webhookUrl === null || webhookUrl === '') {
     process.exit(0);
   }
 
   // 2. Read chart generation toggle
-  const chartsEnabled = readChartsEnabled(process.cwd());
+  const chartsEnabled = readChartsEnabled(basePath);
 
   // 3. Resolve scan JSON path
   let scanPath: string;
@@ -663,7 +666,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   } else {
-    const logsDir = path.join(process.cwd(), '.stock-tracker', 'logs');
+    const logsDir = path.join(basePath, '.stock-tracker', 'logs');
     const found = findLatestScanLog(logsDir);
     if (found === null) {
       process.stderr.write('[discord-notify] No scan log found\n');
@@ -718,9 +721,10 @@ async function main(): Promise<void> {
 
     // Read lightweight-charts JS from node_modules
     let lightweightChartsJs: string | null = null;
+    const appRoot = path.resolve(__dirname, '..');
     const lwcPaths = [
-      path.join(process.cwd(), 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
-      path.join(process.cwd(), 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
+      path.join(appRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
+      path.join(appRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
     ];
     for (const lwcPath of lwcPaths) {
       try {
@@ -744,7 +748,7 @@ async function main(): Promise<void> {
 
         const yahooAdapter = new YahooFinanceAdapter();
         const dataProvider = new HistoricalDataCache(yahooAdapter, {
-          cacheDir: path.join(process.cwd(), '.stock-tracker', 'history-cache'),
+          cacheDir: path.join(basePath, '.stock-tracker', 'history-cache'),
         });
 
         const chartResults = await Promise.race([

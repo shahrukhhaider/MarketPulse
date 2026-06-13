@@ -373,7 +373,7 @@ export function buildSignalCheckPayload(
  * Requirements: 2.1, 2.2, 2.7, 6.1, 6.3, 6.4, 6.5, 6.6, 6.7, 7.1–7.6
  */
 export async function main(): Promise<void> {
-  const basePath = process.cwd();
+  const basePath = process.env.STOCK_TRACKER_HOME ?? process.cwd();
 
   // Step 1: Read the latest scan log (Req 2.1, 6.5)
   const logsDir = path.join(basePath, '.stock-tracker', 'logs');

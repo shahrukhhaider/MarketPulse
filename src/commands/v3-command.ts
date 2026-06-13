@@ -2,13 +2,12 @@
 // V3 Command — Shorthand for tune-and-chart --v3 --save
 // ============================================================
 
-import * as path from 'node:path';
-import { readFileSync } from 'node:fs';
 import { successResult, errorResult } from '../command-router.js';
 import type { CommandHandler, CommandRouter } from '../command-router.js';
 import type { AppDependencies } from '../di/container.js';
 import { parseConcurrency } from '../utils/concurrency.js';
 import { resolveUniverse } from '../utils/universe.js';
+import { resolveTickerList } from '../utils/ticker-resolver.js';
 import { parallelTune } from '../pipeline/parallel-tune.js';
 
 // ============================================================
@@ -38,7 +37,7 @@ export function createV3Handler(deps: V3CommandDeps): CommandHandler {
     }
 
     // Resolve ticker list: 'watchlist' loads from data/watchlist.json, comma-separated splits
-    const tickers = resolveV3TickerList(tickerArg, dataDir);
+    const tickers = resolveTickerList(tickerArg, dataDir);
     if ('error' in tickers) {
       return errorResult('v3', 'CONFIG_ERROR', tickers.error);
     }
@@ -76,39 +75,3 @@ export function createV3Handler(deps: V3CommandDeps): CommandHandler {
   };
 }
 
-// ============================================================
-// V3 Ticker List Resolution
-// ============================================================
-
-/**
- * Resolve the --ticker argument for the v3 command.
- * Supports: single ticker, comma-separated list, or 'watchlist' keyword.
- */
-function resolveV3TickerList(tickerArg: string, dataDir: string): string[] | { error: string } {
-  if (tickerArg.toLowerCase() === 'watchlist') {
-    try {
-      // Look for watchlist.json in the data/ directory relative to CWD (project root)
-      // Fallback: also check relative to dataDir
-      let watchlistPath = path.join(process.cwd(), 'data', 'watchlist.json');
-      try {
-        readFileSync(watchlistPath, 'utf-8');
-      } catch {
-        // Fallback to dataDir-relative path (for compatibility with tune-command)
-        watchlistPath = path.join(dataDir, 'data', 'watchlist.json');
-      }
-      const content = readFileSync(watchlistPath, 'utf-8');
-      const parsed = JSON.parse(content) as { tickers?: string[] };
-      if (!Array.isArray(parsed.tickers) || parsed.tickers.length === 0) {
-        return { error: `watchlist.json at ${watchlistPath} is missing or has empty 'tickers' array` };
-      }
-      return parsed.tickers.map((t: string) => t.toUpperCase());
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      return { error: `Failed to load watchlist.json: ${message}` };
-    }
-  }
-
-  // Comma-separated or single ticker
-  const tickers = tickerArg.split(',').map(t => t.trim().toUpperCase()).filter(t => t.length > 0);
-  return tickers;
-}
