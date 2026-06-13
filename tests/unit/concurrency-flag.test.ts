@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { parseConcurrency } from '../../src/command-wiring.js';
+import { parseConcurrency } from '../../src/utils/concurrency.js';
 
 describe('parseConcurrency', () => {
   let stderrWrite: typeof process.stderr.write;

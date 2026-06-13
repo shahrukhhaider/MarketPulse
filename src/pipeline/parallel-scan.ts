@@ -15,7 +15,7 @@ import type { SignalOutput } from '../strategies/strategy-registry.js';
 import { detectSignal } from '../strategies/signal-detector.js';
 import type { DetectSignalOptions } from '../strategies/signal-detector.js';
 import { loadStrategyProfile } from '../data/profile-store.js';
-import { sortBySignalPriority } from '../commands/scan-command.js';
+import { sortBySignalPriority } from '../utils/signal-priority.js';
 import { WorkerPool } from './worker-pool.js';
 import type { WorkerTask, WorkerResult } from './worker-pool.js';
 import { fetchHistoricalDataStream } from '../data/data-fetcher.js';

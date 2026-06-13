@@ -45,6 +45,7 @@ import { applyFundamentalAdjustment } from '../indicators/fundamental-scorer.js'
 import type { FundamentalData } from '../types.js';
 import { resolveTickerList } from '../utils/ticker-resolver.js';
 import { todayPST } from '../utils/date-utils.js';
+import { parseConcurrency } from '../utils/concurrency.js';
 
 // ============================================================
 // Dependencies
@@ -57,47 +58,11 @@ export interface ScanCommandDeps {
 }
 
 // ============================================================
-// Signal Priority Map
+// Signal Priority (re-exported from utils/signal-priority.ts)
 // ============================================================
 
-const SIGNAL_PRIORITY: Record<string, number> = {
-  active: 0,
-  active_late: 1,
-  extended: 2,
-  pressure: 3,
-  near: 4,
-  forming: 5,
-  none: 6,
-};
-
-// ============================================================
-// Sort by Signal Priority
-// ============================================================
-
-/**
- * Sort SignalOutput array by signal priority:
- * active > active_late > extended > pressure > near > forming > none.
- * When two signals share the same priority, sorts by confidence descending.
- * Returns a new sorted array (does not mutate the input).
- */
-export function sortBySignalPriority(signals: SignalOutput[]): SignalOutput[] {
-  return [...signals].sort((a, b) => {
-    const priorityA = SIGNAL_PRIORITY[a.signal] ?? 6;
-    const priorityB = SIGNAL_PRIORITY[b.signal] ?? 6;
-    if (priorityA !== priorityB) {
-      return priorityA - priorityB;
-    }
-    // Secondary sort: higher confidence first
-    const confDiff = b.confidence - a.confidence;
-    if (confDiff !== 0) {
-      return confDiff;
-    }
-    // Tertiary sort: higher confluence first; undefined sorts after defined
-    const confA = a.confluence ?? -1;
-    const confB = b.confluence ?? -1;
-    return confB - confA;
-  });
-}
+import { SIGNAL_PRIORITY, sortBySignalPriority } from '../utils/signal-priority.js';
+export { SIGNAL_PRIORITY, sortBySignalPriority };
 
 
 // ============================================================
@@ -347,6 +312,9 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     const regimeFlag = opts['no-regime'] === undefined; // regime runs by default; --no-regime disables it
     const universeArg = opts['universe'];
 
+    // Parse concurrency once at the top for all code paths
+    const parsedConcurrency = parseConcurrency(opts);
+
     if (!strategyName) {
       return errorResult('scan', 'MISSING_PARAM', 'Missing required parameter: --strategy');
     }
@@ -395,7 +363,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         delete universeOpts['_universe_all'];
 
         // Run the scan for this universe using the single-universe path
-        const concurrency = opts['_concurrency'] ? parseInt(opts['_concurrency'], 10) : 8;
+        const concurrency = parsedConcurrency;
 
         // Run regime detection once (shared across universes)
         let regimeResult: RegimeResult | undefined;
@@ -584,8 +552,8 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     const { map: fundamentalsMap, warnings: fundWarnings } = await fundamentalsProvider.buildFundamentalsMap(tickers);
     const warnings: string[] = [...fundWarnings];
 
-    // Parse concurrency from opts (set by command-wiring.ts)
-    const concurrency = opts['_concurrency'] ? parseInt(opts['_concurrency'], 10) : 8;
+    // Parse concurrency for multi-ticker path
+    const concurrency = parsedConcurrency;
 
     // Multi-ticker path: use parallelScan when multiple tickers and concurrency > 1
     if (tickers.length > 1 && concurrency > 1) {
