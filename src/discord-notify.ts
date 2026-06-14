@@ -648,16 +648,7 @@ async function main(): Promise<void> {
   // Base path: use STOCK_TRACKER_HOME env var, fall back to cwd
   const basePath = process.env.STOCK_TRACKER_HOME ?? process.cwd();
 
-  // 1. Read webhook URL — prefer DISCORD_WEBHOOK_URL env var, then fall back to file
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL?.trim() || readDiscordWebhookUrl(basePath);
-  if (webhookUrl === null || webhookUrl === '') {
-    process.exit(0);
-  }
-
-  // 2. Read chart generation toggle
-  const chartsEnabled = readChartsEnabled(basePath);
-
-  // 3. Resolve scan JSON path
+  // 1. Resolve scan JSON path first (needed to determine universe for webhook selection)
   let scanPath: string;
   if (process.argv[2]) {
     scanPath = process.argv[2];
@@ -675,7 +666,25 @@ async function main(): Promise<void> {
     scanPath = found;
   }
 
-  // 4. Parse scan JSON
+  // 2. Determine if this is a tech scan (by filename convention: scan_tech_*)
+  const scanFilename = path.basename(scanPath);
+  const isTechScan = scanFilename.startsWith('scan_tech');
+
+  // 3. Read webhook URL — use tech webhook for tech scans, default for others
+  let webhookUrl: string | null;
+  if (isTechScan) {
+    webhookUrl = process.env.DISCORD_WEBHOOK_TECH_URL?.trim() || readDiscordWebhookTechUrl(basePath);
+  } else {
+    webhookUrl = process.env.DISCORD_WEBHOOK_URL?.trim() || readDiscordWebhookUrl(basePath);
+  }
+  if (webhookUrl === null || webhookUrl === '') {
+    process.exit(0);
+  }
+
+  // 4. Read chart generation toggle
+  const chartsEnabled = readChartsEnabled(basePath);
+
+  // 5. Parse scan JSON
   let data: ScanData;
   try {
     data = parseScanJson(scanPath);
@@ -685,7 +694,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // 5. Generate chart images if enabled
+  // 6. Generate chart images if enabled
   const activeSignals = data.signals.filter(
     (s) => s.signal === 'active' || s.signal === 'active_late',
   );
