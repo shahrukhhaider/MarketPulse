@@ -46,6 +46,7 @@ import type { FundamentalData } from '../types.js';
 import { resolveTickerList } from '../utils/ticker-resolver.js';
 import { todayPST } from '../utils/date-utils.js';
 import { parseConcurrency } from '../utils/concurrency.js';
+import { getCommunityTickers } from '../db/watchlist-store.js';
 
 // ============================================================
 // Dependencies
@@ -338,6 +339,15 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       const allResults: Record<string, unknown>[] = [];
       const allWarnings: string[] = [];
 
+      // Load community watchlist tickers from DB (shared across all universes)
+      let communityTickers: string[] = [];
+      try {
+        communityTickers = await getCommunityTickers();
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.warn(`[scan] Failed to load community tickers: ${message}`);
+      }
+
       for (const tier of universesToScan) {
         const resolution = resolveUniverse(tier);
         if ('error' in resolution) {
@@ -346,12 +356,15 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         }
 
         // Load tickers from the universe's watchlist
-        const tickers = loadTickersFromWatchlist(dataDir, resolution.watchlistFile);
+        let tickers: string[] | { error: string } = loadTickersFromWatchlist(dataDir, resolution.watchlistFile);
         if ('error' in tickers) {
           // Non-fatal for --universe all: skip with warning
           allWarnings.push(`[${tier}] Skipping: ${tickers.error}`);
           continue;
         }
+
+        // Merge file tickers with community tickers, deduplicate by uppercase symbol
+        tickers = [...new Set([...tickers, ...communityTickers].map(t => t.toUpperCase()))];
 
         // Build opts for this universe's scan (reuse most opts, override tickers)
         const universeOpts: Record<string, string> = {
@@ -533,6 +546,18 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     if (tickers.length === 0) {
       return errorResult('scan', 'MISSING_PARAM', 'No tickers specified');
     }
+
+    // Load community watchlist tickers from DB
+    let communityTickers: string[] = [];
+    try {
+      communityTickers = await getCommunityTickers();
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.warn(`[scan] Failed to load community tickers: ${message}`);
+    }
+
+    // Merge file tickers with community tickers, deduplicate by uppercase symbol
+    tickers = [...new Set([...tickers, ...communityTickers].map(t => t.toUpperCase()))];
 
     // Run regime detection by default (suppress with --no-regime)
     let regimeResult: RegimeResult | undefined;

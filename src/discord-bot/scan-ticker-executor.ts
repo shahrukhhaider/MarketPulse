@@ -131,12 +131,20 @@ export async function executeScanTicker(
     const validationResult = await Promise.race([
       dataProvider.validateTicker(normalizedTicker),
       new Promise<{ success: false; error: string }>((resolve) =>
-        setTimeout(() => resolve({ success: false, error: 'Ticker validation timed out (8s)' }), 8000)
+        setTimeout(() => resolve({ success: false, error: 'TIMEOUT: Ticker validation timed out (8s)' }), 8000)
       ),
     ]);
 
     if (!validationResult.success) {
-      return { error: `Invalid ticker "${normalizedTicker}": ${validationResult.error}` };
+      const err = validationResult.error;
+      if (err.includes('TIMEOUT')) {
+        return { error: `Could not verify ticker '${normalizedTicker}' — Yahoo Finance is not responding. Try again in a few minutes.` };
+      }
+      if (err.includes('INVALID_TICKER')) {
+        return { error: `Ticker '${normalizedTicker}' not found — check the symbol and try again.` };
+      }
+      // PRICE_FEED_UNAVAILABLE or other network error — skip validation and try fetching anyway
+      // Yahoo quote endpoint can be flaky but getHistoricalData may still work
     }
 
     // ── 3. Data fetch with retry-once on rate-limit ──
@@ -148,7 +156,7 @@ export async function executeScanTicker(
     }
 
     if (!dataResult.success) {
-      return { error: `Failed to fetch data for ${normalizedTicker}: ${dataResult.error}` };
+      return { error: `Data unavailable for '${normalizedTicker}' right now. Try again in a few minutes.` };
     }
 
     const dataPoints: HistoricalDataPoint[] = dataResult.data.dataPoints;

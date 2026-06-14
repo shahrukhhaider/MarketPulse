@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import type Anthropic from '@anthropic-ai/sdk';
 import { toExposureTier } from '../formatters/market-exposure.js';
 import { executeScanTicker } from './scan-ticker-executor.js';
+import { addToWatchlist, removeFromWatchlist, getUserWatchlist } from '../db/watchlist-store.js';
 
 // ---------------------------------------------------------------------------
 // Tool definitions (Claude JSON schema) and executor
@@ -116,6 +117,40 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: ['ticker'],
     },
   },
+  {
+    name: 'add_to_watchlist',
+    description:
+      "Add a stock ticker to the user's personal watchlist. Tickers on any user's watchlist are automatically included in the next daily scan.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Stock ticker symbol to add (e.g. "HOOD")' },
+      },
+      required: ['ticker'],
+    },
+  },
+  {
+    name: 'remove_from_watchlist',
+    description:
+      "Remove a stock ticker from the user's personal watchlist.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Stock ticker symbol to remove (e.g. "TSLA")' },
+      },
+      required: ['ticker'],
+    },
+  },
+  {
+    name: 'get_my_watchlist',
+    description:
+      "Get the current user's personal watchlist of stock tickers.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 /**
@@ -124,6 +159,7 @@ export const toolDefinitions: Anthropic.Tool[] = [
 export async function executeTool(
   name: string,
   input: Record<string, unknown>,
+  userId?: string,
 ): Promise<unknown> {
   switch (name) {
     case 'get_latest_signals':
@@ -141,6 +177,17 @@ export async function executeTool(
     case 'scan_ticker': {
       const ticker = input.ticker as string;
       return executeScanTicker(ticker);
+    }
+    case 'add_to_watchlist': {
+      const ticker = input.ticker as string;
+      return addToWatchlistTool(userId ?? '', ticker);
+    }
+    case 'remove_from_watchlist': {
+      const ticker = input.ticker as string;
+      return removeFromWatchlistTool(userId ?? '', ticker);
+    }
+    case 'get_my_watchlist': {
+      return getMyWatchlistTool(userId ?? '');
     }
     default:
       return { error: `Unknown tool: ${name}` };
@@ -690,4 +737,175 @@ async function getTickerNews(input: { ticker: string }): Promise<unknown> {
   }
 
   return result;
+}
+
+
+// ---------------------------------------------------------------------------
+// addToWatchlistTool implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates a ticker symbol: non-empty, 1–10 characters, letters only (or letters + numbers).
+ * Returns null if valid, or an error string if invalid.
+ */
+function validateTickerFormat(ticker: string): string | null {
+  if (!ticker || ticker.trim().length === 0) {
+    return 'Ticker cannot be empty';
+  }
+  const trimmed = ticker.trim();
+  if (trimmed.length > 10) {
+    return 'Ticker is too long (max 10 characters)';
+  }
+  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(trimmed)) {
+    return 'Ticker must start with a letter and contain only letters and numbers';
+  }
+  return null;
+}
+
+/**
+ * Validates a ticker against Yahoo Finance (existence check) with an 8s timeout.
+ * Returns null if valid, or an error string if invalid/unreachable.
+ */
+async function validateTickerExists(ticker: string): Promise<string | null> {
+  try {
+    const basePath = process.env.STOCK_TRACKER_HOME ?? process.cwd();
+    const { YahooFinanceAdapter } = await import('../data/yahoo-finance-adapter.js');
+    const { HistoricalDataCache } = await import('../data/historical-data-cache.js');
+
+    const yahooAdapter = new YahooFinanceAdapter();
+    const dataProvider = new HistoricalDataCache(yahooAdapter, {
+      cacheDir: path.join(basePath, '.stock-tracker', 'history-cache'),
+    });
+
+    const result = await Promise.race([
+      dataProvider.validateTicker(ticker),
+      new Promise<{ success: false; error: string }>((resolve) =>
+        setTimeout(() => resolve({ success: false, error: 'TIMEOUT' }), 8000),
+      ),
+    ]);
+
+    if (!result.success) {
+      if (result.error.includes('TIMEOUT')) {
+        // Timeout — let it through rather than blocking the user
+        return null;
+      }
+      if (result.error.includes('INVALID_TICKER')) {
+        return `Ticker '${ticker}' not found — check the symbol and try again`;
+      }
+      // Other network errors — let it through
+      return null;
+    }
+
+    return null;
+  } catch {
+    // On any unexpected error, let it through rather than blocking
+    return null;
+  }
+}
+
+/**
+ * Add a ticker to the user's watchlist.
+ * Validates the ticker format and existence, then calls the store.
+ */
+export async function addToWatchlistTool(
+  userId: string,
+  ticker: string,
+): Promise<{ success: true; ticker: string; message: string } | { success: false; error: string }> {
+  // 1. Basic format validation
+  const formatError = validateTickerFormat(ticker);
+  if (formatError) {
+    return { success: false, error: formatError };
+  }
+
+  const normalizedTicker = ticker.trim().toUpperCase();
+
+  // 2. Validate ticker exists via Yahoo Finance (8s timeout)
+  const existsError = await validateTickerExists(normalizedTicker);
+  if (existsError) {
+    return { success: false, error: existsError };
+  }
+
+  // 3. Call the store
+  try {
+    const result = await addToWatchlist(userId, normalizedTicker);
+    if ('error' in result) {
+      return { success: false, error: result.error };
+    }
+    return {
+      success: true,
+      ticker: normalizedTicker,
+      message: `${normalizedTicker} added to your watchlist. It will appear in tomorrow's scan.`,
+    };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to add ticker: ${message}` };
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// getMyWatchlistTool implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the user's personal watchlist.
+ * Calls the store and returns tickers with count and max limit info.
+ */
+export async function getMyWatchlistTool(
+  userId: string,
+): Promise<{ tickers: string[]; count: number; maxAllowed: number; message?: string }> {
+  try {
+    const tickers = await getUserWatchlist(userId);
+    if (tickers.length === 0) {
+      return {
+        tickers: [],
+        count: 0,
+        maxAllowed: 10,
+        message: 'Your watchlist is empty. Add tickers with add_to_watchlist.',
+      };
+    }
+    return {
+      tickers,
+      count: tickers.length,
+      maxAllowed: 10,
+    };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to retrieve watchlist: ${message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// removeFromWatchlistTool implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove a ticker from the user's watchlist.
+ * Validates the ticker is non-empty, then calls the store.
+ */
+export async function removeFromWatchlistTool(
+  userId: string,
+  ticker: string,
+): Promise<{ success: true; ticker: string; message: string } | { success: false; error: string }> {
+  // Basic ticker validation (non-empty)
+  if (!ticker || ticker.trim().length === 0) {
+    return { success: false, error: 'Ticker cannot be empty' };
+  }
+
+  const normalizedTicker = ticker.trim().toUpperCase();
+
+  try {
+    const removed = await removeFromWatchlist(userId, normalizedTicker);
+    if (removed) {
+      return {
+        success: true,
+        ticker: normalizedTicker,
+        message: `Removed ${normalizedTicker} from your watchlist`,
+      };
+    }
+    return { success: false, error: `${normalizedTicker} is not in your watchlist` };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to remove ticker: ${message}` };
+  }
 }

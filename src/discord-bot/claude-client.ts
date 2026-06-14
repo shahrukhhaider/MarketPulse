@@ -19,12 +19,14 @@ const NOT_CONFIGURED_MSG = 'The AI backend is not configured. Please contact the
  * definitions. Implements the tool-use loop: if Claude responds with tool_use,
  * execute the tool(s), append results, and call again until end_turn.
  *
+ * @param userId - Optional Discord user ID passed through to tool executors
  * Returns the final assistant text content.
  */
 export async function askClaude(
   systemPrompt: string,
   messages: ClaudeMessage[],
   tools: Anthropic.Tool[],
+  userId?: string,
 ): Promise<string> {
   // Guard: missing API key
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -78,7 +80,7 @@ export async function askClaude(
       for (const toolBlock of toolUseBlocks) {
         let result: unknown;
         try {
-          result = await executeTool(toolBlock.name, toolBlock.input);
+          result = await executeTool(toolBlock.name, toolBlock.input, userId);
         } catch (err) {
           result = {
             error: `${toolBlock.name} failed: ${err instanceof Error ? err.message : String(err)}`,

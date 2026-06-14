@@ -256,8 +256,16 @@ const ET = { timezone: 'America/Los_Angeles' } as const;
 // Weekday scans at 2 PM PT (1h after market close for data to settle)
 cron.schedule('0 14 * * 1-5', () => {
   (async () => {
-    await dailyScanLargeCap();
-    await dailyScanTech();
+    try {
+      await dailyScanLargeCap();
+    } catch (err) {
+      console.error('[worker] dailyScanLargeCap error:', err instanceof Error ? err.message : err);
+    }
+    try {
+      await dailyScanTech();
+    } catch (err) {
+      console.error('[worker] dailyScanTech error:', err instanceof Error ? err.message : err);
+    }
     try {
       await updateMemberTradePnL();
     } catch (err) {

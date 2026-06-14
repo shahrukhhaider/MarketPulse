@@ -1,4 +1,13 @@
-import { pgTable, serial, text, real, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, real, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+
+export const userWatchlist = pgTable('user_watchlist', {
+  id:      serial('id').primaryKey(),
+  userId:  text('user_id').notNull(),
+  ticker:  text('ticker').notNull(),
+  addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('user_watchlist_user_id_ticker_idx').on(table.userId, table.ticker),
+]);
 
 export const memberTrades = pgTable('member_trades', {
   id:          serial('id').primaryKey(),

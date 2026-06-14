@@ -35,11 +35,12 @@ export interface InitialTuneOptions {
 // Constants
 // ============================================================
 
-const PROJECT_DIR = resolve(__dirname, '..', '..');
-const DATA_DIR = join(PROJECT_DIR, '.stock-tracker', 'data');
+const BASE_DIR = process.env.STOCK_TRACKER_HOME ?? resolve(__dirname, '..', '..');
+const DATA_DIR = join(BASE_DIR, '.stock-tracker', 'data');
 const TECH_WATCHLIST_PATH = join(DATA_DIR, 'watchlist-tech.json');
 const LARGECAP_WATCHLIST_PATH = join(DATA_DIR, 'watchlist.json');
-const CLI_PATH = join(PROJECT_DIR, 'dist', 'src', 'cli.js');
+// In prod: /app/dist/src/cli.js; locally: resolve to dist/src/cli.js from project root
+const CLI_PATH = resolve(__dirname, '..', 'cli.js');
 
 // ============================================================
 // Core Functions
@@ -155,7 +156,7 @@ export function runInitialTuning(
       execSync(
         `node "${CLI_PATH}" tune-pipeline --tickers "${tickerList}" --strategy v3 --concurrency ${options.concurrency} --universe ${options.universe} --save`,
         {
-          cwd: PROJECT_DIR,
+          cwd: BASE_DIR,
           stdio: 'pipe',
           timeout: 0, // no timeout — tuning can be long
         },

@@ -721,10 +721,13 @@ async function main(): Promise<void> {
 
     // Read lightweight-charts JS from node_modules
     let lightweightChartsJs: string | null = null;
-    const appRoot = path.resolve(__dirname, '..');
     const lwcPaths = [
-      path.join(appRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
-      path.join(appRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
+      // Prod layout: /app/node_modules (node_modules at package root, dist in /app/dist)
+      path.resolve(__dirname, '..', '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
+      path.resolve(__dirname, '..', '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
+      // Local dev layout: node_modules at project root, __dirname is src/
+      path.resolve(__dirname, '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
+      path.resolve(__dirname, '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
     ];
     for (const lwcPath of lwcPaths) {
       try {

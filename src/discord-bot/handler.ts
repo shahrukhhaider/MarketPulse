@@ -86,7 +86,7 @@ export async function handleMessage(message: Message, botUserId: string): Promis
     const context = await buildThreadContext(message);
 
     // --- Call Claude ---
-    const response = await askClaude(SYSTEM_PROMPT, context, toolDefinitions);
+    const response = await askClaude(SYSTEM_PROMPT, context, toolDefinitions, message.author.id);
 
     // --- Determine target channel (create thread if needed) ---
     let targetChannel: Message['channel'] | ThreadChannel;

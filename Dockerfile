@@ -38,6 +38,13 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY package.json ./
 
+# Copy Drizzle migration files and config for runtime migrations
+COPY drizzle ./drizzle
+COPY drizzle.config.ts ./
+
+# Install drizzle-kit for running migrations at deploy time
+RUN npm install --ignore-scripts drizzle-kit@0.31
+
 # Data directory lives on Railway volume mount (STOCK_TRACKER_HOME=/data)
 # No .stock-tracker directory in the image — it's on the persistent volume
 

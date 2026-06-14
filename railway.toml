@@ -2,6 +2,6 @@
 builder = "dockerfile"
 
 [deploy]
-startCommand = "node dist/src/worker.js"
+startCommand = "npx drizzle-kit migrate && node dist/src/worker.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
