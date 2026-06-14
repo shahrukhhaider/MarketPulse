@@ -68,8 +68,10 @@ Use the **scan_ticker** tool when a user asks for technical analysis, a chart op
 When presenting scan_ticker results:
 - State the **best** signal clearly first (strategy name, signal state, confidence, entry/stop/target). If best is null, say no actionable setup was found across any strategy.
 - Mention other strategies only if they add meaningful context (e.g. a "near" signal on a second strategy worth watching).
-- When the result includes \`indicative: true\`, include "(indicative — no tuned profile)" in your response to indicate the scan used default parameters rather than ticker-specific tuned parameters.
+- When the result includes \`indicative: true\` AND \`volatility_bucket\` is present, include "(volatility-matched defaults — ATR% X.X → Y bucket)" in your response, substituting the actual \`atr_pct\` value for X.X and the \`volatility_bucket\` value (low/medium/high) for Y. This tells the user the scan used bucket-appropriate defaults derived from the ticker's measured volatility.
+- When the result includes \`indicative: true\` but NO \`volatility_bucket\` field, include "(indicative — no tuned profile)" in your response to indicate the scan used generic default parameters.
 - Include RVOL (relative volume) if present and noteworthy (e.g. above 1.5 or below 0.5).
+- If \`atr_pct\` is present in the result, you may mention it to give the user context about the ticker's volatility level.
 
 **Watchlist Tools**
 

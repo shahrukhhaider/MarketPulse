@@ -11,8 +11,10 @@ import type { HistoricalDataPoint } from '../types.js';
 import type { SignalOutput } from '../strategies/strategy-registry.js';
 import { detectSignal } from '../strategies/signal-detector.js';
 import { loadStrategyProfile } from '../data/profile-store.js';
-import { DEFAULT_SCAN_PARAMS } from '../strategies/default-scan-params.js';
+import { DEFAULT_SCAN_PARAMS, getDefaultScanParams } from '../strategies/default-scan-params.js';
 import { computeRvol } from '../pipeline/rvol.js';
+import { computeAtrPct } from '../indicators/indicators.js';
+import { atrPctToBucket } from '../strategies/parameter-grid.js';
 
 // ============================================================
 // Result Types
@@ -41,6 +43,8 @@ export interface ScanTickerResult {
     target: number;
   } | null;
   strategies: ScanTickerStrategyResult[];
+  volatility_bucket?: 'low' | 'medium' | 'high';
+  atr_pct?: number;
 }
 
 export interface ScanTickerError {
@@ -168,6 +172,10 @@ export async function executeScanTicker(
       };
     }
 
+    // ── 4b. Compute ATR% for bucket-aware parameter selection ──
+    const atrPct = computeAtrPct(dataPoints);
+    const bucket = (atrPct != null && Number.isFinite(atrPct)) ? atrPctToBucket(atrPct) : 'medium' as const;
+
     // ── 5. Loop over all 5 strategies ──
     const strategyResults: ScanTickerStrategyResult[] = [];
     let anyUsedDefault = false;
@@ -185,13 +193,8 @@ export async function executeScanTicker(
       if (profileResult.success) {
         params = profileResult.data.params;
       } else {
-        // Fall back to default scan params
-        const defaults = DEFAULT_SCAN_PARAMS[strategyName];
-        if (!defaults) {
-          // Skip strategy if no defaults available (shouldn't happen for the 5 we scan)
-          continue;
-        }
-        params = defaults;
+        // Fall back to bucket-aware default scan params
+        params = getDefaultScanParams(strategyName, bucket);
         usedDefaultParams = true;
         anyUsedDefault = true;
       }
@@ -251,6 +254,8 @@ export async function executeScanTicker(
       best,
       strategies: strategyResults,
       ...(rvol != null ? { rvol: round2(rvol) } : {}),
+      volatility_bucket: bucket,
+      ...(atrPct != null ? { atr_pct: round2(atrPct) } : {}),
     } as ScanTickerResult;
   } catch (e: unknown) {
     // ── 10. Never throw — wrap in error object ──
