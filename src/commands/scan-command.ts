@@ -22,6 +22,7 @@ import type { SignalOutput } from '../strategies/strategy-registry.js';
 import { V3_STRATEGIES } from '../strategies/v3-strategies.js';
 import { parallelScan } from '../pipeline/parallel-scan.js';
 import { runPipeline } from '../pipeline/signal-pipeline.js';
+import { notifyWebhooks } from '../pipeline/webhook-notifier.js';
 import { RegimeDetector } from '../indicators/regime-detector.js';
 import type { RegimeResult, RegimeState } from '../indicators/regime-detector.js';
 import { load as loadJournal } from '../journal/journal-store.js';
@@ -511,6 +512,13 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         journalPnl = stats.total_pnl;
       }
 
+      try {
+        await notifyWebhooks(dedupFilteredSignals);
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.warn(`[scan] Webhook notification error: ${message}`);
+      }
+
       return successResult('scan', {
         signals: dedupFilteredSignals,
         processedSignals: runPipeline(dedupFilteredSignals),
@@ -735,6 +743,13 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         output.marketRegime = regimeResult.market;
       }
 
+      try {
+        await notifyWebhooks(parallelDedupFiltered);
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.warn(`[scan] Webhook notification error: ${message}`);
+      }
+
       return successResult('scan', output);
     }
 
@@ -952,6 +967,13 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     if (regimeResult) {
       output.regime = regimeResult;
       output.marketRegime = regimeResult.market;
+    }
+
+    try {
+      await notifyWebhooks(seqDedupFiltered);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.warn(`[scan] Webhook notification error: ${message}`);
     }
 
     return successResult('scan', output);

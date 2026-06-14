@@ -1,4 +1,4 @@
-import { pgTable, serial, text, real, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, real, boolean, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 
 export const userWatchlist = pgTable('user_watchlist', {
   id:      serial('id').primaryKey(),
@@ -25,3 +25,14 @@ export const memberTrades = pgTable('member_trades', {
   lastPrice:   real('last_price'),
   updatedAt:   timestamp('updated_at', { withTimezone: true }),
 });
+
+export const userWebhook = pgTable('user_webhook', {
+  id:         serial('id').primaryKey(),
+  userId:     text('user_id').notNull(),
+  webhookUrl: text('webhook_url').notNull(),
+  enabled:    boolean('enabled').notNull().default(true),
+  createdAt:  timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:  timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('user_webhook_user_id_idx').on(table.userId),
+]);
