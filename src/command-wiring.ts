@@ -21,6 +21,7 @@ import { createSignalHistoryHandler } from './signal-history/signal-history-comm
 import { createSentimentCheckHandler } from './commands/sentiment-check-command.js';
 import { createNewsTimelineHandler } from './commands/news-timeline-command.js';
 import { createAddStockHandler } from './commands/add-stock-command.js';
+import { createBlogChartsHandler } from './commands/blog-charts-command.js';
 import { createRemoveStockHandler } from './commands/remove-stock-command.js';
 import { createListWatchlistHandler } from './commands/list-watchlist-command.js';
 import { createStartMonitorHandler } from './commands/start-monitor-command.js';
@@ -97,6 +98,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   router.register('signal-history', [], createSignalHistoryHandler({ dataDir }));
   router.register('sentiment-check', [], createSentimentCheckHandler({ dataDir }));
   router.register('news-timeline', [], createNewsTimelineHandler({ dataDir }));
+  router.register('generate-blog-charts', [], createBlogChartsHandler({ dataDir, cachingProvider }));
 
   return {
     router,

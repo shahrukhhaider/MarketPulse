@@ -380,9 +380,11 @@ export async function main(): Promise<void> {
   const scanLogPath = findLatestScanLog(logsDir);
 
   if (scanLogPath === null) {
-    process.stderr.write('[discord-signal-check] Error: no scan log found\n');
+    process.stderr.write(`[discord-signal-check] Error: no scan log found in ${logsDir}\n`);
     process.exit(1);
   }
+
+  process.stderr.write(`[discord-signal-check] Using scan log: ${path.basename(scanLogPath)}\n`);
 
   // Step 2: Parse scan JSON (Req 2.1, 6.5)
   let scanData: ScanData;
@@ -399,8 +401,11 @@ export async function main(): Promise<void> {
   const { selected, tickers } = selectSignals(scanData);
 
   if (selected.combined.length === 0) {
+    process.stderr.write('[discord-signal-check] No active/near signals — skipping\n');
     process.exit(0);
   }
+
+  process.stderr.write(`[discord-signal-check] ${selected.active.length} active, ${selected.near.length} near signals — fetching prices for ${tickers.length} tickers\n`);
 
   // Step 4: Fetch batch prices with 15s timeout (Req 2.6, 2.7, 6.6)
   const priceMap = new Map<string, number | null>();
@@ -448,9 +453,10 @@ export async function main(): Promise<void> {
   // Step 6: Build payload (Req 5.1–5.7)
   const payload = buildSignalCheckPayload(selected.combined, priceMap, scanDate);
 
-  // Step 7: Read webhook URL — exit 0 if missing (design: webhook URL missing → exit 0)
-  const webhookUrl = readDiscordWebhookUrl(basePath);
-  if (webhookUrl === null) {
+  // Step 7: Read webhook URL — prefer env var, fall back to file. Exit 0 if missing.
+  const webhookUrl = process.env.DISCORD_WEBHOOK_URL?.trim() || readDiscordWebhookUrl(basePath);
+  if (!webhookUrl) {
+    process.stderr.write('[discord-signal-check] No webhook URL found — skipping\n');
     process.exit(0);
   }
 
@@ -464,6 +470,7 @@ export async function main(): Promise<void> {
       );
       process.exit(1);
     }
+    process.stderr.write('[discord-signal-check] Posted successfully\n');
   } catch (err) {
     process.stderr.write(
       `[discord-signal-check] Error: ${(err as Error).message}\n`,

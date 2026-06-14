@@ -71,9 +71,9 @@ describe('Command Wiring', () => {
   // ============================================================
 
   describe('initialization', () => {
-    it('creates a router with all 25 commands registered', () => {
+    it('creates a router with all 26 commands registered', () => {
       const commands = wired.router.getRegisteredCommands();
-      expect(commands).toHaveLength(25);
+      expect(commands).toHaveLength(26);
       expect(commands).toContain('add-stock');
       expect(commands).toContain('remove-stock');
       expect(commands).toContain('list-watchlist');
