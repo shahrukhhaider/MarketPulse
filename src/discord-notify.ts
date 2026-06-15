@@ -270,7 +270,7 @@ export function buildNearSignalsPayload(data: ScanData): DiscordPayload | null {
 /**
  * Build the open positions embed payload.
  * Returns null when no open positions exist.
- * Single embed with color based on aggregate P&L, one field per position.
+ * Single embed with color based on aggregate P&L, code block with progress bars.
  */
 export function buildOpenPositionsPayload(data: ScanData): DiscordPayload | null {
   if (!data.openPositions || data.openPositions.length === 0) {
@@ -296,9 +296,11 @@ export function buildOpenPositionsPayload(data: ScanData): DiscordPayload | null
     color = COLORS.RED;
   }
 
-  // Build fields — one per position
-  const fields: DiscordEmbedField[] = data.openPositions.map((pos) => {
-    // Strategy abbreviation: first letter of each word (split on _ or space)
+  // Build code block lines — one per position with progress bar
+  const lines: string[] = [];
+
+  for (const pos of data.openPositions) {
+    // Strategy abbreviation
     const abbreviation = pos.strategy
       .split(/[_\s]+/)
       .map((word) => word.charAt(0).toUpperCase())
@@ -307,38 +309,41 @@ export function buildOpenPositionsPayload(data: ScanData): DiscordPayload | null
     // P&L with sign
     let pnlStr: string;
     if (pos.pnl_pct === null) {
-      pnlStr = '0.0%';
+      pnlStr = ' 0.0%';
     } else if (pos.pnl_pct > 0) {
       pnlStr = `+${pos.pnl_pct.toFixed(1)}%`;
     } else if (pos.pnl_pct < 0) {
       pnlStr = `${pos.pnl_pct.toFixed(1)}%`;
     } else {
-      pnlStr = '0.0%';
+      pnlStr = ' 0.0%';
     }
 
-    // Target progress or stop distance
-    let progressStr: string;
-    if (pos.target_progress !== null) {
-      progressStr = `${pos.target_progress.toFixed(1)}% to target`;
-    } else if (pos.stop_distance !== null) {
-      progressStr = `${pos.stop_distance.toFixed(1)}% from stop`;
-    } else {
-      progressStr = '—';
-    }
+    // Progress bar toward target (8 chars wide)
+    const barWidth = 8;
+    const progress = pos.target_progress ?? 0;
+    const clamped = Math.max(0, Math.min(100, progress));
+    const filled = Math.round((clamped / 100) * barWidth);
+    const empty = barWidth - filled;
+    const bar = '█'.repeat(filled) + '░'.repeat(empty);
 
-    return {
-      name: pos.ticker,
-      value: `${abbreviation} · ${pnlStr} · ${pos.days_held}d · ${progressStr}`,
-      inline: true,
-    };
-  });
+    // Pad fields for alignment
+    const tickerPad = pos.ticker.padEnd(5);
+    const abbrevPad = abbreviation.padEnd(3);
+    const pnlPad = pnlStr.padStart(6);
+    const daysPad = `${pos.days_held}d`.padStart(3);
+    const progressPct = `${clamped.toFixed(0)}%`.padStart(4);
+
+    lines.push(`${tickerPad} ${abbrevPad} ${pnlPad} ${daysPad} ${bar} ${progressPct}`);
+  }
+
+  const description = `\`\`\`\n${lines.join('\n')}\n\`\`\``;
 
   const payload: DiscordPayload = {
     embeds: [
       {
         title: `📈 Open Positions (${data.openPositions.length})`,
         color,
-        fields,
+        description,
       },
     ],
   };
