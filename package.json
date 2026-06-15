@@ -35,7 +35,8 @@
     "pipeline": "./scripts/daily-pipeline.sh",
     "notify": "./scripts/notify.sh",
     "signal-charts": "npx --yes tsx scripts/generate-signal-charts.ts",
-    "blog:charts": "node dist/src/cli.js generate-blog-charts"
+    "blog:charts": "node dist/src/cli.js generate-blog-charts",
+    "showcase:preview": "node scripts/generate-showcase-preview.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
