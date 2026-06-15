@@ -110,7 +110,7 @@ describe('askClaude', () => {
     );
 
     expect(result).toBe('The market mood is risk-on.');
-    expect(mockedExecuteTool).toHaveBeenCalledWith('get_market_mood', { universe: 'large_cap' }, undefined);
+    expect(mockedExecuteTool).toHaveBeenCalledWith('get_market_mood', { universe: 'large_cap' }, undefined, undefined);
     expect(mockCreate).toHaveBeenCalledTimes(2);
   });
 

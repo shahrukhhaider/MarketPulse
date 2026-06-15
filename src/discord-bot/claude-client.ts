@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ClaudeMessage } from './thread-context.js';
 import { executeTool } from './tools.js';
+import type { ToolContext } from './tools.js';
 
 // ---------------------------------------------------------------------------
 // Claude API client — sends messages with tool-use loop
@@ -27,6 +28,7 @@ export async function askClaude(
   messages: ClaudeMessage[],
   tools: Anthropic.Tool[],
   userId?: string,
+  context?: ToolContext,
 ): Promise<string> {
   // Guard: missing API key
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -80,7 +82,7 @@ export async function askClaude(
       for (const toolBlock of toolUseBlocks) {
         let result: unknown;
         try {
-          result = await executeTool(toolBlock.name, toolBlock.input, userId);
+          result = await executeTool(toolBlock.name, toolBlock.input, userId, context);
         } catch (err) {
           result = {
             error: `${toolBlock.name} failed: ${err instanceof Error ? err.message : String(err)}`,

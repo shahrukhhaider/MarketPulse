@@ -6,6 +6,17 @@ import { toExposureTier } from '../formatters/market-exposure.js';
 import { executeScanTicker } from './scan-ticker-executor.js';
 import { addToWatchlist, removeFromWatchlist, getUserWatchlist } from '../db/watchlist-store.js';
 import { setWebhook, removeWebhook, getWebhook } from '../db/webhook-store.js';
+import { inProgressTickers, runTuningJob } from './tuning-job-manager.js';
+import { loadStrategyProfile } from '../data/profile-store.js';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface ToolContext {
+  channelId?: string;
+  postToChannel?: (message: string) => Promise<void>;
+}
 
 // ---------------------------------------------------------------------------
 // Tool definitions (Claude JSON schema) and executor
@@ -205,6 +216,19 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: ['ticker', 'action', 'limit_price'],
     },
   },
+  {
+    name: 'tune_ticker',
+    description:
+      'Run a walk-forward parameter optimization for a ticker across all 5 strategies. Takes 4-8 minutes. Returns immediately and posts results when done.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Ticker symbol to tune (e.g. HOOD, NVDA)' },
+        force: { type: 'boolean', description: 'Force retune even if a fresh profile exists or tuning is in progress' },
+      },
+      required: ['ticker'],
+    },
+  },
 ];
 
 /**
@@ -214,6 +238,7 @@ export async function executeTool(
   name: string,
   input: Record<string, unknown>,
   userId?: string,
+  context?: ToolContext,
 ): Promise<unknown> {
   switch (name) {
     case 'get_latest_signals':
@@ -258,6 +283,11 @@ export async function executeTool(
       const action = input.action as string;
       const limitPrice = input.limit_price as number;
       return placeTradeTool(userId ?? '', ticker, action, limitPrice);
+    }
+    case 'tune_ticker': {
+      const ticker = input.ticker as string;
+      const force = (input.force as boolean | undefined) ?? false;
+      return tuneTickerTool(ticker, context ?? {}, force);
     }
     default:
       return { error: `Unknown tool: ${name}` };
@@ -1103,4 +1133,76 @@ export async function placeTradeTool(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// ---------------------------------------------------------------------------
+// tuneTickerTool implementation
+// ---------------------------------------------------------------------------
+
+const TUNE_STRATEGIES = [
+  'consolidation_breakout',
+  'trend_pullback',
+  'bear_breakdown',
+  'keltner_mean_reversion',
+  'volume_dry_up',
+] as const;
+
+/**
+ * Initiate a walk-forward tuning job for a ticker across all 5 strategies.
+ *
+ * Returns immediately — the actual tuning runs as a fire-and-forget background job.
+ * Results are posted to the channel via `context.postToChannel` when complete.
+ */
+export function tuneTickerTool(
+  ticker: string,
+  context: ToolContext,
+  force?: boolean,
+): { status: string; ticker?: string; message: string } {
+  const normalizedTicker = ticker.toUpperCase();
+
+  // Deduplication check — skip if already running (unless force)
+  if (!force && inProgressTickers.has(normalizedTicker)) {
+    return {
+      status: 'already_running',
+      ticker: normalizedTicker,
+      message: `${normalizedTicker} is already being tuned. Results will be posted when done.`,
+    };
+  }
+
+  // Freshness check — skip if all 5 strategies have fresh profiles (unless force)
+  if (!force) {
+    const dataDir = path.join(process.env.STOCK_TRACKER_HOME ?? process.cwd(), '.stock-tracker');
+    const allFresh = TUNE_STRATEGIES.every((strategy) => {
+      const result = loadStrategyProfile(normalizedTicker, strategy, {
+        allowStale: false,
+        baseDir: dataDir,
+      });
+      return result.success;
+    });
+
+    if (allFresh) {
+      return {
+        status: 'already_tuned',
+        ticker: normalizedTicker,
+        message: `${normalizedTicker} already has fresh profiles for all strategies. Use force=true to retune.`,
+      };
+    }
+  }
+
+  // Fail-safe: postToChannel must be available for async completion
+  if (!context.postToChannel) {
+    return {
+      status: 'error',
+      message: 'Cannot post completion — try again',
+    };
+  }
+
+  // Fire-and-forget — launch background tuning job
+  runTuningJob(normalizedTicker, context.postToChannel);
+
+  return {
+    status: 'started',
+    ticker: normalizedTicker,
+    message: `Tuning ${normalizedTicker}... I'll post results here in ~5 min.`,
+  };
 }

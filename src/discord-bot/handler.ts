@@ -3,6 +3,7 @@ import { buildThreadContext } from './thread-context.js';
 import { askClaude } from './claude-client.js';
 import { SYSTEM_PROMPT } from './prompt.js';
 import { toolDefinitions } from './tools.js';
+import type { ToolContext } from './tools.js';
 
 // ---------------------------------------------------------------------------
 // Per-user rate limiter — sliding window, max 5 requests per 60 seconds
@@ -83,21 +84,36 @@ export async function handleMessage(message: Message, botUserId: string): Promis
     const startTime = Date.now();
 
     // --- Build thread context ---
-    const context = await buildThreadContext(message);
+    const threadMessages = await buildThreadContext(message);
 
-    // --- Call Claude ---
-    const response = await askClaude(SYSTEM_PROMPT, context, toolDefinitions, message.author.id);
-
-    // --- Determine target channel (create thread if needed) ---
-    let targetChannel: Message['channel'] | ThreadChannel;
+    // --- Resolve target channel BEFORE calling Claude ---
+    // This allows the ToolContext's postToChannel to reference the reply channel.
+    // If not in a thread yet, use the parent channel for async messages.
+    let targetChannel: TextChannel | ThreadChannel;
     const channel = message.channel;
     const isInThread = 'parentId' in channel && (channel as ThreadChannel).parentId != null;
 
     if (isInThread) {
       // Already in a thread — reply directly
-      targetChannel = channel;
+      targetChannel = channel as ThreadChannel;
     } else {
-      // Not in a thread — create one on the original message
+      // Not in a thread — use parent channel for now; thread is created after response
+      targetChannel = channel as TextChannel;
+    }
+
+    // --- Construct tool context ---
+    const toolContext: ToolContext = {
+      channelId: message.channelId,
+      postToChannel: async (msg: string) => {
+        await targetChannel.send(msg);
+      },
+    };
+
+    // --- Call Claude ---
+    const response = await askClaude(SYSTEM_PROMPT, threadMessages, toolDefinitions, message.author.id, toolContext);
+
+    // --- Create thread if not already in one (for the main reply) ---
+    if (!isInThread) {
       const thread = await message.startThread({
         name: truncate(message.cleanContent, 50) || 'MarketPulse AI',
       });
