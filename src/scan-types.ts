@@ -86,7 +86,9 @@ export function formatPct(n: number): string {
 /**
  * Find the most recent scan_*.json file in the given logs directory.
  * Returns the full path to the file, or null if no matching files exist.
- * Files are sorted lexicographically in descending order — the first match wins.
+ *
+ * Prefers the large_cap (non-tech) scan. Falls back to any scan file.
+ * Files are sorted by modification time descending — the newest file wins.
  */
 export function findLatestScanLog(logsDir: string): string | null {
   let entries: string[];
@@ -97,14 +99,32 @@ export function findLatestScanLog(logsDir: string): string | null {
   }
 
   const scanFiles = entries
-    .filter((f) => f.startsWith('scan_') && f.endsWith('.json'))
-    .sort((a, b) => b.localeCompare(a));
+    .filter((f) => f.startsWith('scan_') && f.endsWith('.json'));
 
   if (scanFiles.length === 0) {
     return null;
   }
 
-  return path.join(logsDir, scanFiles[0]);
+  // Sort by modification time descending (newest first)
+  const withMtime = scanFiles.map((f) => {
+    const fullPath = path.join(logsDir, f);
+    try {
+      const stat = fs.statSync(fullPath);
+      return { file: f, mtime: stat.mtimeMs };
+    } catch {
+      return { file: f, mtime: 0 };
+    }
+  });
+  withMtime.sort((a, b) => b.mtime - a.mtime);
+
+  // Prefer large_cap scan (files that do NOT contain "tech" in their name)
+  const largeCap = withMtime.find((f) => !f.file.includes('tech'));
+  if (largeCap) {
+    return path.join(logsDir, largeCap.file);
+  }
+
+  // Fallback: newest file regardless of type
+  return path.join(logsDir, withMtime[0].file);
 }
 
 /**
