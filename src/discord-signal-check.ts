@@ -434,6 +434,30 @@ export async function main(): Promise<void> {
         priceMap.set(ticker, null);
       }
     }
+
+    // Fallback: if batch returned success but got no prices (empty map or all null),
+    // try fetching individual quotes sequentially. This handles cloud IP blocks on
+    // the batch endpoint while individual calls may still work.
+    const resolvedCount = [...priceMap.values()].filter((v) => v !== null).length;
+    if (resolvedCount === 0 && tickers.length > 0) {
+      process.stderr.write(
+        `[discord-signal-check] Batch returned 0 prices — falling back to sequential quotes\n`,
+      );
+      for (const ticker of tickers) {
+        try {
+          const singleResult = await client.fetchCurrentPrice(ticker);
+          if (singleResult.success && singleResult.data) {
+            priceMap.set(ticker, singleResult.data.price);
+          }
+        } catch {
+          // Leave as null
+        }
+      }
+      const afterFallback = [...priceMap.values()].filter((v) => v !== null).length;
+      process.stderr.write(
+        `[discord-signal-check] Sequential fallback resolved ${afterFallback}/${tickers.length} prices\n`,
+      );
+    }
   } catch (err) {
     // Timeout or network error — all prices null, continue posting (Req 6.6)
     process.stderr.write(
