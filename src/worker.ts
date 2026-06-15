@@ -55,8 +55,14 @@ function log(jobName: string, message: string): void {
 // Child process spawner
 // ---------------------------------------------------------------------------
 
-function runCli(jobName: string, args: string[], entryScript?: string): Promise<number> {
+interface RunCliOptions {
+  /** Suppress stdout logging (stderr and exit code are still logged). */
+  quiet?: boolean;
+}
+
+function runCli(jobName: string, args: string[], entryScript?: string, options?: RunCliOptions): Promise<number> {
   const job = getOrCreateJob(jobName);
+  const quiet = options?.quiet ?? false;
 
   if (job.running) {
     log(jobName, 'skipped — previous run still in progress');
@@ -79,6 +85,7 @@ function runCli(jobName: string, args: string[], entryScript?: string): Promise<
     job.process = child;
 
     child.stdout?.on('data', (data: Buffer) => {
+      if (quiet) return; // Skip verbose stdout logging
       const lines = data.toString().trim().split('\n');
       for (const line of lines) {
         log(jobName, `stdout: ${line}`);
@@ -197,7 +204,7 @@ async function weeklyTuneLargeCap(): Promise<void> {
     '--concurrency', '8',
     '--universe', 'large_cap',
     '--save',
-  ]);
+  ], undefined, { quiet: true });
 }
 
 async function weeklyTuneTech(): Promise<void> {
@@ -208,11 +215,15 @@ async function weeklyTuneTech(): Promise<void> {
     '--concurrency', '8',
     '--universe', 'tech',
     '--save',
-  ]);
+  ], undefined, { quiet: true });
 }
 
 async function signalCheck(): Promise<void> {
   await runSignalCheck('signal-check');
+}
+
+async function winningTrades(): Promise<void> {
+  await runCli('winning-trades', ['winning-trades']);
 }
 
 async function morningSentimentDigest(): Promise<void> {
@@ -267,9 +278,30 @@ cron.schedule('0 14 * * 1-5', () => {
       console.error('[worker] dailyScanTech error:', err instanceof Error ? err.message : err);
     }
     try {
+      await winningTrades();
+    } catch (err) {
+      console.error('[worker] winningTrades error:', err instanceof Error ? err.message : err);
+    }
+    try {
       await updateMemberTradePnL();
     } catch (err) {
       console.warn('[worker] updateMemberTradePnL error:', err);
+    }
+  })();
+}, ET);
+
+// Monday market-open scan at 6:30 AM PT
+cron.schedule('30 6 * * 1', () => {
+  (async () => {
+    try {
+      await dailyScanLargeCap();
+    } catch (err) {
+      console.error('[worker] mondayScanLargeCap error:', err instanceof Error ? err.message : err);
+    }
+    try {
+      await dailyScanTech();
+    } catch (err) {
+      console.error('[worker] mondayScanTech error:', err instanceof Error ? err.message : err);
     }
   })();
 }, ET);

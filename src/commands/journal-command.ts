@@ -18,7 +18,8 @@ import { createJournalUpdater } from '../journal/journal-updater.js';
 import { computeStats } from '../journal/journal-reporter.js';
 import { formatJournalStatus } from '../journal/journal-formatter.js';
 import { JOURNAL_DEFAULTS } from '../journal/journal-types.js';
-import type { JournalEntry } from '../journal/journal-types.js';
+import type { JournalEntry, EntryStatus } from '../journal/journal-types.js';
+import { todayPST } from '../utils/date-utils.js';
 
 // ============================================================
 // Dependencies
@@ -279,6 +280,75 @@ export function createJournalUpdateHandler(deps: JournalCommandDeps): CommandHan
 
   return async (_opts: Record<string, string>) => {
     const journalPath = getJournalPath(dataDir);
+
+    // ----------------------------------------------------------
+    // Manual close path: --close <TICKER> --exit <price>
+    // ----------------------------------------------------------
+    const closeTicker = _opts['close'];
+    const exitArg = _opts['exit'];
+
+    if (closeTicker !== undefined && exitArg !== undefined) {
+      const exitPrice = Number(exitArg);
+      if (!Number.isFinite(exitPrice) || exitPrice <= 0) {
+        return errorResult('journal-update', 'INVALID_PARAM',
+          `Invalid --exit value: '${exitArg}'. Must be a positive number.`);
+      }
+
+      const ticker = closeTicker.toUpperCase();
+
+      // Load journal
+      const loadResult = load(journalPath);
+      if (!loadResult.success) {
+        return errorResult('journal-update', 'IO_ERROR', loadResult.error);
+      }
+
+      const entries = loadResult.data;
+
+      // Find first open entry for this ticker
+      const entryIndex = entries.findIndex(
+        (e) => e.ticker === ticker && e.status === 'open'
+      );
+      if (entryIndex === -1) {
+        return errorResult('journal-update', 'NOT_FOUND',
+          `No open journal entry found for ticker '${ticker}'.`);
+      }
+
+      const entry = entries[entryIndex];
+
+      // Determine outcome status
+      let status: EntryStatus;
+      if (exitPrice >= entry.target_price) {
+        status = 'won';
+      } else if (exitPrice <= entry.stop_price) {
+        status = 'lost';
+      } else {
+        status = 'expired';
+      }
+
+      // Mutate entry
+      entry.status = status;
+      entry.outcome_date = todayPST();
+      entry.outcome_price = exitPrice;
+
+      // Save
+      const saveResult = save(entries, journalPath);
+      if (!saveResult.success) {
+        return errorResult('journal-update', 'IO_ERROR', saveResult.error);
+      }
+
+      process.stdout.write(`  Journal close: ${ticker} closed at $${exitPrice} → ${status}\n`);
+
+      return successResult('journal-update', {
+        closed: 1,
+        ticker,
+        exit: exitPrice,
+        status,
+      });
+    }
+
+    // ----------------------------------------------------------
+    // Auto-update path (existing logic)
+    // ----------------------------------------------------------
 
     // Parse expiry-days option
     let expiryDays: number = JOURNAL_DEFAULTS.EXPIRY_DAYS;

@@ -1,6 +1,7 @@
 import { type Express, type Request, type Response } from 'express';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { buildPriceMapFromCache } from '../utils/price-map.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -92,53 +93,11 @@ function handleMarket(stockTrackerHome: string) {
 // ---------------------------------------------------------------------------
 
 /**
- * Builds a price map from the most recent scan files (no external API calls).
+ * Builds a price map from the most recent scan files and history-cache (no external API calls).
+ * Delegates to the shared utility in src/utils/price-map.ts.
  */
 function buildLatestPriceMap(stockTrackerHome: string): Map<string, number> {
-  const logsDir = path.join(stockTrackerHome, '.stock-tracker', 'logs');
-  const priceMap = new Map<string, number>();
-
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(logsDir);
-  } catch {
-    return priceMap;
-  }
-
-  for (const prefix of ['scan_', 'scan_tech_']) {
-    const matches = entries
-      .filter((f) => {
-        if (!f.startsWith(prefix) || !f.endsWith('.json')) return false;
-        if (prefix === 'scan_' && f.startsWith('scan_tech_')) return false;
-        return true;
-      })
-      .sort()
-      .reverse();
-
-    if (matches.length === 0) continue;
-
-    try {
-      const raw = fs.readFileSync(path.join(logsDir, matches[0]), 'utf-8');
-      const json = JSON.parse(raw);
-      const signals: Array<{ ticker: string; signal: string; close?: number; entry?: number }> =
-        json?.data?.signals ?? [];
-
-      for (const sig of signals) {
-        if (!sig.ticker) continue;
-        const ticker = sig.ticker.toUpperCase();
-        const price = sig.close ?? sig.entry;
-        if (typeof price === 'number' && price > 0 && !priceMap.has(ticker)) {
-          priceMap.set(ticker, price);
-        }
-      }
-    } catch {
-      // Skip unreadable files
-    }
-  }
-
-  // Fallback: also check history-cache for tickers not found in scans
-  const cacheDir = path.join(stockTrackerHome, '.stock-tracker', 'history-cache');
-  return priceMap;
+  return buildPriceMapFromCache(stockTrackerHome);
 }
 
 function handleSignalsWeekAgo(stockTrackerHome: string) {
@@ -228,10 +187,205 @@ function handleSignalsWeekAgo(stockTrackerHome: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Winning Trades: shared validation
+// ---------------------------------------------------------------------------
+
+function containsTraversal(value: string): boolean {
+  return value.includes('..');
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/winning-trades
+// ---------------------------------------------------------------------------
+
+function handleWinningTradesLatest(stockTrackerHome: string) {
+  return (_req: Request, res: Response): void => {
+    const filePath = path.join(stockTrackerHome, '.stock-tracker', 'winning-trades', 'latest.json');
+
+    let raw: string;
+    try {
+      raw = fs.readFileSync(filePath, 'utf-8');
+    } catch {
+      setCommonHeaders(res);
+      res.status(503).json({ error: 'Winning trades data not available yet' });
+      return;
+    }
+
+    try {
+      const data = JSON.parse(raw);
+      setCommonHeaders(res);
+      res.json(data);
+    } catch {
+      setCommonHeaders(res);
+      res.status(503).json({ error: 'Winning trades data not available yet' });
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/winning-trades/dates
+// ---------------------------------------------------------------------------
+
+function handleWinningTradesDates(stockTrackerHome: string) {
+  return (_req: Request, res: Response): void => {
+    const baseDir = path.join(stockTrackerHome, '.stock-tracker', 'winning-trades');
+    const dates: string[] = [];
+
+    try {
+      const years = fs.readdirSync(baseDir).filter((entry) => /^\d{4}$/.test(entry));
+      for (const year of years) {
+        const yearPath = path.join(baseDir, year);
+        if (!fs.statSync(yearPath).isDirectory()) continue;
+        const months = fs.readdirSync(yearPath).filter((entry) => /^\d{2}$/.test(entry));
+        for (const month of months) {
+          const monthPath = path.join(yearPath, month);
+          if (!fs.statSync(monthPath).isDirectory()) continue;
+          const days = fs.readdirSync(monthPath).filter((entry) => /^\d{2}$/.test(entry));
+          for (const day of days) {
+            const dayPath = path.join(monthPath, day);
+            if (!fs.statSync(dayPath).isDirectory()) continue;
+            // Only include if manifest.json exists in the day folder
+            const manifestPath = path.join(dayPath, 'manifest.json');
+            if (fs.existsSync(manifestPath)) {
+              dates.push(`${year}-${month}-${day}`);
+            }
+          }
+        }
+      }
+    } catch {
+      // If the directory doesn't exist, return empty array
+    }
+
+    dates.sort((a, b) => b.localeCompare(a)); // descending
+
+    setCommonHeaders(res);
+    res.json({ dates });
+  };
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/winning-trades/:year/:month/:day
+// ---------------------------------------------------------------------------
+
+function handleWinningTradesByDate(stockTrackerHome: string) {
+  return (req: Request, res: Response): void => {
+    const year = req.params.year as string;
+    const month = req.params.month as string;
+    const day = req.params.day as string;
+
+    // Validate params
+    if (containsTraversal(year) || containsTraversal(month) || containsTraversal(day)) {
+      setCommonHeaders(res);
+      res.status(400).json({ error: 'Invalid request: path traversal not allowed' });
+      return;
+    }
+
+    if (!/^\d{4}$/.test(year) || !/^\d{2}$/.test(month) || !/^\d{2}$/.test(day)) {
+      setCommonHeaders(res);
+      res.status(400).json({ error: 'Invalid date parameters: expected YYYY/MM/DD format' });
+      return;
+    }
+
+    const filePath = path.join(
+      stockTrackerHome,
+      '.stock-tracker',
+      'winning-trades',
+      year,
+      month,
+      day,
+      'manifest.json'
+    );
+
+    let raw: string;
+    try {
+      raw = fs.readFileSync(filePath, 'utf-8');
+    } catch {
+      setCommonHeaders(res);
+      res.status(404).json({ error: `No winning trades data found for ${year}-${month}-${day}` });
+      return;
+    }
+
+    try {
+      const data = JSON.parse(raw);
+      setCommonHeaders(res);
+      res.json(data);
+    } catch {
+      setCommonHeaders(res);
+      res.status(404).json({ error: `No winning trades data found for ${year}-${month}-${day}` });
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/winning-trades/charts/:year/:month/:day/:filename
+// ---------------------------------------------------------------------------
+
+function handleWinningTradesChart(stockTrackerHome: string) {
+  return (req: Request, res: Response): void => {
+    const year = req.params.year as string;
+    const month = req.params.month as string;
+    const day = req.params.day as string;
+    const filename = req.params.filename as string;
+
+    // Check for path traversal in any param
+    if (
+      containsTraversal(year) ||
+      containsTraversal(month) ||
+      containsTraversal(day) ||
+      containsTraversal(filename)
+    ) {
+      setCommonHeaders(res);
+      res.status(400).json({ error: 'Invalid request: path traversal not allowed' });
+      return;
+    }
+
+    // Validate date params
+    if (!/^\d{4}$/.test(year) || !/^\d{2}$/.test(month) || !/^\d{2}$/.test(day)) {
+      setCommonHeaders(res);
+      res.status(400).json({ error: 'Invalid date parameters: expected YYYY/MM/DD format' });
+      return;
+    }
+
+    // Validate filename
+    if (!/^[a-zA-Z0-9_\-]+\.png$/.test(filename)) {
+      setCommonHeaders(res);
+      res.status(400).json({ error: 'Invalid filename format' });
+      return;
+    }
+
+    const filePath = path.join(
+      stockTrackerHome,
+      '.stock-tracker',
+      'winning-trades',
+      year,
+      month,
+      day,
+      filename
+    );
+
+    try {
+      const buffer = fs.readFileSync(filePath);
+      setCommonHeaders(res);
+      res.set('Content-Type', 'image/png');
+      res.send(buffer);
+    } catch {
+      setCommonHeaders(res);
+      res.status(404).json({ error: 'Chart not found' });
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Register all API routes
 // ---------------------------------------------------------------------------
 
 export function registerApiRoutes(app: Express, stockTrackerHome: string): void {
   app.get('/api/market', handleMarket(stockTrackerHome));
   app.get('/api/signals/week-ago', handleSignalsWeekAgo(stockTrackerHome));
+
+  // Winning trades routes
+  app.get('/api/winning-trades', handleWinningTradesLatest(stockTrackerHome));
+  app.get('/api/winning-trades/dates', handleWinningTradesDates(stockTrackerHome));
+  app.get('/api/winning-trades/charts/:year/:month/:day/:filename', handleWinningTradesChart(stockTrackerHome));
+  app.get('/api/winning-trades/:year/:month/:day', handleWinningTradesByDate(stockTrackerHome));
 }

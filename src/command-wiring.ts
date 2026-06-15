@@ -35,6 +35,7 @@ import { createBacktestHandler } from './commands/backtest-command.js';
 import { createTuneAndChartHandler } from './commands/tune-and-chart-command.js';
 import { createV3Handler } from './commands/v3-command.js';
 import { createTunePipelineHandler } from './commands/tune-pipeline-command.js';
+import { createWinningTradesHandler } from './commands/winning-trades-command.js';
 import { createDependencies } from './di/container.js';
 
 // Re-export parseConcurrency for backward compatibility
@@ -99,6 +100,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   router.register('sentiment-check', [], createSentimentCheckHandler({ dataDir }));
   router.register('news-timeline', [], createNewsTimelineHandler({ dataDir }));
   router.register('generate-blog-charts', [], createBlogChartsHandler({ dataDir, cachingProvider }));
+  router.register('winning-trades', [], createWinningTradesHandler({ dataDir, cachingProvider }));
 
   return {
     router,
