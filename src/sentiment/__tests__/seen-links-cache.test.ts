@@ -11,40 +11,40 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadSeenLinks, saveSeenLinks, type SeenLinks } from '../seen-links-cache.js';
 
-let tempDir: string;
+let dataDir: string;
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), 'seen-links-test-'));
-  mkdirSync(join(tempDir, '.stock-tracker'), { recursive: true });
+  // dataDir simulates the .stock-tracker directory itself
+  dataDir = mkdtempSync(join(tmpdir(), 'seen-links-test-'));
 });
 
 afterEach(() => {
-  rmSync(tempDir, { recursive: true, force: true });
+  rmSync(dataDir, { recursive: true, force: true });
 });
 
 describe('loadSeenLinks', () => {
   it('returns empty Map when file does not exist', () => {
-    const result = loadSeenLinks(tempDir);
+    const result = loadSeenLinks(dataDir);
     expect(result).toBeInstanceOf(Map);
     expect(result.size).toBe(0);
   });
 
   it('returns empty Map when file contains malformed JSON', () => {
     writeFileSync(
-      join(tempDir, '.stock-tracker', 'news-seen.json'),
+      join(dataDir, 'news-seen.json'),
       'not valid json {{{',
     );
-    const result = loadSeenLinks(tempDir);
+    const result = loadSeenLinks(dataDir);
     expect(result).toBeInstanceOf(Map);
     expect(result.size).toBe(0);
   });
 
   it('returns empty Map when file contains a JSON array instead of object', () => {
     writeFileSync(
-      join(tempDir, '.stock-tracker', 'news-seen.json'),
+      join(dataDir, 'news-seen.json'),
       JSON.stringify(['url1', 'url2']),
     );
-    const result = loadSeenLinks(tempDir);
+    const result = loadSeenLinks(dataDir);
     expect(result).toBeInstanceOf(Map);
     expect(result.size).toBe(0);
   });
@@ -56,11 +56,11 @@ describe('loadSeenLinks', () => {
       'https://example.com/article2': recentTime,
     };
     writeFileSync(
-      join(tempDir, '.stock-tracker', 'news-seen.json'),
+      join(dataDir, 'news-seen.json'),
       JSON.stringify(data),
     );
 
-    const result = loadSeenLinks(tempDir);
+    const result = loadSeenLinks(dataDir);
     expect(result.size).toBe(2);
     expect(result.get('https://example.com/article1')).toBe(recentTime);
     expect(result.get('https://example.com/article2')).toBe(recentTime);
@@ -74,11 +74,11 @@ describe('loadSeenLinks', () => {
       'https://example.com/old': oldTime,
     };
     writeFileSync(
-      join(tempDir, '.stock-tracker', 'news-seen.json'),
+      join(dataDir, 'news-seen.json'),
       JSON.stringify(data),
     );
 
-    const result = loadSeenLinks(tempDir);
+    const result = loadSeenLinks(dataDir);
     expect(result.size).toBe(1);
     expect(result.has('https://example.com/recent')).toBe(true);
     expect(result.has('https://example.com/old')).toBe(false);
@@ -90,11 +90,11 @@ describe('loadSeenLinks', () => {
       'https://example.com/invalid': 12345,
     };
     writeFileSync(
-      join(tempDir, '.stock-tracker', 'news-seen.json'),
+      join(dataDir, 'news-seen.json'),
       JSON.stringify(data),
     );
 
-    const result = loadSeenLinks(tempDir);
+    const result = loadSeenLinks(dataDir);
     expect(result.size).toBe(1);
     expect(result.has('https://example.com/valid')).toBe(true);
   });
@@ -105,11 +105,11 @@ describe('loadSeenLinks', () => {
       'https://example.com/bad-date': 'not-a-date',
     };
     writeFileSync(
-      join(tempDir, '.stock-tracker', 'news-seen.json'),
+      join(dataDir, 'news-seen.json'),
       JSON.stringify(data),
     );
 
-    const result = loadSeenLinks(tempDir);
+    const result = loadSeenLinks(dataDir);
     expect(result.size).toBe(1);
     expect(result.has('https://example.com/valid')).toBe(true);
   });
@@ -122,9 +122,9 @@ describe('saveSeenLinks', () => {
       ['https://example.com/b', '2024-01-15T11:00:00.000Z'],
     ]);
 
-    saveSeenLinks(tempDir, seen);
+    saveSeenLinks(dataDir, seen);
 
-    const filePath = join(tempDir, '.stock-tracker', 'news-seen.json');
+    const filePath = join(dataDir, 'news-seen.json');
     const content = JSON.parse(readFileSync(filePath, 'utf-8'));
     expect(content).toEqual({
       'https://example.com/a': '2024-01-15T10:00:00.000Z',
@@ -135,24 +135,23 @@ describe('saveSeenLinks', () => {
   it('writes empty object when Map is empty', () => {
     const seen: SeenLinks = new Map();
 
-    saveSeenLinks(tempDir, seen);
+    saveSeenLinks(dataDir, seen);
 
-    const filePath = join(tempDir, '.stock-tracker', 'news-seen.json');
+    const filePath = join(dataDir, 'news-seen.json');
     const content = JSON.parse(readFileSync(filePath, 'utf-8'));
     expect(content).toEqual({});
   });
 
-  it('creates .stock-tracker directory if it does not exist', () => {
-    // Remove the .stock-tracker dir we created in beforeEach
-    rmSync(join(tempDir, '.stock-tracker'), { recursive: true, force: true });
+  it('creates directory if it does not exist', () => {
+    const nestedDir = join(dataDir, 'subdir');
 
     const seen: SeenLinks = new Map([
       ['https://example.com/new', '2024-01-15T12:00:00.000Z'],
     ]);
 
-    saveSeenLinks(tempDir, seen);
+    saveSeenLinks(nestedDir, seen);
 
-    const filePath = join(tempDir, '.stock-tracker', 'news-seen.json');
+    const filePath = join(nestedDir, 'news-seen.json');
     const content = JSON.parse(readFileSync(filePath, 'utf-8'));
     expect(content).toEqual({
       'https://example.com/new': '2024-01-15T12:00:00.000Z',

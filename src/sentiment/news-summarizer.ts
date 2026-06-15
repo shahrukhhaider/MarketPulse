@@ -12,7 +12,7 @@ const MAX_TOKENS = 200;
 const SUMMARY_DIR = 'news-summary';
 
 function summaryPath(dataDir: string, ticker: string): string {
-  return join(dataDir, '.stock-tracker', SUMMARY_DIR, `${ticker}.json`);
+  return join(dataDir, SUMMARY_DIR, `${ticker}.json`);
 }
 
 // ============================================================

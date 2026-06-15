@@ -12,15 +12,15 @@ import { tmpdir } from 'node:os';
 import { appendNewsItems, readRecentItems, type TimelineItem } from '../news-timeline-store.js';
 import type { NewsItem } from '../../data/news-provider.js';
 
-let tempDir: string;
+let dataDir: string;
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), 'news-timeline-test-'));
-  mkdirSync(join(tempDir, '.stock-tracker'), { recursive: true });
+  // dataDir simulates the .stock-tracker directory itself
+  dataDir = mkdtempSync(join(tmpdir(), 'news-timeline-test-'));
 });
 
 afterEach(() => {
-  rmSync(tempDir, { recursive: true, force: true });
+  rmSync(dataDir, { recursive: true, force: true });
 });
 
 function makeNewsItem(overrides: Partial<NewsItem> = {}): NewsItem {
@@ -38,9 +38,9 @@ describe('appendNewsItems', () => {
   it('creates news-timeline directory and file when they do not exist', () => {
     const items: NewsItem[] = [makeNewsItem()];
 
-    appendNewsItems(tempDir, 'AAPL', items);
+    appendNewsItems(dataDir, 'AAPL', items);
 
-    const filePath = join(tempDir, '.stock-tracker', 'news-timeline', 'AAPL.ndjson');
+    const filePath = join(dataDir, 'news-timeline', 'AAPL.ndjson');
     const content = readFileSync(filePath, 'utf-8');
     const lines = content.trim().split('\n');
     expect(lines).toHaveLength(1);
@@ -54,8 +54,8 @@ describe('appendNewsItems', () => {
   });
 
   it('deduplicates by URL — does not append items already present', () => {
-    const filePath = join(tempDir, '.stock-tracker', 'news-timeline', 'AAPL.ndjson');
-    mkdirSync(join(tempDir, '.stock-tracker', 'news-timeline'), { recursive: true });
+    const filePath = join(dataDir, 'news-timeline', 'AAPL.ndjson');
+    mkdirSync(join(dataDir, 'news-timeline'), { recursive: true });
 
     const existing: TimelineItem = {
       ticker: 'AAPL',
@@ -72,7 +72,7 @@ describe('appendNewsItems', () => {
       makeNewsItem({ url: 'https://example.com/new-one', title: 'New headline' }),
     ];
 
-    appendNewsItems(tempDir, 'AAPL', items);
+    appendNewsItems(dataDir, 'AAPL', items);
 
     const content = readFileSync(filePath, 'utf-8');
     const lines = content.trim().split('\n');
@@ -84,17 +84,17 @@ describe('appendNewsItems', () => {
   });
 
   it('does nothing when items array is empty', () => {
-    appendNewsItems(tempDir, 'AAPL', []);
+    appendNewsItems(dataDir, 'AAPL', []);
 
     // news-timeline directory should not even be created
     expect(() =>
-      readFileSync(join(tempDir, '.stock-tracker', 'news-timeline', 'AAPL.ndjson'), 'utf-8')
+      readFileSync(join(dataDir, 'news-timeline', 'AAPL.ndjson'), 'utf-8')
     ).toThrow();
   });
 
   it('does nothing when all items are duplicates', () => {
-    const filePath = join(tempDir, '.stock-tracker', 'news-timeline', 'TSLA.ndjson');
-    mkdirSync(join(tempDir, '.stock-tracker', 'news-timeline'), { recursive: true });
+    const filePath = join(dataDir, 'news-timeline', 'TSLA.ndjson');
+    mkdirSync(join(dataDir, 'news-timeline'), { recursive: true });
 
     const existing: TimelineItem = {
       ticker: 'TSLA',
@@ -107,7 +107,7 @@ describe('appendNewsItems', () => {
     writeFileSync(filePath, JSON.stringify(existing) + '\n');
 
     const items: NewsItem[] = [makeNewsItem({ ticker: 'TSLA', url: 'https://example.com/tesla' })];
-    appendNewsItems(tempDir, 'TSLA', items);
+    appendNewsItems(dataDir, 'TSLA', items);
 
     const content = readFileSync(filePath, 'utf-8');
     const lines = content.trim().split('\n');
@@ -116,10 +116,10 @@ describe('appendNewsItems', () => {
 
   it('sets fetched_at to a valid ISO 8601 UTC timestamp', () => {
     const before = new Date().toISOString();
-    appendNewsItems(tempDir, 'NVDA', [makeNewsItem({ ticker: 'NVDA' })]);
+    appendNewsItems(dataDir, 'NVDA', [makeNewsItem({ ticker: 'NVDA' })]);
     const after = new Date().toISOString();
 
-    const filePath = join(tempDir, '.stock-tracker', 'news-timeline', 'NVDA.ndjson');
+    const filePath = join(dataDir, 'news-timeline', 'NVDA.ndjson');
     const entry = JSON.parse(readFileSync(filePath, 'utf-8').trim()) as TimelineItem;
 
     expect(entry.fetched_at >= before).toBe(true);
@@ -136,13 +136,13 @@ describe('appendNewsItems', () => {
 
 describe('readRecentItems', () => {
   it('returns empty array when file does not exist', () => {
-    const result = readRecentItems(tempDir, 'AAPL', 7);
+    const result = readRecentItems(dataDir, 'AAPL', 7);
     expect(result).toEqual([]);
   });
 
   it('returns items within the last N days', () => {
-    const filePath = join(tempDir, '.stock-tracker', 'news-timeline', 'AAPL.ndjson');
-    mkdirSync(join(tempDir, '.stock-tracker', 'news-timeline'), { recursive: true });
+    const filePath = join(dataDir, 'news-timeline', 'AAPL.ndjson');
+    mkdirSync(join(dataDir, 'news-timeline'), { recursive: true });
 
     const recent = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(); // 2 days ago
     const old = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(); // 10 days ago
@@ -153,14 +153,14 @@ describe('readRecentItems', () => {
     ];
     writeFileSync(filePath, items.map((i) => JSON.stringify(i)).join('\n') + '\n');
 
-    const result = readRecentItems(tempDir, 'AAPL', 7);
+    const result = readRecentItems(dataDir, 'AAPL', 7);
     expect(result).toHaveLength(1);
     expect(result[0].title).toBe('Recent');
   });
 
   it('returns items sorted newest-first', () => {
-    const filePath = join(tempDir, '.stock-tracker', 'news-timeline', 'MSFT.ndjson');
-    mkdirSync(join(tempDir, '.stock-tracker', 'news-timeline'), { recursive: true });
+    const filePath = join(dataDir, 'news-timeline', 'MSFT.ndjson');
+    mkdirSync(join(dataDir, 'news-timeline'), { recursive: true });
 
     const day1 = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
     const day3 = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
@@ -173,7 +173,7 @@ describe('readRecentItems', () => {
     ];
     writeFileSync(filePath, items.map((i) => JSON.stringify(i)).join('\n') + '\n');
 
-    const result = readRecentItems(tempDir, 'MSFT', 7);
+    const result = readRecentItems(dataDir, 'MSFT', 7);
     expect(result).toHaveLength(3);
     expect(result[0].title).toBe('Day 1');
     expect(result[1].title).toBe('Day 3');
@@ -181,8 +181,8 @@ describe('readRecentItems', () => {
   });
 
   it('skips malformed lines gracefully', () => {
-    const filePath = join(tempDir, '.stock-tracker', 'news-timeline', 'GOOG.ndjson');
-    mkdirSync(join(tempDir, '.stock-tracker', 'news-timeline'), { recursive: true });
+    const filePath = join(dataDir, 'news-timeline', 'GOOG.ndjson');
+    mkdirSync(join(dataDir, 'news-timeline'), { recursive: true });
 
     const recent = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
     const validItem: TimelineItem = {
@@ -198,16 +198,16 @@ describe('readRecentItems', () => {
     ].join('\n');
     writeFileSync(filePath, content);
 
-    const result = readRecentItems(tempDir, 'GOOG', 7);
+    const result = readRecentItems(dataDir, 'GOOG', 7);
     expect(result).toHaveLength(1);
     expect(result[0].title).toBe('Valid');
   });
 
   it('returns empty array when file is unreadable', () => {
     // Point to a directory instead of a file — readFileSync will fail
-    mkdirSync(join(tempDir, '.stock-tracker', 'news-timeline', 'BAD.ndjson'), { recursive: true });
+    mkdirSync(join(dataDir, 'news-timeline', 'BAD.ndjson'), { recursive: true });
 
-    const result = readRecentItems(tempDir, 'BAD', 7);
+    const result = readRecentItems(dataDir, 'BAD', 7);
     expect(result).toEqual([]);
   });
 });

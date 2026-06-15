@@ -27,7 +27,6 @@ let tempDir: string;
 
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), 'news-summarizer-test-'));
-  mkdirSync(join(tempDir, '.stock-tracker'), { recursive: true });
   vi.stubEnv('ANTHROPIC_API_KEY', 'test-key-123');
   mockCreate.mockReset();
 });
@@ -85,7 +84,7 @@ describe('generateTickerSummary', () => {
     const items = makeTimelineItems(5, 'NVDA');
     await generateTickerSummary(tempDir, 'NVDA', items);
 
-    const filePath = join(tempDir, '.stock-tracker', 'news-summary', 'NVDA.json');
+    const filePath = join(tempDir, 'news-summary', 'NVDA.json');
     expect(existsSync(filePath)).toBe(true);
 
     const output = JSON.parse(readFileSync(filePath, 'utf-8'));
@@ -102,7 +101,7 @@ describe('generateTickerSummary', () => {
       content: [{ type: 'text', text: 'Summary text.' }],
     });
 
-    const summaryDir = join(tempDir, '.stock-tracker', 'news-summary');
+    const summaryDir = join(tempDir, 'news-summary');
     expect(existsSync(summaryDir)).toBe(false);
 
     await generateTickerSummary(tempDir, 'TSLA', makeTimelineItems(2, 'TSLA'));
@@ -117,7 +116,7 @@ describe('generateTickerSummary', () => {
     await generateTickerSummary(tempDir, 'META', makeTimelineItems(3, 'META'));
 
     // Should not throw
-    const filePath = join(tempDir, '.stock-tracker', 'news-summary', 'META.json');
+    const filePath = join(tempDir, 'news-summary', 'META.json');
     expect(existsSync(filePath)).toBe(false);
 
     // Should log with correct format

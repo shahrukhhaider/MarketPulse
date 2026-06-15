@@ -26,7 +26,7 @@ export interface TimelineItem {
 const TIMELINE_DIR = 'news-timeline';
 
 function timelinePath(dataDir: string, ticker: string): string {
-  return join(dataDir, '.stock-tracker', TIMELINE_DIR, `${ticker}.ndjson`);
+  return join(dataDir, TIMELINE_DIR, `${ticker}.ndjson`);
 }
 
 // ============================================================
