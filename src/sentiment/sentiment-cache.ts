@@ -24,17 +24,17 @@ export interface SentimentCacheEntry {
 const CACHE_FILE = 'sentiment-cache.json';
 
 /**
- * Writes sentiment cache entries to `.stock-tracker/sentiment-cache.json`
+ * Writes sentiment cache entries to `{dataDir}/sentiment-cache.json`
  * as a JSON object keyed by ticker symbol.
  *
- * Creates the `.stock-tracker/` directory if it doesn't exist.
+ * Creates the directory if it doesn't exist.
  * Logs a warning to stderr on write failure but does NOT throw.
  *
- * @param dataDir - The base directory containing `.stock-tracker/`
+ * @param dataDir - The .stock-tracker data directory
  * @param entries - Array of sentiment cache entries to persist
  */
 export function writeSentimentCache(dataDir: string, entries: SentimentCacheEntry[]): void {
-  const filePath = join(dataDir, '.stock-tracker', CACHE_FILE);
+  const filePath = join(dataDir, CACHE_FILE);
 
   const record: Record<string, SentimentCacheEntry> = {};
   for (const entry of entries) {

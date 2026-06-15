@@ -11,16 +11,16 @@ const SEEN_FILE = 'news-seen.json';
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Loads the seen-links cache from `.stock-tracker/news-seen.json`.
+ * Loads the seen-links cache from `{dataDir}/news-seen.json`.
  *
  * - Parses the file as `Record<string, string>` (url → seen_at ISO string)
  * - Filters out entries whose `seen_at` is more than 24 hours ago
  * - Returns an empty Map if the file is missing or contains malformed JSON
  *
- * @param dataDir - The base directory containing `.stock-tracker/`
+ * @param dataDir - The .stock-tracker data directory
  */
 export function loadSeenLinks(dataDir: string): SeenLinks {
-  const filePath = join(dataDir, '.stock-tracker', SEEN_FILE);
+  const filePath = join(dataDir, SEEN_FILE);
 
   let raw: string;
   try {
@@ -60,16 +60,16 @@ export function loadSeenLinks(dataDir: string): SeenLinks {
 }
 
 /**
- * Saves the seen-links cache to `.stock-tracker/news-seen.json`.
+ * Saves the seen-links cache to `{dataDir}/news-seen.json`.
  *
  * Serializes the Map to a `Record<string, string>` JSON object.
  * Logs a warning to stderr on write failure but does NOT throw.
  *
- * @param dataDir - The base directory containing `.stock-tracker/`
+ * @param dataDir - The .stock-tracker data directory
  * @param seen - The SeenLinks map to persist
  */
 export function saveSeenLinks(dataDir: string, seen: SeenLinks): void {
-  const filePath = join(dataDir, '.stock-tracker', SEEN_FILE);
+  const filePath = join(dataDir, SEEN_FILE);
 
   const record: Record<string, string> = {};
   for (const [url, seenAt] of seen) {
