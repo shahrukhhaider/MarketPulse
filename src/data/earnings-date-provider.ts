@@ -30,7 +30,7 @@ const DEFAULT_CACHE_DURATION_HOURS = 24;
 const MIN_CACHE_DURATION_HOURS = 1 / 60; // 1 minute
 const MAX_CACHE_DURATION_HOURS = 168; // 7 days
 const MAX_EARNINGS_DATES = 100;
-const DEFAULT_CACHE_DIR = '.stock-tracker';
+const DEFAULT_CACHE_DIR = '.stock-tracker/earnings';
 
 // ============================================================
 // Yahoo Finance Lazy Loader
@@ -137,7 +137,7 @@ export class EarningsDateProvider {
   // ============================================================
 
   private cacheFilePath(ticker: string): string {
-    return path.join(this.cacheDir, `${ticker}_earnings.json`);
+    return path.join(this.cacheDir, `${ticker}.json`);
   }
 
   private readCache(ticker: string): EarningsCacheEntry | null {

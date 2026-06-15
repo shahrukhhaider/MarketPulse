@@ -5,13 +5,15 @@ import { getPostEarningsDriftParameterSpace } from './parameter-grid.js';
 import { runBacktest } from '../pipeline/pipeline-functions.js';
 import { detectSignal } from './signal-detector.js';
 import { EarningsDateProvider } from '../data/earnings-date-provider.js';
+import * as path from 'node:path';
 
 export class PostEarningsDriftStrategy implements TunableStrategyInterface {
   readonly name = 'post_earnings_drift';
   private earningsProvider: EarningsDateProvider;
 
   constructor(cacheDir?: string) {
-    this.earningsProvider = new EarningsDateProvider({ cacheDir });
+    const earningsDir = cacheDir ? path.join(cacheDir, 'earnings') : undefined;
+    this.earningsProvider = new EarningsDateProvider({ cacheDir: earningsDir });
   }
 
   paramSpace(): ParameterSpace {

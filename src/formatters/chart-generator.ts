@@ -1,4 +1,6 @@
 import { exec } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { BacktestResult, HistoricalDataPoint, StrategyParams } from '../types.js';
 import type { CombinedPerformanceMetrics } from '../pipeline/pipeline-functions.js';
 import { annotateTradesWithReasoning } from '../utils/trade-annotator.js';
@@ -236,12 +238,14 @@ export function buildCombinedMarkers(
 
 /**
  * Determine the output file path for the HTML chart.
- * Format: {dataDir}/{TICKER}_backtest_{timestamp}.html
+ * Format: {dataDir}/backtests/{TICKER}_backtest_{timestamp}.html
  */
 export function getChartFilePath(dataDir: string, ticker: string): string {
   const upperTicker = ticker.toUpperCase();
   const timestamp = Date.now();
-  return `${dataDir}/${upperTicker}_backtest_${timestamp}.html`;
+  const backtestDir = path.join(dataDir, 'backtests');
+  fs.mkdirSync(backtestDir, { recursive: true });
+  return path.join(backtestDir, `${upperTicker}_backtest_${timestamp}.html`);
 }
 
 // ============================================================
