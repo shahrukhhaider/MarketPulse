@@ -315,14 +315,12 @@ export function createJournalUpdateHandler(deps: JournalCommandDeps): CommandHan
 
       const entry = entries[entryIndex];
 
-      // Determine outcome status
+      // Determine outcome status: profit = won, loss = lost
       let status: EntryStatus;
-      if (exitPrice >= entry.target_price) {
+      if (exitPrice >= entry.entry_price) {
         status = 'won';
-      } else if (exitPrice <= entry.stop_price) {
-        status = 'lost';
       } else {
-        status = 'expired';
+        status = 'lost';
       }
 
       // Mutate entry
