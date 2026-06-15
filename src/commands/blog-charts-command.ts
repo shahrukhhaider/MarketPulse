@@ -1,10 +1,11 @@
 // ============================================================
 // Blog Charts Command — Generate PNG charts for blog posts
 // ============================================================
-// Reads signal-history.ndjson, selects the best example signal
-// for each target strategy, generates PNG charts via the existing
-// chart generator pipeline, and writes them to the web repo's
-// public assets folder.
+// Selects winning historical signals for each target strategy by
+// rolling detectSignal across 2 years of price data, filters for
+// signals ≥30 days old whose trades resolved as winners, then
+// generates PNG charts via the existing chart generator pipeline
+// and writes them to the web repo's public assets folder.
 //
 // Usage: cli.js generate-blog-charts [--output <dir>] [--strategy <name>] [--data-dir <path>]
 // ============================================================
@@ -17,6 +18,8 @@ import type { ActiveSignal, SignalEntry } from '../signal-history/signal-entry.j
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import type { SignalInput } from '../chart-types.js';
 import { generateChartImages } from '../chart-image-generator.js';
+import { detectSignal } from '../strategies/signal-detector.js';
+import { DEFAULT_SCAN_PARAMS } from '../strategies/default-scan-params.js';
 
 // ============================================================
 // Constants
@@ -139,6 +142,121 @@ function scoreCandidate(candidate: SignalCandidate): number {
 }
 
 // ============================================================
+// selectBestSignalFromHistory — Historical backtest-based selector
+// ============================================================
+
+/**
+ * Find the best winning signal for a strategy by rolling detectSignal across
+ * 2 years of historical price data for each preferred ticker.
+ *
+ * Algorithm:
+ * 1. For each ticker, fetch 2y data.
+ * 2. Walk through bars from index 100 to len-31 (must be ≥30 days old).
+ * 3. At each bar, run detectSignal on the data slice up to that bar.
+ * 4. When signal is "active", check if the trade resolved as a winner:
+ *    look ahead up to 30 bars and see if price hit target before stop.
+ * 5. De-duplicate consecutive bars with the same entry price (same setup).
+ * 6. Score and return the best winner across all tickers.
+ */
+export async function selectBestSignalFromHistory(
+  strategy: string,
+  preferredTickers: readonly string[],
+  cachingProvider: HistoricalDataCache,
+): Promise<SignalCandidate | null> {
+  const params = DEFAULT_SCAN_PARAMS[strategy];
+  if (!params) return null;
+
+  const now = new Date();
+  const cutoffMs = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+  const isShort = strategy === 'bear_breakdown'; // Short side: target is below entry
+  const candidates: SignalCandidate[] = [];
+
+  for (const ticker of preferredTickers) {
+    try {
+      const dataResult = await cachingProvider.getHistoricalData(ticker, '2y');
+      if (!dataResult.success) continue;
+
+      const data = dataResult.data.dataPoints;
+      if (data.length < 130) continue; // Need ≥100 bars for signal + 30 look-ahead
+
+      const maxBar = data.length - 31; // Leave 30-bar look-ahead window
+      let lastActiveEntry: number | null = null;
+
+      for (let i = 100; i <= maxBar; i++) {
+        const barDate = new Date(data[i].date);
+        const ageMs = now.getTime() - barDate.getTime();
+        if (ageMs < cutoffMs) break; // Reached bars less than 30 days old — stop
+
+        const slice = data.slice(0, i + 1);
+        const signal = detectSignal(slice, params, strategy);
+
+        if (signal.signal !== 'active') {
+          lastActiveEntry = null; // Streak broken — reset de-dup tracker
+          continue;
+        }
+
+        // De-duplicate: skip consecutive bars with the same entry (same setup)
+        if (lastActiveEntry !== null && Math.abs(signal.entry - lastActiveEntry) < 0.01) {
+          continue;
+        }
+        lastActiveEntry = signal.entry;
+
+        // Validate levels — skip degenerate signals
+        if (signal.entry <= 0 || signal.stop <= 0) continue;
+
+        // Compute target from params (SignalOutput has no target field).
+        // risk = distance from entry to stop; target = entry ± risk * r_multiple
+        const rMultiple = (params.r_multiple ?? 2.0);
+        const risk = Math.abs(signal.entry - signal.stop);
+        const target = isShort
+          ? signal.entry - risk * rMultiple   // short: target below entry
+          : signal.entry + risk * rMultiple;  // long: target above entry
+
+        if (target <= 0) continue;
+
+        // Check outcome in next 30 bars
+        const lookAhead = data.slice(i + 1, i + 31);
+        let won = false;
+        for (const bar of lookAhead) {
+          if (isShort) {
+            // Short: target is below entry, stop is above entry
+            if (bar.high >= signal.stop) { won = false; break; } // hit stop
+            if (bar.low <= target) { won = true; break; }        // hit target
+          } else {
+            // Long: target is above entry, stop is below entry
+            if (bar.low <= signal.stop) { won = false; break; }  // hit stop
+            if (bar.high >= target) { won = true; break; }       // hit target
+          }
+        }
+
+        if (!won) continue;
+
+        const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
+        candidates.push({
+          ticker,
+          strategy,
+          entry: signal.entry,
+          stop: signal.stop,
+          target,
+          confidence: signal.confidence,
+          date: data[i].date,
+          ageDays,
+          isPreferred: true,
+        });
+      }
+    } catch {
+      // Skip ticker on any error — don't abort the whole run
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  const scored = candidates.map((c) => ({ candidate: c, score: scoreCandidate(c) }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].candidate;
+}
+
+// ============================================================
 // NDJSON Reader
 // ============================================================
 
@@ -185,11 +303,12 @@ const DEFAULT_OUTPUT_DIR = '../marketpulse-web/public/images/blog/';
 // ============================================================
 
 function loadLightweightChartsJs(): string | null {
+  // Resolve from project root (process.cwd()) so it works regardless of
+  // where the compiled output lives (dist/src/commands vs src/commands).
+  const projectRoot = process.cwd();
   const lwcPaths = [
-    resolve(__dirname, '..', '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
-    resolve(__dirname, '..', '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
-    resolve(__dirname, '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
-    resolve(__dirname, '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
+    resolve(projectRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
+    resolve(projectRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
   ];
 
   for (const lwcPath of lwcPaths) {
@@ -229,11 +348,20 @@ export function createBlogChartsHandler(deps: BlogChartsCommandDeps): CommandHan
       );
     }
 
-    // Select best signal for each strategy
+    // Select best signal for each strategy.
+    // Primary: roll detectSignal across 2y of historical data, find winners ≥30 days old.
+    // Fallback: read signal-history.ndjson (only useful once live system has ≥30 day old entries).
     const selections: Array<{ strategy: string; signal: SignalCandidate | null }> = [];
 
     for (const strategy of strategies) {
-      const signal = selectBestSignal(strategy, historyPath, PREFERRED_TICKERS);
+      process.stdout.write(`[blog-charts] Scanning historical data for ${strategy}...\n`);
+      let signal = await selectBestSignalFromHistory(strategy, PREFERRED_TICKERS, cachingProvider);
+
+      if (!signal) {
+        // Fallback to live signal log if historical scan found nothing
+        signal = selectBestSignal(strategy, historyPath, PREFERRED_TICKERS);
+      }
+
       selections.push({ strategy, signal });
 
       if (signal) {
