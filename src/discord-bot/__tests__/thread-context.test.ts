@@ -16,7 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildThreadContext } from '../thread-context.js';
-import type { Message, Collection } from 'discord.js';
+import { ChannelType, type Message, type Collection } from 'discord.js';
 
 // Helper to create a fake Discord message
 function createFakeMessage(overrides: {
@@ -48,6 +48,7 @@ function createFakeCollection(messages: Message[]): Collection<string, Message> 
 // Helper to create a fake thread channel with messages.fetch
 function createFakeThreadChannel(fetchedMessages: Message[]) {
   return {
+    type: ChannelType.PublicThread,
     messages: {
       fetch: vi.fn().mockResolvedValue(createFakeCollection(fetchedMessages)),
     },
@@ -55,13 +56,14 @@ function createFakeThreadChannel(fetchedMessages: Message[]) {
   };
 }
 
-// Helper to create a fake non-thread channel (regular text channel)
+// Helper to create a fake non-thread channel (regular text channel in a category)
 function createFakeTextChannel() {
   return {
+    type: ChannelType.GuildText,
     messages: {
       fetch: vi.fn(),
     },
-    // No parentId — not a thread
+    parentId: 'category-123', // Has parentId (category) but is NOT a thread
   };
 }
 

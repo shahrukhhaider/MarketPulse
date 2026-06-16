@@ -1,4 +1,4 @@
-import type { Message, TextChannel, ThreadChannel } from 'discord.js';
+import { ChannelType, type Message, type TextChannel, type ThreadChannel } from 'discord.js';
 
 // ---------------------------------------------------------------------------
 // Thread context builder — fetches last N messages and builds Claude messages array
@@ -28,10 +28,13 @@ export async function buildThreadContext(message: Message): Promise<ClaudeMessag
     return [{ role: 'user', content: message.cleanContent }];
   }
 
-  // Check if we're in a thread — threads have a `parentId` property
-  const isThread = 'parentId' in channel && (channel as ThreadChannel).parentId != null;
+  // Check if we're in a thread using channel type (not parentId, which is also
+  // set on regular channels inside categories)
+  const isThread = channel.type === ChannelType.PublicThread ||
+    channel.type === ChannelType.PrivateThread ||
+    channel.type === ChannelType.AnnouncementThread;
   if (!isThread) {
-    // Not in a thread yet — just return the single incoming message
+    // Not in a thread — just return the single incoming message (no channel history)
     return [{ role: 'user', content: message.cleanContent }];
   }
 
