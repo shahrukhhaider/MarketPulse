@@ -406,9 +406,9 @@ function handleSignalArchiveByDate(stockTrackerHome: string) {
       let pnlPct: number | null = null;
       if (sig.entry > 0) {
         if (isBearBreakdown) {
-          pnlPct = ((sig.entry - currentPrice) / sig.entry) * 100;
+          pnlPct = Math.round(((sig.entry - currentPrice) / sig.entry) * 10000) / 100;
         } else {
-          pnlPct = ((currentPrice - sig.entry) / sig.entry) * 100;
+          pnlPct = Math.round(((currentPrice - sig.entry) / sig.entry) * 10000) / 100;
         }
       }
 
