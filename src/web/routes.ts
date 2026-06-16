@@ -2,6 +2,7 @@ import { type Express, type Request, type Response } from 'express';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildPriceMapFromCache } from '../utils/price-map.js';
+import { generateChartFilename } from '../chart-types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -396,8 +397,17 @@ function handleSignalArchiveByDate(stockTrackerHome: string) {
     const enrichedActive = Array.from(activeMap.values()).map((sig) => {
       const currentPrice = priceMap.get(sig.ticker.toUpperCase()) ?? null;
 
+      // Chart URL enrichment (independent of price availability)
+      const chartFilename = generateChartFilename(sig.ticker, sig.strategy);
+      const chartPath = path.join(
+        stockTrackerHome, '.stock-tracker', 'signal-charts', date, chartFilename
+      );
+      const chartUrl = fs.existsSync(chartPath)
+        ? `/api/signals/archive/charts/${date}/${chartFilename}`
+        : null;
+
       if (currentPrice == null) {
-        return { ...sig, currentPrice: null, pnlPct: null, outcome: 'pending' as const };
+        return { ...sig, currentPrice: null, pnlPct: null, outcome: 'pending' as const, chartUrl };
       }
 
       const isBearBreakdown = sig.strategy === 'bear_breakdown';
@@ -434,7 +444,7 @@ function handleSignalArchiveByDate(stockTrackerHome: string) {
         }
       }
 
-      return { ...sig, currentPrice, pnlPct, outcome };
+      return { ...sig, currentPrice, pnlPct, outcome, chartUrl };
     });
 
     const nearSignals = Array.from(nearMap.values());
@@ -639,6 +649,73 @@ function handleWinningTradesChart(stockTrackerHome: string) {
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/signals/archive/charts/:date/:filename
+// ---------------------------------------------------------------------------
+
+export function handleSignalCharts(stockTrackerHome: string) {
+  return (req: Request, res: Response): void => {
+    const date = req.params.date as string;
+    const filename = req.params.filename as string;
+
+    // Check for path traversal and null bytes in any param
+    if (
+      containsTraversal(date) ||
+      containsTraversal(filename) ||
+      date.includes('%00') ||
+      filename.includes('%00') ||
+      date.includes('\0') ||
+      filename.includes('\0')
+    ) {
+      setCommonHeaders(res);
+      res.status(400).json({ error: 'Invalid request: path traversal not allowed' });
+      return;
+    }
+
+    // Validate date format (YYYY-MM-DD)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      setCommonHeaders(res);
+      res.status(400).json({ error: 'Invalid date format: expected YYYY-MM-DD' });
+      return;
+    }
+
+    // Validate filename format and length
+    if (filename.length > 100 || !/^[a-z0-9_]+_signal\.png$/.test(filename)) {
+      setCommonHeaders(res);
+      res.status(400).json({ error: 'Invalid filename format' });
+      return;
+    }
+
+    const filePath = path.join(
+      stockTrackerHome,
+      '.stock-tracker',
+      'signal-charts',
+      date,
+      filename
+    );
+
+    // Check file existence
+    if (!fs.existsSync(filePath)) {
+      setCommonHeaders(res);
+      res.status(404).json({ error: 'Chart not found' });
+      return;
+    }
+
+    // Read and serve the file
+    try {
+      const buffer = fs.readFileSync(filePath);
+      setCommonHeaders(res);
+      res.set('Content-Type', 'image/png');
+      res.set('Content-Length', String(buffer.length));
+      res.set('Cache-Control', 'public, max-age=86400');
+      res.send(buffer);
+    } catch {
+      setCommonHeaders(res);
+      res.status(500).json({ error: 'Failed to read chart file' });
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Register all API routes
 // ---------------------------------------------------------------------------
 
@@ -648,6 +725,7 @@ export function registerApiRoutes(app: Express, stockTrackerHome: string): void 
 
   // Signal archive routes
   app.get('/api/signals/archive/dates', handleSignalArchiveDates(stockTrackerHome));
+  app.get('/api/signals/archive/charts/:date/:filename', handleSignalCharts(stockTrackerHome));
   app.get('/api/signals/archive/:date', handleSignalArchiveByDate(stockTrackerHome));
 
   // Winning trades routes

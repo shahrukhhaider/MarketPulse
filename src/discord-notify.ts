@@ -5,18 +5,15 @@ import {
   parseScanJson,
   type ScanData,
   type Signal,
-  type OpenPosition,
-  type MarketRegime,
 } from './scan-types.js';
 import { narrateSignal } from './formatters/signal-narrator.js';
 import { confidenceBadge, fundamentalBadge } from './formatters/badge-helpers.js';
 import type { FundamentalData } from './types.js';
 import { toExposureTier } from './formatters/market-exposure.js';
-import { generateChartImages } from './chart-image-generator.js';
 import { buildMultipartPayload } from './discord-multipart.js';
-import { cleanupStaleTempDirs, cleanupChartTempDir, createChartTempDir } from './chart-temp-files.js';
+import { getSignalChartPath } from './chart-persistence.js';
 import { generateChartFilename } from './chart-types.js';
-import type { SignalInput, ChartResult, ChartSuccess, AttachmentMeta, MultipartPayload } from './chart-types.js';
+import type { ChartSuccess, AttachmentMeta, MultipartPayload } from './chart-types.js';
 import type { SignalLineage } from './indicators/signal-lineage.js';
 import { readProcessedSignals, flattenProcessedSignals } from './pipeline/read-processed-signals.js';
 
@@ -699,104 +696,39 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // 6. Generate chart images if enabled
+  // 6. Build chart map by reading persisted chart PNGs from persistent volume
   const activeSignals = data.signals.filter(
     (s) => s.signal === 'active' || s.signal === 'active_late',
   );
 
+  // Determine scan date for chart file lookup
+  const scanDate = activeSignals.length > 0
+    ? activeSignals[0].date
+    : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
+
   // Map of "ticker+strategy" → ChartSuccess for matching embeds to charts
-  let chartMap: Map<string, ChartSuccess> = new Map();
-  let tempDir: string | null = null;
+  const chartMap: Map<string, ChartSuccess> = new Map();
 
   if (chartsEnabled && activeSignals.length > 0) {
-    // Clean up stale temp dirs from previous crashed runs
-    cleanupStaleTempDirs();
-
-    // Build SignalInput[] from active signals
-    const signalInputs: SignalInput[] = activeSignals.map((s) => {
-      const lineage = (s as any).lineage as SignalLineage | undefined;
-      let signalStartDate: string | undefined;
-      if (lineage && lineage.daysInState > 0) {
-        // Compute start date by subtracting daysInState - 1 from today (in PST)
-        const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
-        const startDate = new Date(todayStr + 'T12:00:00');
-        startDate.setDate(startDate.getDate() - (lineage.daysInState - 1));
-        signalStartDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(startDate);
-      }
-      return {
-        ticker: s.ticker,
-        strategy: s.strategy,
-        entry: s.entry,
-        stop: s.stop,
-        target: s.target ?? null,
-        signalStartDate,
-      };
-    });
-
-    // Read lightweight-charts JS from node_modules
-    let lightweightChartsJs: string | null = null;
-    const lwcPaths = [
-      // Prod layout: /app/node_modules (node_modules at package root, dist in /app/dist)
-      path.resolve(__dirname, '..', '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
-      path.resolve(__dirname, '..', '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
-      // Local dev layout: node_modules at project root, __dirname is src/
-      path.resolve(__dirname, '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
-      path.resolve(__dirname, '..', 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
-    ];
-    for (const lwcPath of lwcPaths) {
+    for (const signal of activeSignals) {
+      const chartPath = getSignalChartPath(basePath, scanDate, signal.ticker, signal.strategy);
       try {
-        lightweightChartsJs = fs.readFileSync(lwcPath, 'utf-8');
-        break;
-      } catch {
-        // Try next path
-      }
-    }
-
-    if (lightweightChartsJs === null) {
-      process.stderr.write('[discord-notify] Warning: lightweight-charts library not found, skipping chart generation\n');
-    } else {
-      // Create temp dir for this cycle
-      tempDir = createChartTempDir();
-
-      try {
-        // Import data provider dynamically to avoid circular deps
-        const { YahooFinanceAdapter } = await import('./data/yahoo-finance-adapter.js');
-        const { HistoricalDataCache } = await import('./data/historical-data-cache.js');
-
-        const yahooAdapter = new YahooFinanceAdapter();
-        const dataProvider = new HistoricalDataCache(yahooAdapter, {
-          cacheDir: path.join(basePath, '.stock-tracker', 'history-cache'),
+        const buffer = fs.readFileSync(chartPath);
+        const filename = generateChartFilename(signal.ticker, signal.strategy);
+        chartMap.set(`${signal.ticker}+${signal.strategy}`, {
+          success: true,
+          ticker: signal.ticker,
+          strategy: signal.strategy,
+          pngBuffer: buffer,
+          filename,
         });
-
-        const chartResults = await Promise.race([
-          generateChartImages(signalInputs, {
-            dataProvider,
-            lightweightChartsJs,
-          }),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Chart generation timed out after 60s')), 60_000)
-          ),
-        ]);
-
-        // Build chart map from successful results
-        for (const result of chartResults) {
-          if (result.success) {
-            const key = `${result.ticker}+${result.strategy}`;
-            chartMap.set(key, result);
-          } else {
-            process.stderr.write(
-              `[discord-notify] Warning: chart generation failed for ${result.ticker} (${result.strategy}): ${result.reason}\n`
-            );
-          }
-        }
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`[discord-notify] Warning: chart generation error: ${message}\n`);
+      } catch {
+        process.stderr.write(`[discord-notify] Warning: chart not found at ${chartPath}\n`);
       }
     }
   }
 
-  // 6. Build payloads in order: header, active signals, near signals, open positions
+  // 7. Build payloads in order: header, active signals, near signals, open positions
   const payloads: DiscordPayload[] = [];
   payloads.push(buildHeaderPayload(data));
   payloads.push(...buildActiveSignalsPayloads(data));
@@ -805,7 +737,7 @@ async function main(): Promise<void> {
   const posPayload = buildOpenPositionsPayload(data);
   if (posPayload) payloads.push(posPayload);
 
-  // 7. Post sequentially with 1000ms delay between each
+  // 8. Post sequentially with 1000ms delay between each
   try {
     for (let i = 0; i < payloads.length; i++) {
       const payload = payloads[i];
@@ -876,17 +808,7 @@ async function main(): Promise<void> {
     // Non-429 error — abort remaining payloads, exit 1
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`[discord-notify] ${message}\n`);
-
-    // Clean up temp dir before exiting
-    if (tempDir) {
-      cleanupChartTempDir(tempDir);
-    }
     process.exit(1);
-  }
-
-  // 8. Clean up temp dir after all posting completes
-  if (tempDir) {
-    cleanupChartTempDir(tempDir);
   }
 }
 
