@@ -187,6 +187,269 @@ function handleSignalsWeekAgo(stockTrackerHome: string) {
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/signals/archive/dates
+// ---------------------------------------------------------------------------
+
+function handleSignalArchiveDates(stockTrackerHome: string) {
+  return (_req: Request, res: Response): void => {
+    const mainFile = path.join(stockTrackerHome, '.stock-tracker', 'signal-history.ndjson');
+    const techFile = path.join(stockTrackerHome, '.stock-tracker', 'signal-history-tech.ndjson');
+
+    let mainLines: string;
+    let techLines: string;
+
+    try {
+      mainLines = fs.readFileSync(mainFile, 'utf-8');
+    } catch {
+      mainLines = '';
+    }
+
+    try {
+      techLines = fs.readFileSync(techFile, 'utf-8');
+    } catch {
+      techLines = '';
+    }
+
+    if (!mainLines && !techLines) {
+      setCommonHeaders(res);
+      res.status(503).json({ error: 'Signal history data not available yet' });
+      return;
+    }
+
+    const dateSet = new Set<string>();
+
+    const allLines = (mainLines + '\n' + techLines)
+      .split('\n')
+      .filter((line) => line.trim().length > 0);
+
+    for (const line of allLines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.date && typeof entry.date === 'string') {
+          dateSet.add(entry.date);
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+
+    const dates = Array.from(dateSet)
+      .sort((a, b) => b.localeCompare(a))
+      .slice(0, 200);
+
+    setCommonHeaders(res);
+    res.json({ dates });
+  };
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/signals/archive/:date
+// ---------------------------------------------------------------------------
+
+function handleSignalArchiveByDate(stockTrackerHome: string) {
+  return (req: Request, res: Response): void => {
+    const date = req.params.date as string;
+
+    // Validate date format and reject path traversal
+    if (containsTraversal(date) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      setCommonHeaders(res);
+      res.status(400).json({ error: 'Invalid date format. Expected YYYY-MM-DD.' });
+      return;
+    }
+
+    const mainFile = path.join(stockTrackerHome, '.stock-tracker', 'signal-history.ndjson');
+    const techFile = path.join(stockTrackerHome, '.stock-tracker', 'signal-history-tech.ndjson');
+
+    let mainLines: string;
+    let techLines: string;
+
+    try {
+      mainLines = fs.readFileSync(mainFile, 'utf-8');
+    } catch {
+      mainLines = '';
+    }
+
+    try {
+      techLines = fs.readFileSync(techFile, 'utf-8');
+    } catch {
+      techLines = '';
+    }
+
+    // Parse entries from both files for the requested date
+    interface ActiveSignalRaw {
+      ticker: string;
+      strategy: string;
+      entry: number;
+      stop: number;
+      target: number;
+      confidence?: number;
+      rs_rating?: number;
+      rvol?: number | null;
+      rationale?: string[];
+      [key: string]: unknown;
+    }
+
+    interface NearSignalRaw {
+      ticker: string;
+      strategy: string;
+      [key: string]: unknown;
+    }
+
+    interface SignalEntry {
+      date: string;
+      market_context?: {
+        market_mood?: string;
+        market_regime?: string;
+        vix?: number | null;
+        vix_regime?: string;
+        breadth_pct?: number | null;
+        breadth_label?: string;
+      } | null;
+      active?: ActiveSignalRaw[];
+      near?: NearSignalRaw[];
+      [key: string]: unknown;
+    }
+
+    const mainEntries: SignalEntry[] = [];
+    const techEntries: SignalEntry[] = [];
+
+    if (mainLines) {
+      for (const line of mainLines.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const entry = JSON.parse(line) as SignalEntry;
+          if (entry.date === date) mainEntries.push(entry);
+        } catch {
+          // Skip malformed lines
+        }
+      }
+    }
+
+    if (techLines) {
+      for (const line of techLines.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const entry = JSON.parse(line) as SignalEntry;
+          if (entry.date === date) techEntries.push(entry);
+        } catch {
+          // Skip malformed lines
+        }
+      }
+    }
+
+    if (mainEntries.length === 0 && techEntries.length === 0) {
+      setCommonHeaders(res);
+      res.status(404).json({ error: `No signal data found for ${date}` });
+      return;
+    }
+
+    // Merge entries: prefer large_cap (main) file's market_context
+    let marketContext: SignalEntry['market_context'] = null;
+    if (mainEntries.length > 0 && mainEntries[0].market_context) {
+      marketContext = mainEntries[0].market_context;
+    } else if (techEntries.length > 0 && techEntries[0].market_context) {
+      marketContext = techEntries[0].market_context;
+    }
+
+    // Merge active signals, deduplicate by ticker + strategy
+    const activeMap = new Map<string, ActiveSignalRaw>();
+    for (const entry of mainEntries) {
+      if (entry.active) {
+        for (const sig of entry.active) {
+          const key = `${sig.ticker}|${sig.strategy}`;
+          if (!activeMap.has(key)) activeMap.set(key, sig);
+        }
+      }
+    }
+    for (const entry of techEntries) {
+      if (entry.active) {
+        for (const sig of entry.active) {
+          const key = `${sig.ticker}|${sig.strategy}`;
+          if (!activeMap.has(key)) activeMap.set(key, sig);
+        }
+      }
+    }
+
+    // Merge near signals, deduplicate by ticker + strategy
+    const nearMap = new Map<string, NearSignalRaw>();
+    for (const entry of mainEntries) {
+      if (entry.near) {
+        for (const sig of entry.near) {
+          const key = `${sig.ticker}|${sig.strategy}`;
+          if (!nearMap.has(key)) nearMap.set(key, sig);
+        }
+      }
+    }
+    for (const entry of techEntries) {
+      if (entry.near) {
+        for (const sig of entry.near) {
+          const key = `${sig.ticker}|${sig.strategy}`;
+          if (!nearMap.has(key)) nearMap.set(key, sig);
+        }
+      }
+    }
+
+    // Build price map from cache
+    const priceMap = buildLatestPriceMap(stockTrackerHome);
+
+    // Enrich active signals with currentPrice, pnlPct, and outcome
+    const enrichedActive = Array.from(activeMap.values()).map((sig) => {
+      const currentPrice = priceMap.get(sig.ticker.toUpperCase()) ?? null;
+
+      if (currentPrice == null) {
+        return { ...sig, currentPrice: null, pnlPct: null, outcome: 'pending' as const };
+      }
+
+      const isBearBreakdown = sig.strategy === 'bear_breakdown';
+
+      // P&L calculation: inverted for bear_breakdown (short)
+      let pnlPct: number | null = null;
+      if (sig.entry > 0) {
+        if (isBearBreakdown) {
+          pnlPct = ((sig.entry - currentPrice) / sig.entry) * 100;
+        } else {
+          pnlPct = ((currentPrice - sig.entry) / sig.entry) * 100;
+        }
+      }
+
+      // Outcome classification
+      let outcome: 'target_hit' | 'stopped_out' | 'open';
+      if (isBearBreakdown) {
+        // Short: target is below entry, stop is above entry
+        if (currentPrice <= sig.target) {
+          outcome = 'target_hit';
+        } else if (currentPrice >= sig.stop) {
+          outcome = 'stopped_out';
+        } else {
+          outcome = 'open';
+        }
+      } else {
+        // Long: target is above entry, stop is below entry
+        if (currentPrice >= sig.target) {
+          outcome = 'target_hit';
+        } else if (currentPrice <= sig.stop) {
+          outcome = 'stopped_out';
+        } else {
+          outcome = 'open';
+        }
+      }
+
+      return { ...sig, currentPrice, pnlPct, outcome };
+    });
+
+    const nearSignals = Array.from(nearMap.values());
+
+    setCommonHeaders(res);
+    res.json({
+      date,
+      market_context: marketContext,
+      active: enrichedActive,
+      near: nearSignals,
+    });
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Winning Trades: shared validation
 // ---------------------------------------------------------------------------
 
@@ -382,6 +645,10 @@ function handleWinningTradesChart(stockTrackerHome: string) {
 export function registerApiRoutes(app: Express, stockTrackerHome: string): void {
   app.get('/api/market', handleMarket(stockTrackerHome));
   app.get('/api/signals/week-ago', handleSignalsWeekAgo(stockTrackerHome));
+
+  // Signal archive routes
+  app.get('/api/signals/archive/dates', handleSignalArchiveDates(stockTrackerHome));
+  app.get('/api/signals/archive/:date', handleSignalArchiveByDate(stockTrackerHome));
 
   // Winning trades routes
   app.get('/api/winning-trades', handleWinningTradesLatest(stockTrackerHome));
