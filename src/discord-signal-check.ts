@@ -458,6 +458,31 @@ export async function main(): Promise<void> {
         `[discord-signal-check] Sequential fallback resolved ${afterFallback}/${tickers.length} prices\n`,
       );
     }
+
+    // Final fallback: if still no prices, use chart() endpoint with 1mo period
+    // to get the latest closing price. Yahoo quote() is unreliable on some IPs
+    // but chart() often still works.
+    const resolvedAfterSeq = [...priceMap.values()].filter((v) => v !== null).length;
+    if (resolvedAfterSeq === 0 && tickers.length > 0) {
+      process.stderr.write(
+        `[discord-signal-check] Quote endpoints failed — falling back to chart() for latest close\n`,
+      );
+      for (const ticker of tickers) {
+        try {
+          const histResult = await client.fetchHistoricalData(ticker, '1mo', '1d');
+          if (histResult.success && histResult.data.dataPoints.length > 0) {
+            const lastPoint = histResult.data.dataPoints[histResult.data.dataPoints.length - 1];
+            priceMap.set(ticker, lastPoint.close);
+          }
+        } catch {
+          // Leave as null
+        }
+      }
+      const afterChartFallback = [...priceMap.values()].filter((v) => v !== null).length;
+      process.stderr.write(
+        `[discord-signal-check] Chart fallback resolved ${afterChartFallback}/${tickers.length} prices\n`,
+      );
+    }
   } catch (err) {
     // Timeout or network error — all prices null, continue posting (Req 6.6)
     process.stderr.write(
