@@ -95,6 +95,20 @@ export function buildStrategySummary(
   let profileSaved = false;
 
   if (shouldSave) {
+    // Gate: require at least 1 OOS trade to validate the tuned params
+    if (result.oosMetrics.tradeCount === 0) {
+      return {
+        ticker,
+        strategy: strategyName,
+        status: 'skipped',
+        in_sample: result.isMetrics,
+        out_of_sample: result.oosMetrics,
+        configurations_evaluated: result.configurationsEvaluated,
+        profile_saved: false,
+        skip_reason: 'No OOS trades — params not validated out-of-sample',
+      } as TuneSummary;
+    }
+
     const lastTunedAt = new Date().toISOString();
     const validUntil = computeExpiry(lastTunedAt);
 

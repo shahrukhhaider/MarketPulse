@@ -36,12 +36,13 @@ export interface TuneCommandDeps {
 export interface TuneSummary {
   ticker: string;
   strategy: string;
-  status: 'success' | 'insufficient_data' | 'no_viable_configs' | 'error';
+  status: 'success' | 'skipped' | 'insufficient_data' | 'no_viable_configs' | 'error';
   in_sample?: TuningPerformanceMetrics;
   out_of_sample?: TuningPerformanceMetrics;
   configurations_evaluated?: number;
   profile_saved: boolean;
   error_message?: string;
+  skip_reason?: string;
 }
 
 export interface TuneBatchResult {
@@ -169,6 +170,22 @@ export function createTuneHandler(deps: TuneCommandDeps): CommandHandler {
         let profileSaved = false;
 
         if (shouldSave) {
+          // Gate: require at least 1 OOS trade to validate the tuned params
+          if (result.oosMetrics.tradeCount === 0) {
+            skipped++;
+            summaries.push({
+              ticker,
+              strategy: strategyName,
+              status: 'skipped',
+              in_sample: result.isMetrics,
+              out_of_sample: result.oosMetrics,
+              configurations_evaluated: result.configurationsEvaluated,
+              profile_saved: false,
+              skip_reason: 'No OOS trades — params not validated out-of-sample',
+            });
+            continue;
+          }
+
           const lastTunedAt = new Date().toISOString();
           const validUntil = computeExpiry(lastTunedAt);
 
