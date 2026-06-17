@@ -243,6 +243,33 @@ function buildOverlayScript(
 }
 
 /**
+ * Build the HTML legend for the chart showing price levels and overlays.
+ * Compact inline legend positioned in the top-right corner.
+ */
+function buildLegendHtml(strategy: string, target: number | null): string {
+  const items: string[] = [];
+
+  // Price level items (always present)
+  items.push(`<span class="leg"><span class="sw" style="background:#26a69a"></span>Entry</span>`);
+  items.push(`<span class="leg"><span class="sw" style="background:#ef5350"></span>Stop</span>`);
+  if (target !== null) {
+    items.push(`<span class="leg"><span class="sw" style="background:#2196F3"></span>Target</span>`);
+  }
+
+  // Strategy-specific overlay items
+  if (strategy === 'keltner_mean_reversion') {
+    items.push(`<span class="leg"><span class="sw" style="background:#FFD700"></span>EMA20</span>`);
+    items.push(`<span class="leg"><span class="sw-dash" style="border-color:#00BCD4"></span>Keltner</span>`);
+  } else {
+    items.push(`<span class="leg"><span class="sw" style="background:#FFFFFF"></span>SMA10</span>`);
+    items.push(`<span class="leg"><span class="sw" style="background:#FF9800"></span>SMA20</span>`);
+    items.push(`<span class="leg"><span class="sw" style="background:#9C27B0"></span>SMA50</span>`);
+  }
+
+  return items.join('');
+}
+
+/**
  * Generate a self-contained HTML string for signal chart screenshot.
  *
  * The HTML includes:
@@ -325,10 +352,15 @@ export function generateSignalChartHtml(input: SignalChartInput, lightweightChar
     html, body { width: 800px; height: 400px; overflow: hidden; background: #1a1a2e; }
     #chart { width: 800px; height: 400px; }
     #title { position: absolute; top: 8px; left: 12px; color: #fff; font: bold 14px sans-serif; z-index: 10; }
+    #legend { position: absolute; top: 8px; right: 60px; display: flex; gap: 10px; z-index: 10; font: 11px sans-serif; color: #ccc; }
+    .leg { display: flex; align-items: center; gap: 3px; }
+    .sw { width: 14px; height: 3px; border-radius: 1px; }
+    .sw-dash { width: 14px; height: 0; border-top: 2px dashed; }
   </style>
 </head>
 <body>
   <div id="title">${escapeHtml(ticker)} \u2014 ${escapeHtml(strategy)}</div>
+  <div id="legend">${buildLegendHtml(strategy, target)}</div>
   <div id="chart"></div>
   <script>${lightweightChartsJs}<\/script>
   <script>
