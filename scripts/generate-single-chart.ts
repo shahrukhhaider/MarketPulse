@@ -33,11 +33,15 @@ const profileResult = loadStrategyProfile(ticker, strategy, {
 });
 if (profileResult.success) {
   const m = profileResult.data.walk_forward_metrics;
-  const winPct = Math.round(m.win_rate * 100);
-  const retSign = m.return >= 0 ? '+' : '';
-  const retPct = Math.round(m.return);
-  backtestSummary = `Win ${winPct}% · ${m.trades} trades · ${retSign}${retPct}% return · Sharpe ${m.sharpe.toFixed(1)}`;
-  console.log(`Profile found: ${backtestSummary}`);
+  if (m.trades > 0) {
+    const winPct = Math.round(m.win_rate * 100);
+    const retSign = m.return >= 0 ? '+' : '';
+    const retPct = Math.round(m.return);
+    backtestSummary = `Win ${winPct}% · ${m.trades} trades · ${retSign}${retPct}% return · Sharpe ${m.sharpe.toFixed(1)}`;
+    console.log(`Profile found: ${backtestSummary}`);
+  } else {
+    console.log(`Profile found for ${ticker}/${strategy} but 0 trades — skipping subtitle`);
+  }
 } else {
   console.log(`No profile found for ${ticker}/${strategy}`);
 }
