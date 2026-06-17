@@ -8,6 +8,7 @@ import { addToWatchlist, removeFromWatchlist, getUserWatchlist } from '../db/wat
 import { setWebhook, removeWebhook, getWebhook } from '../db/webhook-store.js';
 import { inProgressTickers, runTuningJob } from './tuning-job-manager.js';
 import { loadStrategyProfile } from '../data/profile-store.js';
+import { fetchTickerSentiment, fetchMarketSentiment } from '../sentiment/live-fetcher.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -718,49 +719,12 @@ async function getTickerProfile(input: { ticker: string; strategy?: string }): P
 // ---------------------------------------------------------------------------
 
 /**
- * Reads sentiment-cache.json and returns a summary of news/sentiment for all tickers.
- * Returns an array of { ticker, band, top_headline, fetched_at } for each ticker in the cache.
+ * Fetches live market sentiment for SPY, QQQ, and DIA via the on-demand live fetcher.
  */
 async function getMarketNews(): Promise<unknown> {
-  const filePath = path.join(getDataDir(), 'sentiment-cache.json');
-
-  let raw: string;
-  try {
-    raw = await readFile(filePath, 'utf-8');
-  } catch {
-    return 'No sentiment data available yet \u2014 digest runs at 8 AM ET on trading days.';
-  }
-
-  if (!raw.trim()) {
-    return 'No sentiment data available yet \u2014 digest runs at 8 AM ET on trading days.';
-  }
-
-  let cache: Record<string, {
-    ticker: string;
-    band: string;
-    top_headlines: Array<{ title: string; url: string }>;
-    fetched_at: string;
-  }>;
-  try {
-    cache = JSON.parse(raw);
-  } catch {
-    return 'Sentiment cache is being rebuilt \u2014 try again after the next morning digest.';
-  }
-
-  const entries = Object.values(cache).map((entry) => {
-    const topHeadline = entry.top_headlines?.[0]
-      ? `${entry.top_headlines[0].title} (${entry.top_headlines[0].url})`
-      : null;
-
-    return {
-      ticker: entry.ticker,
-      band: entry.band,
-      top_headline: topHeadline,
-      fetched_at: entry.fetched_at,
-    };
-  });
-
-  return entries;
+  const result = await fetchMarketSentiment(getDataDir());
+  if ('error' in result) return result.error;
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -768,74 +732,11 @@ async function getMarketNews(): Promise<unknown> {
 // ---------------------------------------------------------------------------
 
 /**
- * Reads sentiment-cache.json and returns news/sentiment data for a specific ticker.
- * The cache is keyed by uppercase ticker symbol.
+ * Fetches live sentiment and news for a specific ticker via the on-demand live fetcher.
  */
 async function getTickerNews(input: { ticker: string }): Promise<unknown> {
-  const ticker = input.ticker.toUpperCase();
-  const filePath = path.join(getDataDir(), 'sentiment-cache.json');
-
-  let raw: string;
-  try {
-    raw = await readFile(filePath, 'utf-8');
-  } catch {
-    return 'No sentiment data available yet \u2014 digest runs at 8 AM ET on trading days.';
-  }
-
-  let cache: Record<string, {
-    ticker: string;
-    band: string;
-    st_bullish_count: number;
-    st_bearish_count: number;
-    st_message_volume: number;
-    top_headlines: Array<{ title: string; url: string; source_domain: string; published_at: string }>;
-    fetched_at: string;
-  }>;
-  try {
-    cache = JSON.parse(raw);
-  } catch {
-    return 'No sentiment data available yet \u2014 digest runs at 8 AM ET on trading days.';
-  }
-
-  const entry = cache[ticker];
-  if (!entry) {
-    return `No news data for ${ticker} \u2014 it may not be in the current active/near signal list.`;
-  }
-
-  // Attempt to read the rolling news summary (Task 4.1–4.3)
-  let newsSummary: string | undefined;
-  try {
-    const summaryPath = path.join(getDataDir(), 'news-summary', `${ticker}.json`);
-    const summaryRaw = await readFile(summaryPath, 'utf-8');
-    const summaryData: { summary?: string; generated_at?: string } = JSON.parse(summaryRaw);
-
-    // Only include if generated_at is within the last 48 hours
-    if (summaryData.generated_at && summaryData.summary) {
-      const generatedAt = new Date(summaryData.generated_at).getTime();
-      const now = Date.now();
-      const fortyEightHoursMs = 48 * 60 * 60 * 1000;
-      if (now - generatedAt <= fortyEightHoursMs) {
-        newsSummary = summaryData.summary;
-      }
-    }
-  } catch {
-    // Missing or malformed summary file — silently omit news_summary
-  }
-
-  const result: Record<string, unknown> = {
-    ticker: entry.ticker,
-    band: entry.band,
-    st_bullish_count: entry.st_bullish_count,
-    st_bearish_count: entry.st_bearish_count,
-    st_message_volume: entry.st_message_volume,
-    top_headlines: entry.top_headlines,
-    fetched_at: entry.fetched_at,
-  };
-
-  if (newsSummary) {
-    result.news_summary = newsSummary;
-  }
-
+  const result = await fetchTickerSentiment(input.ticker, getDataDir());
+  if ('error' in result) return result.error;
   return result;
 }
 
