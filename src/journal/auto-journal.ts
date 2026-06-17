@@ -33,16 +33,20 @@ export interface AutoJournalResult {
  * - signal.state === 'active' only (not near/forming/none)
  * - signal.confidence >= minConfidence (default 0.80, env override)
  * - signal.ticker NOT already held as an open position
+ * - Total open positions < maxSlots (from exposure tier)
+ *
+ * Signals are sorted by confidence (descending) before processing
+ * so the highest-confidence signals get priority when slots are limited.
  *
  * @param signals - All signals from the current scan
  * @param journalPath - Path to journal.json
- * @param opts - Optional overrides (minConfidence)
+ * @param opts - Optional overrides (minConfidence, maxSlots)
  * @returns AutoJournalResult with entered, skipped, and errors arrays
  */
 export function autoJournal(
   signals: SignalOutput[],
   journalPath: string,
-  opts?: { minConfidence?: number },
+  opts?: { minConfidence?: number; maxSlots?: number },
 ): AutoJournalResult {
   const result: AutoJournalResult = { entered: [], skipped: [], errors: [] };
 
@@ -50,6 +54,9 @@ export function autoJournal(
   const envConfidence = process.env['AUTO_JOURNAL_MIN_CONFIDENCE'];
   const minConfidence = opts?.minConfidence
     ?? (envConfidence ? parseFloat(envConfidence) : 0.80);
+
+  // Resolve max open slots (default: no limit beyond MAX_OPEN_ENTRIES)
+  const maxSlots = opts?.maxSlots ?? Infinity;
 
   // 1. Load current journal entries
   const loadResult = load(journalPath);
@@ -68,10 +75,14 @@ export function autoJournal(
       .map((e) => e.ticker.toUpperCase()),
   );
 
-  // 3. Filter signals to qualifying candidates
-  const today = todayPST();
+  // 3. Sort signals by confidence descending (highest priority first)
+  const sortedSignals = [...signals].sort((a, b) => b.confidence - a.confidence);
 
-  for (const signal of signals) {
+  // 4. Filter and record qualifying candidates
+  const today = todayPST();
+  let openCount = openTickers.size;
+
+  for (const signal of sortedSignals) {
     // Only active signals qualify
     if (signal.signal !== 'active') continue;
 
@@ -84,7 +95,13 @@ export function autoJournal(
       continue;
     }
 
-    // 4. Record the qualifying signal
+    // Slot limit check: respect exposure tier cap
+    if (openCount >= maxSlots) {
+      result.skipped.push(`${signal.ticker}: slot limit reached (${openCount}/${maxSlots})`);
+      continue;
+    }
+
+    // 5. Record the qualifying signal
     const recordResult = record(
       {
         ticker: signal.ticker,
@@ -99,11 +116,12 @@ export function autoJournal(
       journalPath,
     );
 
-    // 5. Collect results
+    // 6. Collect results
     if (recordResult.success) {
       result.entered.push(recordResult.data);
       // Add to openTickers so subsequent signals for same ticker are skipped
       openTickers.add(signal.ticker.toUpperCase());
+      openCount++;
     } else {
       const errorResult = recordResult as ErrorResult;
       if (errorResult.code === 'DUPLICATE' || errorResult.code === 'MAX_OPEN') {
@@ -114,11 +132,11 @@ export function autoJournal(
     }
   }
 
-  // 6. Log summary
+  // 7. Log summary
   console.log(
     `[auto-journal] Entered: ${result.entered.length}, Skipped: ${result.skipped.length}, Errors: ${result.errors.length}`,
   );
 
-  // 7. Return result
+  // 8. Return result
   return result;
 }

@@ -41,6 +41,7 @@ import { computeLineage } from '../indicators/signal-lineage.js';
 import type { SignalLineage } from '../indicators/signal-lineage.js';
 import { resolveUniverse, VALID_UNIVERSES } from '../utils/universe.js';
 import type { UniverseValue } from '../utils/universe.js';
+import { toExposureTier } from '../formatters/market-exposure.js';
 import { FundamentalsProvider } from '../data/fundamentals-provider.js';
 import { applyFundamentalAdjustment } from '../indicators/fundamental-scorer.js';
 import type { FundamentalData } from '../types.js';
@@ -339,6 +340,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       const universesToScan: UniverseValue[] = ['large_cap', 'mid_cap'];
       const allResults: Record<string, unknown>[] = [];
       const allWarnings: string[] = [];
+      let allRegimeMarketRegime: string | undefined;
 
       // Load community watchlist tickers from DB (shared across all universes)
       let communityTickers: string[] = [];
@@ -389,6 +391,10 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
           regimeStateMap = new Map<string, RegimeState>();
           for (const state of regimeResult.tickers) {
             regimeStateMap.set(state.ticker, state);
+          }
+          // Capture first regime result for slot limit calculation
+          if (!allRegimeMarketRegime) {
+            allRegimeMarketRegime = regimeResult.market.market_regime;
           }
         }
 
@@ -458,7 +464,10 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
       // Auto-journal qualifying signals
       const allJournalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
-      const autoJournalResult = autoJournal(mergedSignals, allJournalPath);
+      const allExposureTier = allRegimeMarketRegime ? toExposureTier(allRegimeMarketRegime) : undefined;
+      const autoJournalResult = autoJournal(mergedSignals, allJournalPath, {
+        maxSlots: allExposureTier?.slots[1],
+      });
       if (autoJournalResult.errors.length > 0) {
         allWarnings.push(...autoJournalResult.errors);
       }
@@ -678,7 +687,10 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
       // Auto-journal qualifying signals (after all confidence adjustments)
       const parallelJournalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
-      const parallelAutoJournalResult = autoJournal(fundamentalAnnotatedSignals, parallelJournalPath);
+      const parallelExposureTier = regimeResult ? toExposureTier(regimeResult.market.market_regime) : undefined;
+      const parallelAutoJournalResult = autoJournal(fundamentalAnnotatedSignals, parallelJournalPath, {
+        maxSlots: parallelExposureTier?.slots[1],
+      });
       if (parallelAutoJournalResult.errors.length > 0) {
         warnings.push(...parallelAutoJournalResult.errors);
       }
@@ -904,7 +916,10 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
 
     // Auto-journal qualifying signals (after all confidence adjustments)
     const seqJournalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
-    const seqAutoJournalResult = autoJournal(fundamentalAnnotatedSignals, seqJournalPath);
+    const seqExposureTier = regimeResult ? toExposureTier(regimeResult.market.market_regime) : undefined;
+    const seqAutoJournalResult = autoJournal(fundamentalAnnotatedSignals, seqJournalPath, {
+      maxSlots: seqExposureTier?.slots[1],
+    });
     if (seqAutoJournalResult.errors.length > 0) {
       warnings.push(...seqAutoJournalResult.errors);
     }
