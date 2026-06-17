@@ -285,7 +285,7 @@ function buildLegendHtml(strategy: string, target: number | null): string {
  * @param lightweightChartsJs - Inlined JavaScript content of the lightweight-charts library
  */
 export function generateSignalChartHtml(input: SignalChartInput, lightweightChartsJs: string): string {
-  const { ticker, strategy, dataPoints, entry, stop, target, signalStartDate, backtestSummary } = input;
+  const { ticker, strategy, dataPoints, entry, stop, target, signalStartDate, backtestSummary, historicalTrades } = input;
 
   const candlestickData = buildCandlestickData(dataPoints);
   const volumeData = buildVolumeData(dataPoints);
@@ -340,6 +340,46 @@ export function generateSignalChartHtml(input: SignalChartInput, lightweightChar
         text: 'Signal'
       }]);
     } catch(e) { /* markers API may differ across versions */ }`;
+  }
+
+  // Build historical trade markers script (OOS trades from profile)
+  let tradeMarkersScript = '';
+  if (historicalTrades && historicalTrades.length > 0) {
+    // Filter trades to only those within the chart's date range
+    const chartStartDate = dataPoints[0]?.date;
+    const chartEndDate = dataPoints[dataPoints.length - 1]?.date;
+    const visibleTrades = historicalTrades.filter(
+      (t) => t.entryDate >= chartStartDate && t.exitDate <= chartEndDate
+    );
+
+    if (visibleTrades.length > 0) {
+      // Build markers array: entry (▲ below bar) + exit (▲ or ▼ above bar)
+      const markers = visibleTrades.flatMap((t) => [
+        {
+          time: t.entryDate,
+          position: 'belowBar',
+          color: '#22c55e',
+          shape: 'arrowUp',
+          text: 'B',
+        },
+        {
+          time: t.exitDate,
+          position: 'aboveBar',
+          color: t.won ? '#22c55e' : '#ef4444',
+          shape: 'arrowDown',
+          text: t.won ? 'W' : 'L',
+        },
+      ]);
+
+      // Sort markers by time (required by Lightweight Charts)
+      markers.sort((a, b) => a.time.localeCompare(b.time));
+
+      tradeMarkersScript = `
+    // Historical OOS trade markers (green=entry/win, red=loss)
+    try {
+      candleSeries.createSeriesMarkers(${JSON.stringify(markers)});
+    } catch(e) { /* markers API may differ across versions */ }`;
+    }
   }
 
   return `<!DOCTYPE html>
@@ -406,6 +446,7 @@ ${buildOverlayScript(strategy, dataPoints)}
 
 ${priceLinesScript}
 ${markerScript}
+${tradeMarkersScript}
 
   chart.timeScale().fitContent();
   document.body.setAttribute('data-chart-ready', 'true');

@@ -25,6 +25,18 @@ export interface WalkForwardMetrics {
 // Strategy Profile
 // ============================================================
 
+/**
+ * A simplified OOS trade record for chart visualization.
+ * Stored in the profile during tuning for rendering entry/exit markers on signal charts.
+ */
+export interface ProfileTrade {
+  entry_date: string;   // YYYY-MM-DD
+  exit_date: string;    // YYYY-MM-DD
+  entry_price: number;
+  exit_price: number;
+  won: boolean;         // true if profitable (exit_price > entry_price for bullish)
+}
+
 export interface StrategyProfile {
   ticker: string;
   strategy: string;
@@ -32,6 +44,8 @@ export interface StrategyProfile {
   walk_forward_metrics: WalkForwardMetrics;
   last_tuned_at: string;   // ISO 8601
   valid_until: string;      // ISO 8601
+  /** OOS trades from walk-forward validation. Optional for backward compat with existing profiles. */
+  oos_trades?: ProfileTrade[];
 }
 
 // ============================================================

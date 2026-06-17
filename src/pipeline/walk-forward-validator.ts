@@ -144,6 +144,13 @@ export function evaluateV3Configuration(
     winRate: performanceSummary.winRate,
     tradeCount: performanceSummary.numberOfTrades,
     profitFactor,
+    trades: trades.map((t) => ({
+      entryDate: t.buySignal.timestamp.split('T')[0],
+      exitDate: t.sellSignal.timestamp.split('T')[0],
+      entryPrice: t.buySignal.price,
+      exitPrice: t.sellSignal.price,
+      pnlPct: t.profitLossPercent,
+    })),
   };
 }
 
@@ -194,6 +201,13 @@ export function evaluateTrendPullbackConfiguration(
     winRate: performanceSummary.winRate,
     tradeCount: performanceSummary.numberOfTrades,
     profitFactor,
+    trades: trades.map((t) => ({
+      entryDate: t.buySignal.timestamp.split('T')[0],
+      exitDate: t.sellSignal.timestamp.split('T')[0],
+      entryPrice: t.buySignal.price,
+      exitPrice: t.sellSignal.price,
+      pnlPct: t.profitLossPercent,
+    })),
   };
 }
 
@@ -244,6 +258,13 @@ export function evaluateBearBreakdownConfiguration(
     winRate: performanceSummary.winRate,
     tradeCount: performanceSummary.numberOfTrades,
     profitFactor,
+    trades: trades.map((t) => ({
+      entryDate: t.buySignal.timestamp.split('T')[0],
+      exitDate: t.sellSignal.timestamp.split('T')[0],
+      entryPrice: t.buySignal.price,
+      exitPrice: t.sellSignal.price,
+      pnlPct: t.profitLossPercent,
+    })),
   };
 }
 
@@ -291,6 +312,13 @@ export function evaluateKeltnerMeanReversionConfiguration(
     winRate: performanceSummary.winRate,
     tradeCount: performanceSummary.numberOfTrades,
     profitFactor,
+    trades: trades.map((t) => ({
+      entryDate: t.buySignal.timestamp.split('T')[0],
+      exitDate: t.sellSignal.timestamp.split('T')[0],
+      entryPrice: t.buySignal.price,
+      exitPrice: t.sellSignal.price,
+      pnlPct: t.profitLossPercent,
+    })),
   };
 }
 

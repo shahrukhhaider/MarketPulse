@@ -226,7 +226,7 @@ async function renderSignalChart(
 
     // 3. Generate HTML
     const html = generateSignalChartHtml(
-      { ticker, strategy, dataPoints, entry, stop, target, signalStartDate: signal.signalStartDate, backtestSummary: signal.backtestSummary },
+      { ticker, strategy, dataPoints, entry, stop, target, signalStartDate: signal.signalStartDate, backtestSummary: signal.backtestSummary, historicalTrades: signal.historicalTrades },
       deps.lightweightChartsJs
     );
 

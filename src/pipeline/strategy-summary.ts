@@ -105,6 +105,13 @@ export function buildStrategySummary(
       walk_forward_metrics: toWalkForwardMetrics(result.oosMetrics),
       last_tuned_at: lastTunedAt,
       valid_until: validUntil,
+      oos_trades: result.oosMetrics.trades?.map((t) => ({
+        entry_date: t.entryDate,
+        exit_date: t.exitDate,
+        entry_price: t.entryPrice,
+        exit_price: t.exitPrice,
+        won: t.pnlPct > 0,
+      })),
     };
 
     const saveResult = saveStrategyProfile(profile, dataDir);

@@ -20,6 +20,20 @@ export interface SignalChartInput {
   signalStartDate?: string;
   /** One-line backtest summary shown as subtitle (e.g., "Win 62% · 14 trades · +18% return"). */
   backtestSummary?: string;
+  /** Historical trades derived from signal history. Rendered as colored rectangles on chart. */
+  historicalTrades?: HistoricalTrade[];
+}
+
+/**
+ * A past trade derived from signal history for chart visualization.
+ * Rendered as a colored rectangle (green=win, red=loss) spanning entry to exit dates.
+ */
+export interface HistoricalTrade {
+  entryDate: string;   // YYYY-MM-DD
+  exitDate: string;    // YYYY-MM-DD
+  entryPrice: number;
+  exitPrice: number;
+  won: boolean;        // true if profitable
 }
 
 /**
@@ -62,6 +76,8 @@ export interface SignalInput {
   signalStartDate?: string;
   /** One-line backtest summary for chart subtitle. */
   backtestSummary?: string;
+  /** Historical OOS trades for chart visualization. */
+  historicalTrades?: HistoricalTrade[];
 }
 
 /**

@@ -749,8 +749,9 @@ async function main(): Promise<void> {
             signalStartDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(startDate);
           }
 
-          // Load backtest summary from profile
+          // Load backtest summary and OOS trades from profile
           let backtestSummary: string | undefined;
+          let historicalTrades: Array<{ entryDate: string; exitDate: string; entryPrice: number; exitPrice: number; won: boolean }> | undefined;
           const profileResult = loadStrategyProfile(s.ticker, s.strategy, {
             allowStale: true,
             baseDir: path.join(basePath, '.stock-tracker'),
@@ -763,6 +764,16 @@ async function main(): Promise<void> {
               const retPct = Math.round(m.return);
               backtestSummary = `Win ${winPct}% · ${m.trades} trades · ${retSign}${retPct}% return · Sharpe ${m.sharpe.toFixed(1)}`;
             }
+            // Load OOS trades for chart visualization
+            if (profileResult.data.oos_trades && profileResult.data.oos_trades.length > 0) {
+              historicalTrades = profileResult.data.oos_trades.map((t) => ({
+                entryDate: t.entry_date,
+                exitDate: t.exit_date,
+                entryPrice: t.entry_price,
+                exitPrice: t.exit_price,
+                won: t.won,
+              }));
+            }
           }
 
           return {
@@ -773,6 +784,7 @@ async function main(): Promise<void> {
             target: (s as any).target ?? null,
             signalStartDate,
             backtestSummary,
+            historicalTrades,
           };
         });
 

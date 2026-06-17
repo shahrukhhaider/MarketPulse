@@ -44,6 +44,8 @@ export interface TuningPerformanceMetrics {
   winRate: number;
   tradeCount: number;
   profitFactor: number;
+  /** Raw trades from the backtest. Populated for OOS evaluations to persist in profile. */
+  trades?: Array<{ entryDate: string; exitDate: string; entryPrice: number; exitPrice: number; pnlPct: number }>;
 }
 
 // ============================================================
