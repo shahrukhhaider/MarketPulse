@@ -18,6 +18,8 @@ export interface SignalChartInput {
   target: number | null;
   /** Date when the signal was first discovered (YYYY-MM-DD). Rendered as a vertical marker. */
   signalStartDate?: string;
+  /** One-line backtest summary shown as subtitle (e.g., "Win 62% · 14 trades · +18% return"). */
+  backtestSummary?: string;
 }
 
 /**
@@ -58,6 +60,8 @@ export interface SignalInput {
   target: number | null;
   /** Date when the signal was first discovered (YYYY-MM-DD). */
   signalStartDate?: string;
+  /** One-line backtest summary for chart subtitle. */
+  backtestSummary?: string;
 }
 
 /**

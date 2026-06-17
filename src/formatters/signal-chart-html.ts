@@ -285,7 +285,7 @@ function buildLegendHtml(strategy: string, target: number | null): string {
  * @param lightweightChartsJs - Inlined JavaScript content of the lightweight-charts library
  */
 export function generateSignalChartHtml(input: SignalChartInput, lightweightChartsJs: string): string {
-  const { ticker, strategy, dataPoints, entry, stop, target, signalStartDate } = input;
+  const { ticker, strategy, dataPoints, entry, stop, target, signalStartDate, backtestSummary } = input;
 
   const candlestickData = buildCandlestickData(dataPoints);
   const volumeData = buildVolumeData(dataPoints);
@@ -352,6 +352,7 @@ export function generateSignalChartHtml(input: SignalChartInput, lightweightChar
     html, body { width: 800px; height: 400px; overflow: hidden; background: #1a1a2e; }
     #chart { width: 800px; height: 400px; }
     #title { position: absolute; top: 8px; left: 12px; color: #fff; font: bold 14px sans-serif; z-index: 10; }
+    #subtitle { position: absolute; top: 26px; left: 12px; color: #9ca3af; font: 11px sans-serif; z-index: 10; }
     #legend { position: absolute; top: 8px; right: 60px; display: flex; gap: 10px; z-index: 10; font: 11px sans-serif; color: #ccc; }
     .leg { display: flex; align-items: center; gap: 3px; }
     .sw { width: 14px; height: 3px; border-radius: 1px; }
@@ -360,6 +361,7 @@ export function generateSignalChartHtml(input: SignalChartInput, lightweightChar
 </head>
 <body>
   <div id="title">${escapeHtml(ticker)} \u2014 ${escapeHtml(strategy)}</div>
+  <div id="subtitle">${backtestSummary ? escapeHtml(backtestSummary) : ''}</div>
   <div id="legend">${buildLegendHtml(strategy, target)}</div>
   <div id="chart"></div>
   <script>${lightweightChartsJs}<\/script>

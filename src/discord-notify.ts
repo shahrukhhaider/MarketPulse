@@ -20,6 +20,7 @@ import type { SignalLineage } from './indicators/signal-lineage.js';
 import { readProcessedSignals, flattenProcessedSignals } from './pipeline/read-processed-signals.js';
 import { HistoricalDataCache } from './data/historical-data-cache.js';
 import { YahooFinanceAdapter } from './data/yahoo-finance-adapter.js';
+import { loadStrategyProfile } from './data/profile-store.js';
 
 // --- Discord Embed Types ---
 
@@ -747,6 +748,21 @@ async function main(): Promise<void> {
             startDate.setDate(startDate.getDate() - (lineage.daysInState - 1));
             signalStartDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(startDate);
           }
+
+          // Load backtest summary from profile
+          let backtestSummary: string | undefined;
+          const profileResult = loadStrategyProfile(s.ticker, s.strategy, {
+            allowStale: true,
+            baseDir: path.join(basePath, '.stock-tracker'),
+          });
+          if (profileResult.success) {
+            const m = profileResult.data.walk_forward_metrics;
+            const winPct = Math.round(m.win_rate * 100);
+            const retSign = m.return >= 0 ? '+' : '';
+            const retPct = Math.round(m.return);
+            backtestSummary = `Win ${winPct}% · ${m.trades} trades · ${retSign}${retPct}% return · Sharpe ${m.sharpe.toFixed(1)}`;
+          }
+
           return {
             ticker: s.ticker,
             strategy: s.strategy,
@@ -754,6 +770,7 @@ async function main(): Promise<void> {
             stop: s.stop,
             target: (s as any).target ?? null,
             signalStartDate,
+            backtestSummary,
           };
         });
 
