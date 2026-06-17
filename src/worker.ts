@@ -158,13 +158,7 @@ async function dailyScanLargeCap(): Promise<void> {
   // Journal update (large_cap only)
   await runCli(`${jobName}:journal-update`, ['journal-update']);
 
-  // Generate and persist signal chart images
-  await runCli(`${jobName}:persist-charts`, [
-    'persist-charts',
-    '--scan-output', logFile,
-  ]);
-
-  // Discord notification
+  // Discord notification (generates + persists charts inline for top 5 only)
   const notifyScript = path.join(__dirname, 'discord-notify.js');
   await runCli(`${jobName}:notify`, [logFile], notifyScript);
 }
@@ -197,13 +191,7 @@ async function dailyScanTech(): Promise<void> {
     '--universe', 'tech',
   ]);
 
-  // Generate and persist signal chart images
-  await runCli(`${jobName}:persist-charts`, [
-    'persist-charts',
-    '--scan-output', logFile,
-  ]);
-
-  // Discord notification
+  // Discord notification (generates + persists charts inline for top 5 only)
   const notifyScript = path.join(__dirname, 'discord-notify.js');
   await runCli(`${jobName}:notify`, [logFile], notifyScript);
 }

@@ -1,5 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   findLatestScanLog,
   parseScanJson,
@@ -11,11 +13,13 @@ import { confidenceBadge, fundamentalBadge } from './formatters/badge-helpers.js
 import type { FundamentalData } from './types.js';
 import { toExposureTier } from './formatters/market-exposure.js';
 import { buildMultipartPayload } from './discord-multipart.js';
-import { getSignalChartPath } from './chart-persistence.js';
-import { generateChartFilename } from './chart-types.js';
-import type { ChartSuccess, AttachmentMeta, MultipartPayload } from './chart-types.js';
+import { persistChartImages } from './chart-persistence.js';
+import { generateChartImages } from './chart-image-generator.js';
+import type { ChartSuccess, AttachmentMeta, MultipartPayload, SignalInput } from './chart-types.js';
 import type { SignalLineage } from './indicators/signal-lineage.js';
 import { readProcessedSignals, flattenProcessedSignals } from './pipeline/read-processed-signals.js';
+import { HistoricalDataCache } from './data/historical-data-cache.js';
+import { YahooFinanceAdapter } from './data/yahoo-finance-adapter.js';
 
 // --- Discord Embed Types ---
 
@@ -696,12 +700,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // 6. Build chart map by reading persisted chart PNGs from persistent volume
+  // 6. Generate charts inline for the top 5 posted signals only
   const activeSignals = data.signals.filter(
     (s) => s.signal === 'active' || s.signal === 'active_late',
   );
 
-  // Determine scan date for chart file lookup
+  // Determine scan date for chart persistence
   const scanDate = activeSignals.length > 0
     ? activeSignals[0].date
     : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
@@ -710,20 +714,74 @@ async function main(): Promise<void> {
   const chartMap: Map<string, ChartSuccess> = new Map();
 
   if (chartsEnabled && activeSignals.length > 0) {
-    for (const signal of activeSignals) {
-      const chartPath = getSignalChartPath(basePath, scanDate, signal.ticker, signal.strategy);
-      try {
-        const buffer = fs.readFileSync(chartPath);
-        const filename = generateChartFilename(signal.ticker, signal.strategy);
-        chartMap.set(`${signal.ticker}+${signal.strategy}`, {
-          success: true,
-          ticker: signal.ticker,
-          strategy: signal.strategy,
-          pngBuffer: buffer,
-          filename,
+    // Determine which signals will actually be posted (top 5 from pipeline output)
+    const topSignals = flattenProcessedSignals(readProcessedSignals(data as any))
+      .filter((s) => s.signal === 'active' || s.signal === 'active_late')
+      .slice(0, 5);
+
+    if (topSignals.length > 0) {
+      // Load lightweight-charts JS
+      const projectRoot = process.cwd();
+      const lwcPaths = [
+        resolve(projectRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
+        resolve(projectRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
+      ];
+      let lightweightChartsJs: string | null = null;
+      for (const lwcPath of lwcPaths) {
+        try {
+          lightweightChartsJs = readFileSync(lwcPath, 'utf-8');
+          break;
+        } catch {
+          // Try next path
+        }
+      }
+
+      if (lightweightChartsJs) {
+        // Build SignalInput array for top 5 only
+        const signalInputs: SignalInput[] = topSignals.map((s) => {
+          const lineage = (s as any).lineage as SignalLineage | undefined;
+          let signalStartDate: string | undefined;
+          if (lineage && lineage.daysInState > 0) {
+            const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
+            const startDate = new Date(todayStr + 'T12:00:00');
+            startDate.setDate(startDate.getDate() - (lineage.daysInState - 1));
+            signalStartDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(startDate);
+          }
+          return {
+            ticker: s.ticker,
+            strategy: s.strategy,
+            entry: s.entry,
+            stop: s.stop,
+            target: (s as any).target ?? null,
+            signalStartDate,
+          };
         });
-      } catch {
-        process.stderr.write(`[discord-notify] Warning: chart not found at ${chartPath}\n`);
+
+        // Generate chart images via Puppeteer (only top 5)
+        const yahooAdapter = new YahooFinanceAdapter();
+        const cachingProvider = new HistoricalDataCache(yahooAdapter, {
+          cacheDir: path.join(basePath, '.stock-tracker', 'history-cache'),
+        });
+        const chartResults = await generateChartImages(signalInputs, {
+          dataProvider: cachingProvider,
+          lightweightChartsJs,
+        });
+
+        // Persist charts to disk (for website API)
+        persistChartImages(chartResults, scanDate, basePath);
+
+        // Build chart map from generated results
+        for (const result of chartResults) {
+          if (result.success) {
+            chartMap.set(`${result.ticker}+${result.strategy}`, result);
+          } else {
+            process.stderr.write(
+              `[discord-notify] Chart failed for ${result.ticker}/${result.strategy}: ${result.reason}\n`
+            );
+          }
+        }
+      } else {
+        process.stderr.write('[discord-notify] Warning: lightweight-charts JS not found, skipping charts\n');
       }
     }
   }
