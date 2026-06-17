@@ -1,13 +1,15 @@
 // ============================================================
-// Sentiment Check Command — Morning digest pipeline handler
+// Sentiment Check Command — Morning sentiment brief pipeline handler
 // ============================================================
-// Orchestrates the full morning sentiment digest:
-// 1. Resolve active/near tickers from signal history
-// 2. Fetch StockTwits sentiment for each ticker
-// 3. Fetch Google News RSS for each ticker
-// 4. Deduplicate news links against 24h seen cache
-// 5. Post formatted digest to Discord webhook
-// 6. Write sentiment cache for bot consumption
+// Orchestrates the full morning sentiment brief with Discord embeds:
+// 1. Resolve most-recent active tickers from signal history
+// 2. Fetch StockTwits sentiment + Google News per ticker (concurrent)
+// 3. Filter headlines against brief-seen cache
+// 4. Read AI news summaries from nightly pipeline output
+// 5. Detect sentiment-signal divergence per ticker
+// 6. Format rich Discord embeds (header + per-ticker)
+// 7. Chunk into ≤10-embed payloads and post to Discord
+// 8. Write sentiment cache and brief-seen cache on success
 // ============================================================
 
 import { successResult, errorResult } from '../command-router.js';
@@ -16,19 +18,21 @@ import { fetchStockTwitsSentiment } from '../data/stocktwits-provider.js';
 import type { StockTwitsResult } from '../data/stocktwits-provider.js';
 import { fetchNewsItems } from '../data/news-provider.js';
 import type { NewsItem } from '../data/news-provider.js';
-import { resolveActiveAndNearTickers } from '../sentiment/active-ticker-resolver.js';
-import { loadSeenLinks, saveSeenLinks } from '../sentiment/seen-links-cache.js';
+import { resolveMostRecentActiveTickers } from '../sentiment/most-recent-ticker-resolver.js';
+import { loadBriefSeen, saveBriefSeen } from '../sentiment/brief-seen-cache.js';
+import type { BriefSeenLinks } from '../sentiment/brief-seen-cache.js';
 import { writeSentimentCache } from '../sentiment/sentiment-cache.js';
 import type { SentimentCacheEntry } from '../sentiment/sentiment-cache.js';
-import { formatMorningDigest } from '../formatters/morning-digest-formatter.js';
-
-// ============================================================
-// Dependencies
-// ============================================================
-
-export interface SentimentCheckDeps {
-  dataDir: string;
-}
+import { detectDivergence } from '../sentiment/divergence-detector.js';
+import { readNewsSummary } from '../sentiment/news-summary-reader.js';
+import { postToDiscord } from '../sentiment/discord-poster.js';
+import {
+  formatHeaderEmbed,
+  formatTickerEmbed,
+  selectHeadlines,
+  chunkEmbeds,
+} from '../formatters/morning-brief-embed-formatter.js';
+import type { TickerEmbedData, DiscordEmbed } from '../formatters/morning-brief-embed-formatter.js';
 
 // ============================================================
 // createSentimentCheckHandler
@@ -38,118 +42,184 @@ export function createSentimentCheckHandler(deps: { dataDir: string }): CommandH
   const { dataDir } = deps;
 
   return async (opts: Record<string, string>) => {
-    // ---- 7.3: Parse --universe flag ----
-    const universeArg = opts['universe'];
-    const includesTech = universeArg === 'tech';
+    const dryRun = opts['dry-run'] !== undefined;
+    // --universe flag accepted for CLI compatibility; resolver reads both universes
+    const _universe = opts['universe'];
 
-    // ---- Step 1: Resolve tickers (Requirement 1) ----
-    const tickers = resolveActiveAndNearTickers(dataDir, includesTech);
+    // ---- Step 1: Resolve most-recent active tickers ----
+    const resolved = resolveMostRecentActiveTickers(dataDir);
 
-    if (tickers.length === 0) {
-      console.log('No active or near tickers in last 7 days — skipping digest');
+    if (resolved.length === 0) {
+      // Post plain-text "no active signals" message
+      if (!dryRun) {
+        const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+        if (!webhookUrl) {
+          console.error('[sentiment-check] Error: DISCORD_WEBHOOK_URL environment variable is not set');
+          process.exit(1);
+        }
+        try {
+          const response = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: 'No active signals are present.' }),
+          });
+          if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            console.error(`[sentiment-check] Discord POST failed: HTTP ${response.status} — ${body}`);
+            process.exit(1);
+          }
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          console.error(`[sentiment-check] Discord POST failed: ${errMsg}`);
+          process.exit(1);
+        }
+      } else {
+        console.log(JSON.stringify({ content: 'No active signals are present.' }, null, 2));
+      }
+
       return successResult('sentiment-check', {
-        message: 'No active or near tickers in last 7 days — skipping digest',
+        message: 'No active signals are present.',
         tickers: [],
       });
     }
 
-    // ---- Step 2: Fetch StockTwits for each ticker concurrently ----
-    const stResults = await Promise.all(
-      tickers.map(async (ticker) => {
-        const result = await fetchStockTwitsSentiment(ticker);
-        return { ticker, result };
+    // ---- Step 2: Load brief-seen cache ----
+    const briefSeen = loadBriefSeen(dataDir);
+
+    // ---- Step 3: Concurrent fetch — StockTwits + Google News per ticker ----
+    const fetchResults = await Promise.allSettled(
+      resolved.map(async ({ ticker }) => {
+        const [stResult, newsResult] = await Promise.allSettled([
+          fetchStockTwitsSentiment(ticker),
+          fetchNewsItems(ticker),
+        ]);
+
+        const sentiment: StockTwitsResult = stResult.status === 'fulfilled'
+          ? stResult.value
+          : { band: 'unknown', st_bullish_count: 0, st_bearish_count: 0, st_message_volume: 0 };
+
+        const headlines: NewsItem[] = newsResult.status === 'fulfilled'
+          ? newsResult.value
+          : [];
+
+        return { ticker, sentiment, headlines };
       })
     );
+
+    // Build maps from settled results
     const sentimentMap = new Map<string, StockTwitsResult>();
-    for (const { ticker, result } of stResults) {
-      sentimentMap.set(ticker, result);
-    }
+    const headlinesMap = new Map<string, NewsItem[]>();
 
-    // ---- Step 3: Fetch Google News RSS for each ticker concurrently ----
-    const newsResults = await Promise.all(
-      tickers.map((ticker) => fetchNewsItems(ticker))
-    );
-    const allNewsItems: NewsItem[] = newsResults.flat();
-
-    // ---- Step 4: Load seen links, filter, sort, take first 3 ----
-    const seenLinks = loadSeenLinks(dataDir);
-
-    const filteredNews = allNewsItems.filter((item) => !seenLinks.has(item.url));
-    filteredNews.sort(
-      (a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime()
-    );
-    const selectedItems = filteredNews.slice(0, 3);
-
-    // ---- Step 5: Write updated seen links ----
-    const now = new Date().toISOString();
-    for (const item of selectedItems) {
-      seenLinks.set(item.url, now);
-    }
-    // Purge entries older than 24h (loadSeenLinks already filters, but be explicit)
-    const twentyFourHoursMs = 24 * 60 * 60 * 1000;
-    const currentMs = Date.now();
-    for (const [url, seenAt] of seenLinks) {
-      const seenMs = new Date(seenAt).getTime();
-      if (currentMs - seenMs > twentyFourHoursMs) {
-        seenLinks.delete(url);
+    for (let i = 0; i < resolved.length; i++) {
+      const { ticker } = resolved[i];
+      const result = fetchResults[i];
+      if (result.status === 'fulfilled') {
+        sentimentMap.set(ticker, result.value.sentiment);
+        headlinesMap.set(ticker, result.value.headlines);
+      } else {
+        sentimentMap.set(ticker, { band: 'unknown', st_bullish_count: 0, st_bearish_count: 0, st_message_volume: 0 });
+        headlinesMap.set(ticker, []);
       }
     }
-    saveSeenLinks(dataDir, seenLinks);
 
-    // ---- Step 6: Post formatted digest to Discord (or print if --dry-run) ----
-    const dryRun = opts['dry-run'] !== undefined;
-    const digestDate = new Date();
-    const message = formatMorningDigest(digestDate, sentimentMap, selectedItems);
+    // ---- Step 4: Filter headlines against brief-seen cache ----
+    const now = new Date();
+    const seenUrls = new Set(briefSeen.keys());
+    const selectedHeadlinesMap = new Map<string, NewsItem[]>();
 
+    for (const { ticker } of resolved) {
+      const rawHeadlines = headlinesMap.get(ticker) ?? [];
+      const selected = selectHeadlines(rawHeadlines, now, seenUrls);
+      selectedHeadlinesMap.set(ticker, selected);
+    }
+
+    // ---- Step 5: Read news summaries per ticker ----
+    const summaryMap = new Map<string, string | null>();
+    for (const { ticker } of resolved) {
+      const summary = readNewsSummary(dataDir, ticker, now);
+      summaryMap.set(ticker, summary);
+    }
+
+    // ---- Step 6: Detect divergence per ticker ----
+    const divergenceMap = new Map<string, string | null>();
+    for (const { ticker, strategy } of resolved) {
+      const sentiment = sentimentMap.get(ticker)!;
+      const divergence = detectDivergence(strategy, sentiment.band);
+      divergenceMap.set(ticker, divergence);
+    }
+
+    // ---- Step 7: Format embeds (header + ticker embeds sorted alphabetically) ----
+    const headerEmbed = formatHeaderEmbed(now, resolved.length);
+
+    const tickerEmbeds: DiscordEmbed[] = resolved.map(({ ticker, strategy }) => {
+      const embedData: TickerEmbedData = {
+        ticker,
+        strategy,
+        sentiment: sentimentMap.get(ticker)!,
+        headlines: selectedHeadlinesMap.get(ticker) ?? [],
+        newsSummary: summaryMap.get(ticker) ?? null,
+        divergence: divergenceMap.get(ticker) ?? null,
+      };
+      return formatTickerEmbed(embedData, now);
+    });
+
+    const allEmbeds = [headerEmbed, ...tickerEmbeds];
+
+    // ---- Step 8: Chunk into ≤10-embed payloads ----
+    const chunks = chunkEmbeds(allEmbeds);
+
+    // ---- Step 9: Dry-run → print JSON, skip posting and cache writes ----
     if (dryRun) {
-      console.log(message);
-    } else {
-      const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
-      if (!webhookUrl) {
-        console.error('[sentiment-check] Error: DISCORD_WEBHOOK_URL environment variable is not set');
-        process.exit(1);
+      for (const chunk of chunks) {
+        console.log(JSON.stringify({ embeds: chunk }, null, 2));
       }
+      return successResult('sentiment-check', {
+        message: 'Dry-run: printed embed payloads to stdout',
+        tickers: resolved.map((r) => r.ticker),
+        embedCount: allEmbeds.length,
+        chunkCount: chunks.length,
+      });
+    }
 
-      try {
-        const response = await fetch(webhookUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: message }),
-        });
+    // ---- Step 10: Post to Discord ----
+    const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+    if (!webhookUrl) {
+      console.error('[sentiment-check] Error: DISCORD_WEBHOOK_URL environment variable is not set');
+      process.exit(1);
+    }
 
-        if (!response.ok) {
-          const body = await response.text().catch(() => '');
-          console.error(
-            `[sentiment-check] Discord POST failed: HTTP ${response.status} — ${body}`
-          );
-          process.exit(1);
-        }
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        console.error(`[sentiment-check] Discord POST failed: ${errMsg}`);
+    for (const chunk of chunks) {
+      const result = await postToDiscord(webhookUrl, { embeds: chunk });
+      if (!result.success) {
+        console.error(`[sentiment-check] Discord POST failed after retry: ${result.error}`);
+        // Do NOT update brief-seen cache on failure
         process.exit(1);
       }
     }
 
-    // ---- Step 7: Build and write sentiment cache ----
-    const cacheEntries: SentimentCacheEntry[] = tickers.map((ticker) => {
+    // ---- Step 11: On success — save brief-seen cache ----
+    const nowIso = now.toISOString();
+    for (const { ticker } of resolved) {
+      const selected = selectedHeadlinesMap.get(ticker) ?? [];
+      for (const item of selected) {
+        briefSeen.set(item.url, nowIso);
+      }
+    }
+    saveBriefSeen(dataDir, briefSeen);
+
+    // ---- Step 12: Write sentiment-cache.json ----
+    const cacheEntries: SentimentCacheEntry[] = resolved.map(({ ticker }) => {
       const stResult = sentimentMap.get(ticker)!;
-      // Get top 3 headlines from unfiltered news for this ticker
-      const tickerNews = allNewsItems
-        .filter((item) => item.ticker === ticker)
-        .sort(
-          (a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime()
-        )
-        .slice(0, 3);
+      const tickerHeadlines = selectedHeadlinesMap.get(ticker) ?? [];
 
       return {
         ticker,
-        fetched_at: now,
+        fetched_at: nowIso,
         band: stResult.band,
         st_bullish_count: stResult.st_bullish_count,
         st_bearish_count: stResult.st_bearish_count,
         st_message_volume: stResult.st_message_volume,
-        top_headlines: tickerNews.map((item) => ({
+        top_headlines: tickerHeadlines.map((item) => ({
           title: item.title,
           url: item.url,
           source_domain: item.source_domain,
@@ -161,9 +231,10 @@ export function createSentimentCheckHandler(deps: { dataDir: string }): CommandH
     writeSentimentCache(dataDir, cacheEntries);
 
     return successResult('sentiment-check', {
-      message: 'Morning digest posted successfully',
-      tickers,
-      selectedHeadlines: selectedItems.length,
+      message: 'Morning sentiment brief posted successfully',
+      tickers: resolved.map((r) => r.ticker),
+      embedCount: allEmbeds.length,
+      chunkCount: chunks.length,
       sentimentBands: Object.fromEntries(
         [...sentimentMap.entries()].map(([t, r]) => [t, r.band])
       ),
