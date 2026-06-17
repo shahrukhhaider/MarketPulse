@@ -68,11 +68,13 @@ describe('Feature: discord-signal-charts, Property 2: Chart HTML annotation line
    * **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5**
    *
    * For any valid SignalChartInput with a defined target:
-   * - Entry line has color '#26a69a' and title containing 'Entry' with price formatted to 2dp
-   * - Stop line has color '#ef5350' and title containing 'Stop' with price formatted to 2dp
-   * - Target line has color '#2196F3' and title containing 'Target' with price formatted to 2dp
+   * - Entry line has color '#26a69a' and price value
+   * - Stop line has color '#ef5350' and price value
+   * - Target line has color '#2196F3' and price value
+   * - All lines use axisLabelVisible: true (price shown on right axis)
+   * - No title text drawn on chart area (title: '')
    */
-  it('entry, stop, and target lines have correct colors and labels when target is defined', () => {
+  it('entry, stop, and target lines have correct colors and prices when target is defined', () => {
     fc.assert(
       fc.property(
         arbInputWithTarget,
@@ -81,15 +83,21 @@ describe('Feature: discord-signal-charts, Property 2: Chart HTML annotation line
 
           // Entry line assertions
           expect(html).toContain("color: '#26a69a'");
-          expect(html).toContain(`title: 'Entry ${input.entry.toFixed(2)}'`);
+          expect(html).toContain(`price: ${input.entry}`);
 
           // Stop line assertions
           expect(html).toContain("color: '#ef5350'");
-          expect(html).toContain(`title: 'Stop ${input.stop.toFixed(2)}'`);
+          expect(html).toContain(`price: ${input.stop}`);
 
           // Target line assertions (present when target is defined)
           expect(html).toContain("color: '#2196F3'");
-          expect(html).toContain(`title: 'Target ${input.target!.toFixed(2)}'`);
+          expect(html).toContain(`price: ${input.target}`);
+
+          // Axis labels visible, no inline title text
+          expect(html).toContain("axisLabelVisible: true");
+          expect(html).not.toContain("title: 'Entry");
+          expect(html).not.toContain("title: 'Stop");
+          expect(html).not.toContain("title: 'Target");
         }
       ),
       { numRuns: 100 }
@@ -100,9 +108,9 @@ describe('Feature: discord-signal-charts, Property 2: Chart HTML annotation line
    * **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5**
    *
    * For any valid SignalChartInput with null target:
-   * - Entry line has color '#26a69a' and title containing 'Entry' with price formatted to 2dp
-   * - Stop line has color '#ef5350' and title containing 'Stop' with price formatted to 2dp
-   * - No target price line: no '#2196F3' color in target context, no 'Target' label
+   * - Entry line has color '#26a69a' and price value
+   * - Stop line has color '#ef5350' and price value
+   * - No target price line: no '#2196F3' color in target context
    */
   it('entry and stop lines present, target line absent when target is null', () => {
     fc.assert(
@@ -113,15 +121,14 @@ describe('Feature: discord-signal-charts, Property 2: Chart HTML annotation line
 
           // Entry line assertions
           expect(html).toContain("color: '#26a69a'");
-          expect(html).toContain(`title: 'Entry ${input.entry.toFixed(2)}'`);
+          expect(html).toContain(`price: ${input.entry}`);
 
           // Stop line assertions
           expect(html).toContain("color: '#ef5350'");
-          expect(html).toContain(`title: 'Stop ${input.stop.toFixed(2)}'`);
+          expect(html).toContain(`price: ${input.stop}`);
 
           // Target line must NOT be present
           expect(html).not.toContain("color: '#2196F3'");
-          expect(html).not.toContain("title: 'Target");
         }
       ),
       { numRuns: 100 }

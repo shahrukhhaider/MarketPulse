@@ -272,7 +272,7 @@ export function generateSignalChartHtml(input: SignalChartInput, lightweightChar
       lineWidth: 2,
       lineStyle: LightweightCharts.LineStyle.Solid,
       axisLabelVisible: true,
-      title: 'Entry ${entry.toFixed(2)}'
+      title: ''
     });
 
     // Stop price line (red)
@@ -282,7 +282,7 @@ export function generateSignalChartHtml(input: SignalChartInput, lightweightChar
       lineWidth: 2,
       lineStyle: LightweightCharts.LineStyle.Solid,
       axisLabelVisible: true,
-      title: 'Stop ${stop.toFixed(2)}'
+      title: ''
     });`;
 
   if (target !== null) {
@@ -295,7 +295,7 @@ export function generateSignalChartHtml(input: SignalChartInput, lightweightChar
       lineWidth: 2,
       lineStyle: LightweightCharts.LineStyle.Solid,
       axisLabelVisible: true,
-      title: 'Target ${target.toFixed(2)}'
+      title: ''
     });`;
   }
 
