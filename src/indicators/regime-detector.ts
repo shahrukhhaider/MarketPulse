@@ -196,7 +196,10 @@ export class RegimeDetector {
     };
 
     // Write cache (non-fatal if it fails)
-    this.writeCache(result);
+    // Skip caching if VIX is null — allows the next scan to retry fresh
+    if (result.market.vix != null) {
+      this.writeCache(result);
+    }
 
     return result;
   }
@@ -239,19 +242,41 @@ export class RegimeDetector {
   }
 
   private async fetchVix(warnings: string[]): Promise<number | null> {
-    try {
-      const result = await this.cache.getHistoricalData('^VIX', '1mo', '1d');
-      if (!result.success) {
-        warnings.push(`^VIX: Failed to fetch — ${result.error}`);
-        return null;
+    // Try multiple approaches — Yahoo Finance can be unreliable for ^VIX
+    const attempts: Array<{ ticker: string; period: string }> = [
+      { ticker: '^VIX', period: '1mo' },
+      { ticker: '^VIX', period: '5d' },
+      { ticker: '^VIX', period: '3mo' },
+    ];
+
+    for (const attempt of attempts) {
+      try {
+        const result = await this.cache.getHistoricalData(
+          attempt.ticker,
+          attempt.period as any,
+          '1d'
+        );
+        if (!result.success) continue;
+        const data = result.data.dataPoints;
+        if (data.length === 0) continue;
+        return data[data.length - 1].close;
+      } catch {
+        // Try next attempt
       }
-      const data = result.data.dataPoints;
-      if (data.length === 0) return null;
-      return data[data.length - 1].close;
-    } catch (err) {
-      warnings.push(`^VIX: Error — ${String(err)}`);
-      return null;
     }
+
+    // All attempts failed — try a direct quote as last resort
+    try {
+      const quoteResult = await this.cache.getQuote('^VIX');
+      if (quoteResult.success && quoteResult.data.price != null) {
+        return quoteResult.data.price;
+      }
+    } catch {
+      // Final fallback failed
+    }
+
+    warnings.push('^VIX: All fetch attempts returned empty data');
+    return null;
   }
 
   private async fetchIndexTrend(ticker: string, warnings: string[]): Promise<1 | -1 | null> {
