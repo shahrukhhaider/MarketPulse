@@ -24,6 +24,7 @@
     "scan:all": "npm run scan && npm run scan:tech",
     "scan-summary": "node dist/src/cli.js scan --tickers watchlist --strategy v3 --universe large_cap --allow-stale --summary",
     "chart": "node dist/src/cli.js chart",
+    "chart:single": "npx tsx scripts/generate-single-chart.ts",
     "scan-chart": "node dist/src/cli.js scan-chart",
     "paper:status": "python3 scripts/webull-trade.py status",
     "paper:update": "python3 scripts/webull-trade.py update",
