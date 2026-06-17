@@ -326,60 +326,58 @@ export function generateSignalChartHtml(input: SignalChartInput, lightweightChar
     });`;
   }
 
-  // Build signal start date marker script
-  let markerScript = '';
+  // Build all markers into a single array (signal start + OOS trades)
+  // Lightweight Charts v5 requires a single createSeriesMarkers call with all markers sorted by time.
+  interface MarkerEntry { time: string; position: string; color: string; shape: string; text: string }
+  const allMarkers: MarkerEntry[] = [];
+
+  // Signal start date marker (gold arrow below bar)
   if (signalStartDate) {
-    markerScript = `
-    // Signal start date marker (gold arrow below bar)
-    try {
-      candleSeries.createSeriesMarkers([{
-        time: '${signalStartDate}',
-        position: 'belowBar',
-        color: '#FFD700',
-        shape: 'arrowUp',
-        text: 'Signal'
-      }]);
-    } catch(e) { /* markers API may differ across versions */ }`;
+    allMarkers.push({
+      time: signalStartDate,
+      position: 'belowBar',
+      color: '#FFD700',
+      shape: 'arrowUp',
+      text: 'Signal',
+    });
   }
 
-  // Build historical trade markers script (OOS trades from profile)
-  let tradeMarkersScript = '';
+  // Historical OOS trade markers (green=entry/win, red=loss)
   if (historicalTrades && historicalTrades.length > 0) {
-    // Filter trades to only those within the chart's date range
     const chartStartDate = dataPoints[0]?.date;
     const chartEndDate = dataPoints[dataPoints.length - 1]?.date;
     const visibleTrades = historicalTrades.filter(
       (t) => t.entryDate >= chartStartDate && t.exitDate <= chartEndDate
     );
 
-    if (visibleTrades.length > 0) {
-      // Build markers array: entry (▲ below bar) + exit (▲ or ▼ above bar)
-      const markers = visibleTrades.flatMap((t) => [
-        {
-          time: t.entryDate,
-          position: 'belowBar',
-          color: '#22c55e',
-          shape: 'arrowUp',
-          text: 'B',
-        },
-        {
-          time: t.exitDate,
-          position: 'aboveBar',
-          color: t.won ? '#22c55e' : '#ef4444',
-          shape: 'arrowDown',
-          text: t.won ? 'W' : 'L',
-        },
-      ]);
-
-      // Sort markers by time (required by Lightweight Charts)
-      markers.sort((a, b) => a.time.localeCompare(b.time));
-
-      tradeMarkersScript = `
-    // Historical OOS trade markers (green=entry/win, red=loss)
-    try {
-      candleSeries.createSeriesMarkers(${JSON.stringify(markers)});
-    } catch(e) { /* markers API may differ across versions */ }`;
+    for (const t of visibleTrades) {
+      allMarkers.push({
+        time: t.entryDate,
+        position: 'belowBar',
+        color: '#22c55e',
+        shape: 'arrowUp',
+        text: 'B',
+      });
+      allMarkers.push({
+        time: t.exitDate,
+        position: 'aboveBar',
+        color: t.won ? '#22c55e' : '#ef4444',
+        shape: 'arrowDown',
+        text: t.won ? 'W' : 'L',
+      });
     }
+  }
+
+  // Sort markers by time (required by Lightweight Charts)
+  allMarkers.sort((a, b) => a.time.localeCompare(b.time));
+
+  let markersScript = '';
+  if (allMarkers.length > 0) {
+    markersScript = `
+    // All chart markers (signal start + OOS trade entries/exits)
+    try {
+      candleSeries.createSeriesMarkers(${JSON.stringify(allMarkers)});
+    } catch(e) { /* markers API may differ across versions */ }`;
   }
 
   return `<!DOCTYPE html>
@@ -445,8 +443,7 @@ ${buildOverlayScript(strategy, dataPoints)}
   } catch(e) { /* overlay failed, continue without */ }
 
 ${priceLinesScript}
-${markerScript}
-${tradeMarkersScript}
+${markersScript}
 
   chart.timeScale().fitContent();
   document.body.setAttribute('data-chart-ready', 'true');
