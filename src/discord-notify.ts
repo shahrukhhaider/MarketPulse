@@ -655,10 +655,14 @@ async function main(): Promise<void> {
   // Base path: use STOCK_TRACKER_HOME env var, fall back to cwd
   const basePath = process.env.STOCK_TRACKER_HOME ?? process.cwd();
 
+  // Check for --dry-run flag
+  const dryRun = process.argv.includes('--dry-run');
+
   // 1. Resolve scan JSON path first (needed to determine universe for webhook selection)
   let scanPath: string;
-  if (process.argv[2]) {
-    scanPath = process.argv[2];
+  const scanArg = process.argv.find((a) => !a.startsWith('--') && a !== process.argv[0] && a !== process.argv[1]);
+  if (scanArg) {
+    scanPath = scanArg;
     if (!fs.existsSync(scanPath)) {
       process.stderr.write(`[discord-notify] Scan file not found: ${scanPath}\n`);
       process.exit(1);
@@ -677,15 +681,17 @@ async function main(): Promise<void> {
   const scanFilename = path.basename(scanPath);
   const isTechScan = scanFilename.startsWith('scan_tech');
 
-  // 3. Read webhook URL — use tech webhook for tech scans, default for others
-  let webhookUrl: string | null;
-  if (isTechScan) {
-    webhookUrl = process.env.DISCORD_WEBHOOK_TECH_URL?.trim() || readDiscordWebhookTechUrl(basePath);
-  } else {
-    webhookUrl = process.env.DISCORD_WEBHOOK_URL?.trim() || readDiscordWebhookUrl(basePath);
-  }
-  if (webhookUrl === null || webhookUrl === '') {
-    process.exit(0);
+  // 3. Read webhook URL — skip check in dry-run mode
+  let webhookUrl: string | null = null;
+  if (!dryRun) {
+    if (isTechScan) {
+      webhookUrl = process.env.DISCORD_WEBHOOK_TECH_URL?.trim() || readDiscordWebhookTechUrl(basePath);
+    } else {
+      webhookUrl = process.env.DISCORD_WEBHOOK_URL?.trim() || readDiscordWebhookUrl(basePath);
+    }
+    if (webhookUrl === null || webhookUrl === '') {
+      process.exit(0);
+    }
   }
 
   // 4. Read chart generation toggle
@@ -826,7 +832,16 @@ async function main(): Promise<void> {
   const posPayload = buildOpenPositionsPayload(data);
   if (posPayload) payloads.push(posPayload);
 
-  // 8. Post sequentially with 1000ms delay between each
+  // 8. Post sequentially with 1000ms delay between each (or print in dry-run)
+  if (dryRun) {
+    // Dry-run: print payload JSON and chart info, skip Discord POST
+    for (const payload of payloads) {
+      console.log(JSON.stringify(payload, null, 2));
+    }
+    console.log(`\n[dry-run] ${payloads.length} payloads, ${chartMap.size} charts generated`);
+    return;
+  }
+
   try {
     for (let i = 0; i < payloads.length; i++) {
       const payload = payloads[i];
@@ -877,10 +892,10 @@ async function main(): Promise<void> {
           attachments,
         };
         const multipartData = buildMultipartPayload(multipartPayloadObj, payloadChartFiles);
-        sent = await postMultipartToDiscord(webhookUrl, multipartData);
+        sent = await postMultipartToDiscord(webhookUrl!, multipartData);
       } else {
         // Use existing JSON posting (no charts for this payload)
-        sent = await postToDiscord(webhookUrl, payload);
+        sent = await postToDiscord(webhookUrl!, payload);
       }
 
       if (!sent) {
