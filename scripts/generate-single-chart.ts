@@ -11,7 +11,7 @@ import { generateChartImages } from '../src/chart-image-generator.js';
 import { loadStrategyProfile } from '../src/data/profile-store.js';
 import { HistoricalDataCache } from '../src/data/historical-data-cache.js';
 import { YahooFinanceAdapter } from '../src/data/yahoo-finance-adapter.js';
-import type { SignalInput } from '../src/chart-types.js';
+import type { SignalInput, HistoricalTrade } from '../src/chart-types.js';
 
 const [,, ticker, strategy, entryStr, stopStr, targetStr] = process.argv;
 
@@ -25,8 +25,9 @@ const entry = parseFloat(entryStr);
 const stop = parseFloat(stopStr);
 const target = targetStr ? parseFloat(targetStr) : null;
 
-// Load backtest summary from profile
+// Load backtest summary and OOS trades from profile
 let backtestSummary: string | undefined;
+let historicalTrades: SignalInput['historicalTrades'];
 const profileResult = loadStrategyProfile(ticker, strategy, {
   allowStale: true,
   baseDir: join(basePath, '.stock-tracker'),
@@ -42,6 +43,17 @@ if (profileResult.success) {
   } else {
     console.log(`Profile found for ${ticker}/${strategy} but 0 trades — skipping subtitle`);
   }
+  // Load OOS trades
+  if (profileResult.data.oos_trades && profileResult.data.oos_trades.length > 0) {
+    historicalTrades = profileResult.data.oos_trades.map((t) => ({
+      entryDate: t.entry_date,
+      exitDate: t.exit_date,
+      entryPrice: t.entry_price,
+      exitPrice: t.exit_price,
+      won: t.won,
+    }));
+    console.log(`OOS trades: ${historicalTrades.length} (will render on chart)`);
+  }
 } else {
   console.log(`No profile found for ${ticker}/${strategy}`);
 }
@@ -52,7 +64,7 @@ const lwcPath = resolve(projectRoot, 'node_modules', 'lightweight-charts', 'dist
 const lightweightChartsJs = readFileSync(lwcPath, 'utf-8');
 
 // Build signal input
-const signalInput: SignalInput = { ticker, strategy, entry, stop, target, backtestSummary };
+const signalInput: SignalInput = { ticker, strategy, entry, stop, target, backtestSummary, historicalTrades };
 
 // Generate chart
 const yahooAdapter = new YahooFinanceAdapter();
