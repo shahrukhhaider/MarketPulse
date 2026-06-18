@@ -16,14 +16,14 @@ export interface WebullConfig {
 }
 
 /**
- * Webull OpenAPI base URLs (from developer.webull.com).
+ * Webull OpenAPI base URLs (from developer.webull.com/apis/docs/sdk).
  */
 const WEBULL_URLS = {
   uat: {
-    api: 'https://us-oauth-open-api.uat.webullbroker.com',
+    api: 'https://us-openapi-alb.uat.webullbroker.com',
   },
   production: {
-    api: 'https://us-oauth-open-api.webull.com',
+    api: 'https://api.webull.com',
   },
 } as const;
 
