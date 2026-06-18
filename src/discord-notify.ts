@@ -154,24 +154,14 @@ export function enforcePayloadLimits(payload: DiscordPayload): DiscordPayload {
  * mood, context (exposure), and summary.
  */
 export function buildHeaderPayload(data: ScanData): DiscordPayload {
-  // --- Determine scan date ---
-  const activeSignals = data.signals.filter(
-    (s) => s.signal === 'active' || s.signal === 'active_late',
-  );
-  const nearSignals = data.signals.filter((s) => s.signal === 'near');
-  const dateStr =
-    activeSignals.length > 0
-      ? activeSignals[0].date
-      : nearSignals.length > 0
-        ? nearSignals[0].date
-        : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
-
-  // Parse date and format as full English: "Monday, January 6, 2025"
-  const dateObj = new Date(dateStr + 'T12:00:00'); // noon to avoid timezone issues
-  const weekday = dateObj.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/Los_Angeles' });
-  const month = dateObj.toLocaleDateString('en-US', { month: 'long', timeZone: 'America/Los_Angeles' });
-  const day = new Intl.DateTimeFormat('en-US', { day: 'numeric', timeZone: 'America/Los_Angeles' }).format(dateObj);
-  const year = new Intl.DateTimeFormat('en-US', { year: 'numeric', timeZone: 'America/Los_Angeles' }).format(dateObj);
+  // --- Determine scan date: always use today's date in Pacific Time ---
+  // Previously derived from signal.date (last bar date) which could be stale
+  // if cached data hadn't refreshed yet, causing mismatched dates across universes.
+  const now = new Date();
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/Los_Angeles' });
+  const month = now.toLocaleDateString('en-US', { month: 'long', timeZone: 'America/Los_Angeles' });
+  const day = new Intl.DateTimeFormat('en-US', { day: 'numeric', timeZone: 'America/Los_Angeles' }).format(now);
+  const year = new Intl.DateTimeFormat('en-US', { year: 'numeric', timeZone: 'America/Los_Angeles' }).format(now);
   const title = `📊 Daily Scan — ${weekday}, ${month} ${day}, ${year}`;
 
   // --- Description line 1: Mood ---
