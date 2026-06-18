@@ -5,13 +5,13 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { toExposureTier } from '../formatters/market-exposure.js';
 import { executeScanTicker } from './scan-ticker-executor.js';
 import { addToWatchlist, removeFromWatchlist, getUserWatchlist } from '../db/watchlist-store.js';
-import { setWebhook, removeWebhook, getWebhook } from '../db/webhook-store.js';
+
 import { inProgressTickers, runTuningJob } from './tuning-job-manager.js';
 import { loadStrategyProfile } from '../data/profile-store.js';
 import { fetchTickerSentiment, fetchMarketSentiment } from '../sentiment/live-fetcher.js';
 import { brokerRegistry } from '../broker/registry.js';
 import { TokenStore } from '../db/token-store.js';
-import { encodeOAuthState } from '../broker/token-encryption.js';
+import { encodeFormToken } from '../broker/token-encryption.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -167,59 +167,7 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: [],
     },
   },
-  {
-    name: 'set_my_webhook',
-    description:
-      "Set or update the user's TradersPost webhook URL for automated trade signals",
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        webhook_url: {
-          type: 'string',
-          description: 'The TradersPost webhook URL (must start with https://traderspost.io/)',
-        },
-      },
-      required: ['webhook_url'],
-    },
-  },
-  {
-    name: 'remove_my_webhook',
-    description:
-      "Remove the user's TradersPost webhook URL and stop receiving automated trade signals",
-    input_schema: {
-      type: 'object' as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'get_my_webhook_status',
-    description:
-      'Check if the user has a webhook configured and whether it is enabled',
-    input_schema: {
-      type: 'object' as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'place_trade',
-    description:
-      "Manually place a trade via the user's TradersPost webhook",
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        ticker: { type: 'string', description: 'Stock ticker symbol (e.g., AAPL)' },
-        action: {
-          type: 'string',
-          description: 'Trade action to take',
-          enum: ['buy', 'sell', 'sell_short', 'buy_to_cover'],
-        },
-        limit_price: { type: 'number', description: 'Limit price for the order' },
-      },
-      required: ['ticker', 'action', 'limit_price'],
-    },
-  },
+
   {
     name: 'tune_ticker',
     description:
@@ -308,22 +256,7 @@ export async function executeTool(
     case 'get_my_watchlist': {
       return getMyWatchlistTool(userId ?? '');
     }
-    case 'set_my_webhook': {
-      const webhookUrl = input.webhook_url as string;
-      return setMyWebhookTool(userId ?? '', webhookUrl);
-    }
-    case 'remove_my_webhook': {
-      return removeMyWebhookTool(userId ?? '');
-    }
-    case 'get_my_webhook_status': {
-      return getMyWebhookStatusTool(userId ?? '');
-    }
-    case 'place_trade': {
-      const ticker = input.ticker as string;
-      const action = input.action as string;
-      const limitPrice = input.limit_price as number;
-      return placeTradeTool(userId ?? '', ticker, action, limitPrice);
-    }
+
     case 'tune_ticker': {
       const ticker = input.ticker as string;
       const force = (input.force as boolean | undefined) ?? false;
@@ -960,130 +893,7 @@ export async function removeFromWatchlistTool(
   }
 }
 
-// ---------------------------------------------------------------------------
-// setMyWebhookTool implementation
-// ---------------------------------------------------------------------------
 
-/**
- * Set or update the user's TradersPost webhook URL.
- * Validates the URL prefix, calls the webhook store, and returns a structured response.
- */
-export async function setMyWebhookTool(
-  userId: string,
-  webhookUrl: string,
-): Promise<{ success: true; message: string } | { success: false; error: string }> {
-  const result = await setWebhook(userId, webhookUrl);
-
-  if ('error' in result) {
-    return { success: false, error: result.error };
-  }
-
-  return { success: true, message: 'Webhook URL saved successfully.' };
-}
-
-// ---------------------------------------------------------------------------
-// removeMyWebhookTool implementation
-// ---------------------------------------------------------------------------
-
-/**
- * Remove the user's TradersPost webhook URL.
- * Calls the webhook store and returns a structured response.
- */
-export async function removeMyWebhookTool(
-  userId: string,
-): Promise<{ success: true; message: string } | { success: false; error: string }> {
-  const deleted = await removeWebhook(userId);
-
-  if (deleted) {
-    return { success: true, message: 'Webhook removed successfully.' };
-  }
-
-  return { success: false, error: 'No webhook configured.' };
-}
-
-// ---------------------------------------------------------------------------
-// getMyWebhookStatusTool implementation
-// ---------------------------------------------------------------------------
-
-/**
- * Get the user's webhook configuration status.
- * Calls the webhook store, masks the URL for security, and returns a structured response.
- */
-export async function getMyWebhookStatusTool(
-  userId: string,
-): Promise<{ configured: true; enabled: boolean; webhookUrl: string } | { configured: false }> {
-  const webhook = await getWebhook(userId);
-
-  if (!webhook) {
-    return { configured: false };
-  }
-
-  // Mask the URL: show first 30 characters + "..." for security
-  const maskedUrl = webhook.webhookUrl.slice(0, 30) + '...';
-
-  return {
-    configured: true,
-    enabled: webhook.enabled,
-    webhookUrl: maskedUrl,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// placeTradeTool implementation
-// ---------------------------------------------------------------------------
-
-const TRADE_TIMEOUT_MS = 10_000;
-
-/**
- * Manually place a trade via the user's TradersPost webhook.
- * Checks that the user has an active webhook, builds the payload, and POSTs with a 10s timeout.
- */
-export async function placeTradeTool(
-  userId: string,
-  ticker: string,
-  action: string,
-  limitPrice: number,
-): Promise<{ success: true; message: string } | { success: false; error: string }> {
-  // 1. Check that the user has a webhook configured and enabled
-  const webhook = await getWebhook(userId);
-
-  if (!webhook || !webhook.enabled) {
-    return { success: false, error: 'No active webhook configured. Use set_my_webhook first.' };
-  }
-
-  // 2. Build the TradersPost payload
-  const payload = {
-    ticker,
-    action,
-    orderType: 'limit' as const,
-    limitPrice,
-    quantity: 1,
-  };
-
-  // 3. POST to the user's webhook URL with 10s timeout
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TRADE_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(webhook.webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-
-    if (response.status >= 400) {
-      return { success: false, error: `Webhook returned HTTP ${response.status}` };
-    }
-
-    return { success: true, message: `Trade signal sent: ${action} ${ticker} @ ${limitPrice}` };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `Failed to reach webhook: ${message}` };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // tuneTickerTool implementation
@@ -1169,7 +979,7 @@ function getBrokerTokenStore(): TokenStore {
 }
 
 /**
- * Generate an OAuth2 authorization URL for the user to connect their broker account.
+ * Generate a secure one-time link for the user to submit their Webull API keys.
  * Returns an ephemeral link with prerequisites information.
  */
 async function connectBrokerTool(userId: string, broker: string) {
@@ -1183,8 +993,9 @@ async function connectBrokerTool(userId: string, broker: string) {
     };
   }
 
-  const state = encodeOAuthState(userId);
-  const url = adapter.buildAuthUrl(state);
+  const { token } = encodeFormToken(userId);
+  const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+  const url = `${baseUrl}/connect/webull?token=${encodeURIComponent(token)}`;
 
   return {
     success: true,
@@ -1217,7 +1028,13 @@ async function getPositionsTool(userId: string) {
     };
   }
 
-  const result = await adapter.getPositions(connection.tokenSet);
+  const result = await adapter.getPositions({
+    appKey: connection.appKey,
+    appSecret: connection.appSecret,
+    accountId: connection.accountId,
+    accountType: connection.accountType,
+    accessToken: connection.accessToken,
+  });
   if (!result.ok) {
     return { success: false, error: `Failed to fetch positions: ${result.error.message}` };
   }
@@ -1252,7 +1069,13 @@ async function getAccountTool(userId: string) {
     };
   }
 
-  const result = await adapter.getAccount(connection.tokenSet);
+  const result = await adapter.getAccount({
+    appKey: connection.appKey,
+    appSecret: connection.appSecret,
+    accountId: connection.accountId,
+    accountType: connection.accountType,
+    accessToken: connection.accessToken,
+  });
   if (!result.ok) {
     return { success: false, error: `Failed to fetch account: ${result.error.message}` };
   }

@@ -52,26 +52,27 @@ export function decrypt(encoded: string): string {
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 
 /**
- * Encodes an opaque OAuth2 state parameter containing the Discord userId,
- * a timestamp, and a random nonce. The result is encrypted so the userId
- * is not visible in the encoded string.
+ * Encodes a secure link token for the key submission form.
+ * Contains userId, timestamp, and a 16-byte nonce.
+ * Encrypted with AES-256-GCM (existing encrypt function).
  */
-export function encodeOAuthState(userId: string): string {
+export function encodeFormToken(userId: string): { token: string; nonce: string } {
+  const nonce = randomBytes(16).toString('hex');
   const payload = JSON.stringify({
     userId,
     timestamp: Date.now(),
-    nonce: randomBytes(8).toString('hex'),
+    nonce,
   });
-  return encrypt(payload);
+  return { token: encrypt(payload), nonce };
 }
 
 /**
- * Decodes and validates an OAuth2 state parameter.
- * Throws if the state is older than 10 minutes (replay protection).
- * Returns the original userId on success.
+ * Decodes and validates a form token.
+ * Throws if expired (>10 minutes).
+ * Returns userId and nonce for single-use validation.
  */
-export function decodeOAuthState(state: string): { userId: string } {
-  const json = decrypt(state);
+export function decodeFormToken(token: string): { userId: string; nonce: string } {
+  const json = decrypt(token);
   const payload = JSON.parse(json) as {
     userId: string;
     timestamp: number;
@@ -80,8 +81,8 @@ export function decodeOAuthState(state: string): { userId: string } {
 
   const age = Date.now() - payload.timestamp;
   if (age > TEN_MINUTES_MS) {
-    throw new Error('OAuth state expired (older than 10 minutes)');
+    throw new Error('Link expired (older than 10 minutes)');
   }
 
-  return { userId: payload.userId };
+  return { userId: payload.userId, nonce: payload.nonce };
 }

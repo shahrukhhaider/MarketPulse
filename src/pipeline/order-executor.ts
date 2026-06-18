@@ -1,15 +1,12 @@
 // src/pipeline/order-executor.ts
 import type { SignalOutput } from '../strategies/strategy-registry.js';
-import type { BrokerAdapter, OrderRequest, TokenSet, BrokerResult, OrderResponse } from '../broker/types.js';
+import type { BrokerAdapter, OrderRequest, BrokerCredentials, BrokerResult, OrderResponse } from '../broker/types.js';
 import type { BrokerRegistry } from '../broker/registry.js';
-import type { TokenStore, StoredConnection } from '../db/token-store.js';
-import { getWebhooksForTickers } from '../db/webhook-store.js';
+import type { TokenStore, StoredCredentials } from '../db/token-store.js';
 
 export interface ExecutionResult {
   ordersPlaced: number;
   ordersFailed: number;
-  webhooksFired: number;
-  webhookErrors: number;
 }
 
 export interface OrderExecutorConfig {
@@ -19,31 +16,31 @@ export interface OrderExecutorConfig {
 }
 
 /** Outcome from processing a single user-signal match. */
-type MatchOutcome = 'order_placed' | 'order_failed' | 'webhook_fired' | 'webhook_error';
+type MatchOutcome = 'order_placed' | 'order_failed';
 
 export class OrderExecutor {
   constructor(
     private config: OrderExecutorConfig,
     private registry: BrokerRegistry,
     private tokenStore: TokenStore,
+    private discordNotifier?: (userId: string, message: string) => Promise<void>,
   ) {}
 
   /**
-   * Process active signals: place broker orders or fire webhooks.
-   * Drop-in replacement for notifyWebhooks().
+   * Process active signals: place broker orders for users with active connections.
    *
    * 1. Filter signals to active only
-   * 2. Resolve user-signal matches (broker connections + webhook-only users)
+   * 2. Resolve user-signal matches via broker connections
    * 3. Process each match in parallel with per-user timeout
-   * 4. Prefer broker connection over webhook when both exist
-   * 5. Return aggregated ExecutionResult
+   * 4. Skip users without active broker connections (debug log)
+   * 5. Return { ordersPlaced, ordersFailed }
    */
   async execute(signals: SignalOutput[]): Promise<ExecutionResult> {
     // 1. Filter to active signals only
     const activeSignals = signals.filter((s) => s.signal === 'active');
 
     if (activeSignals.length === 0) {
-      return { ordersPlaced: 0, ordersFailed: 0, webhooksFired: 0, webhookErrors: 0 };
+      return { ordersPlaced: 0, ordersFailed: 0 };
     }
 
     // 2. Extract unique tickers
@@ -60,58 +57,38 @@ export class OrderExecutor {
     // 4. Resolve broker connections for these tickers
     const brokerMatches = await this.tokenStore.getConnectionsForTickers(tickers);
 
-    // 5. Resolve webhook-only users (backward compatibility)
-    const webhookMatches = await getWebhooksForTickers(tickers);
-
-    // 6. Determine which users have broker connections (to exclude from webhook path)
-    const brokerUserIds = new Set(brokerMatches.map((m) => m.userId));
-
-    // 7. Webhook-only matches: users who have webhooks but NO active broker connection
-    const webhookOnlyMatches = webhookMatches.filter((m) => !brokerUserIds.has(m.userId));
-
-    // 8. Build processing tasks
+    // 5. Build processing tasks
     const tasks: Array<() => Promise<MatchOutcome>> = [];
 
-    // Broker tasks
     for (const match of brokerMatches) {
       const signal = signalByTicker.get(match.ticker);
       if (!signal) continue;
 
-      // Skip inactive connections without calling adapter methods
+      // Skip inactive connections with a debug-level log
       if (!match.isActive) {
-        tasks.push(async () => 'order_failed');
+        console.debug(
+          `[order-executor] Skipping user=${match.userId} for ticker=${match.ticker}: no active broker connection`,
+        );
         continue;
       }
 
       tasks.push(() => this.processBrokerOrder(match, signal));
     }
 
-    // Webhook-only tasks
-    for (const match of webhookOnlyMatches) {
-      const signal = signalByTicker.get(match.ticker);
-      if (!signal) continue;
-
-      tasks.push(() => this.processWebhookOrder(match.webhookUrl, signal));
-    }
-
-    // 9. Execute all tasks in parallel with per-user timeout
+    // 6. Execute all tasks in parallel with per-user timeout
     const results = await Promise.allSettled(
       tasks.map((task) => this.withTimeout(task(), this.config.perUserTimeoutMs)),
     );
 
-    // 10. Aggregate results
+    // 7. Aggregate results
     let ordersPlaced = 0;
     let ordersFailed = 0;
-    let webhooksFired = 0;
-    let webhookErrors = 0;
 
     for (const result of results) {
       if (result.status === 'fulfilled') {
         switch (result.value) {
           case 'order_placed': ordersPlaced++; break;
           case 'order_failed': ordersFailed++; break;
-          case 'webhook_fired': webhooksFired++; break;
-          case 'webhook_error': webhookErrors++; break;
         }
       } else {
         // Promise rejected (timeout or unexpected error) → count as failed
@@ -119,14 +96,15 @@ export class OrderExecutor {
       }
     }
 
-    return { ordersPlaced, ordersFailed, webhooksFired, webhookErrors };
+    return { ordersPlaced, ordersFailed };
   }
 
   /**
-   * Process a single broker order: refresh token if expired, build order, place with retry.
+   * Process a single broker order: build credentials, build order, place with retry.
+   * No token refresh needed — key-based auth uses per-request HMAC-SHA1 signing.
    */
   private async processBrokerOrder(
-    connection: StoredConnection & { ticker: string },
+    connection: StoredCredentials & { ticker: string },
     signal: SignalOutput,
   ): Promise<MatchOutcome> {
     const adapter = this.registry.resolve(connection.brokerId);
@@ -135,31 +113,20 @@ export class OrderExecutor {
       return 'order_failed';
     }
 
-    let { tokenSet } = connection;
-
-    // Check if token is expired and refresh if needed
-    if (tokenSet.expiresAt < new Date()) {
-      const refreshResult = await adapter.refreshToken(tokenSet.refreshToken);
-
-      if (!refreshResult.ok) {
-        // Refresh failed → mark connection inactive
-        await this.tokenStore.deactivate(connection.userId, connection.brokerId);
-        console.warn(
-          `[order-executor] Token refresh failed for user=${connection.userId}, broker=${connection.brokerId}. Connection deactivated.`,
-        );
-        return 'order_failed';
-      }
-
-      // Update token store with new tokens
-      tokenSet = refreshResult.data;
-      await this.tokenStore.saveConnection(connection.userId, connection.brokerId, tokenSet);
-    }
+    // Build BrokerCredentials from stored connection
+    const credentials: BrokerCredentials = {
+      appKey: connection.appKey,
+      appSecret: connection.appSecret,
+      accountId: connection.accountId,
+      accountType: connection.accountType,
+      accessToken: connection.accessToken,
+    };
 
     // Build the order request from the signal
     const order = this.buildOrderRequest(signal);
 
     // Place order with retry
-    const orderResult = await this.placeWithRetry(adapter, tokenSet, order);
+    const orderResult = await this.placeWithRetry(adapter, credentials, order);
 
     if (orderResult.ok) {
       console.log(
@@ -168,68 +135,31 @@ export class OrderExecutor {
       return 'order_placed';
     }
 
+    // If credentials are invalid (401/403), deactivate the connection and notify via Discord DM
+    if (orderResult.error.httpStatus === 401 || orderResult.error.httpStatus === 403) {
+      await this.tokenStore.deactivate(connection.userId, connection.brokerId);
+      console.warn(
+        `[order-executor] Credentials invalid for user=${connection.userId}, broker=${connection.brokerId}. Connection deactivated.`,
+      );
+
+      // Send Discord DM to user (best-effort)
+      if (this.discordNotifier) {
+        try {
+          await this.discordNotifier(
+            connection.userId,
+            'Your Webull API keys appear to be invalid or revoked. Use the connect_broker command to set up new credentials.',
+          );
+        } catch {
+          // best-effort — don't fail the order processing if DM fails
+          console.debug(`[order-executor] Failed to send Discord DM to user=${connection.userId}`);
+        }
+      }
+    }
+
     console.warn(
       `[order-executor] Order failed: ticker=${signal.ticker} user=${connection.userId} error=${orderResult.error.message}`,
     );
     return 'order_failed';
-  }
-
-  /**
-   * Fire a legacy webhook for a webhook-only user.
-   */
-  private async processWebhookOrder(
-    webhookUrl: string,
-    signal: SignalOutput,
-  ): Promise<MatchOutcome> {
-    const payload = this.buildWebhookPayload(signal);
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-
-    try {
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-
-      if (response.status >= 400) {
-        console.warn(
-          `[order-executor] Webhook HTTP ${response.status} for ticker=${signal.ticker} url=${webhookUrl}`,
-        );
-        return 'webhook_error';
-      }
-
-      return 'webhook_fired';
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[order-executor] Webhook error for ticker=${signal.ticker}: ${message}`,
-      );
-      return 'webhook_error';
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  /**
-   * Build the TradersPost-compatible webhook payload from a signal.
-   */
-  private buildWebhookPayload(signal: SignalOutput) {
-    const risk = Math.abs(signal.entry - signal.stop);
-    const isBear = signal.strategy === 'bear_breakdown';
-    const target = isBear ? signal.entry - 2 * risk : signal.entry + 2 * risk;
-
-    return {
-      ticker: signal.ticker,
-      action: isBear ? 'sell_short' : 'buy',
-      orderType: 'limit' as const,
-      limitPrice: signal.entry,
-      quantity: 1,
-      takeProfit: { limitPrice: target },
-      stopLoss: { type: 'stop' as const, stopPrice: signal.stop },
-    };
   }
 
   /**
@@ -285,13 +215,13 @@ export class OrderExecutor {
    */
   async placeWithRetry(
     adapter: BrokerAdapter,
-    tokens: TokenSet,
+    credentials: BrokerCredentials,
     order: OrderRequest,
   ): Promise<BrokerResult<OrderResponse>> {
     let lastResult: BrokerResult<OrderResponse>;
 
     for (let attempt = 0; attempt <= this.config.maxRetriesPerOrder; attempt++) {
-      lastResult = await adapter.placeBracketOrder(tokens, order);
+      lastResult = await adapter.placeBracketOrder(credentials, order);
 
       if (lastResult.ok) {
         return lastResult;

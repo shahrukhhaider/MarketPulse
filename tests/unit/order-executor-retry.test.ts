@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { OrderExecutor } from '../../src/pipeline/order-executor.js';
 import type { OrderExecutorConfig } from '../../src/pipeline/order-executor.js';
-import type { BrokerAdapter, TokenSet, OrderRequest, BrokerResult, OrderResponse } from '../../src/broker/types.js';
+import type { BrokerAdapter, BrokerCredentials, OrderRequest, BrokerResult, OrderResponse } from '../../src/broker/types.js';
 import { BrokerRegistry } from '../../src/broker/registry.js';
 import type { TokenStore } from '../../src/db/token-store.js';
 
@@ -20,11 +20,10 @@ function makeExecutor(config?: Partial<OrderExecutorConfig>): OrderExecutor {
   return new OrderExecutor(makeConfig(config), registry, tokenStore);
 }
 
-function makeTokens(): TokenSet {
+function makeCredentials(): BrokerCredentials {
   return {
-    accessToken: 'test-access-token',
-    refreshToken: 'test-refresh-token',
-    expiresAt: new Date(Date.now() + 3600_000),
+    appKey: 'test-app-key',
+    appSecret: 'test-app-secret',
     accountId: 'acc-123',
     accountType: 'paper',
   };
@@ -87,7 +86,7 @@ describe('OrderExecutor.placeWithRetry', () => {
       placeBracketOrder: vi.fn().mockResolvedValue(makeSuccessResult()),
     } as unknown as BrokerAdapter;
 
-    const result = await executor.placeWithRetry(adapter, makeTokens(), makeOrder());
+    const result = await executor.placeWithRetry(adapter, makeCredentials(), makeOrder());
 
     expect(result.ok).toBe(true);
     expect(adapter.placeBracketOrder).toHaveBeenCalledTimes(1);
@@ -100,7 +99,7 @@ describe('OrderExecutor.placeWithRetry', () => {
       placeBracketOrder: vi.fn().mockResolvedValue(makeNonRetryableError()),
     } as unknown as BrokerAdapter;
 
-    const result = await executor.placeWithRetry(adapter, makeTokens(), makeOrder());
+    const result = await executor.placeWithRetry(adapter, makeCredentials(), makeOrder());
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -116,7 +115,7 @@ describe('OrderExecutor.placeWithRetry', () => {
       placeBracketOrder: vi.fn().mockResolvedValue(makeRetryableError(500)),
     } as unknown as BrokerAdapter;
 
-    const result = await executor.placeWithRetry(adapter, makeTokens(), makeOrder());
+    const result = await executor.placeWithRetry(adapter, makeCredentials(), makeOrder());
 
     expect(result.ok).toBe(false);
     // 1 initial + 2 retries = 3 total calls
@@ -132,7 +131,7 @@ describe('OrderExecutor.placeWithRetry', () => {
         .mockResolvedValueOnce(makeSuccessResult()),
     } as unknown as BrokerAdapter;
 
-    const result = await executor.placeWithRetry(adapter, makeTokens(), makeOrder());
+    const result = await executor.placeWithRetry(adapter, makeCredentials(), makeOrder());
 
     expect(result.ok).toBe(true);
     expect(adapter.placeBracketOrder).toHaveBeenCalledTimes(2);
@@ -160,7 +159,7 @@ describe('OrderExecutor.placeWithRetry', () => {
         .mockResolvedValueOnce(makeSuccessResult()),
     } as unknown as BrokerAdapter;
 
-    const result = await executor.placeWithRetry(adapter, makeTokens(), makeOrder());
+    const result = await executor.placeWithRetry(adapter, makeCredentials(), makeOrder());
 
     expect(result.ok).toBe(true);
     expect(sleepSpy).toHaveBeenCalledWith(5000); // 5 seconds from "retry after 5s"
@@ -189,7 +188,7 @@ describe('OrderExecutor.placeWithRetry', () => {
         .mockResolvedValueOnce(makeSuccessResult()),
     } as unknown as BrokerAdapter;
 
-    const result = await executor.placeWithRetry(adapter, makeTokens(), makeOrder());
+    const result = await executor.placeWithRetry(adapter, makeCredentials(), makeOrder());
 
     expect(result.ok).toBe(true);
     // Delay should be calculated: min(100 * 2^0 + jitter, 30000) where jitter ∈ [0, 100)
@@ -207,7 +206,7 @@ describe('OrderExecutor.placeWithRetry', () => {
       placeBracketOrder: vi.fn().mockResolvedValue(makeRetryableError(503, 'Service Unavailable')),
     } as unknown as BrokerAdapter;
 
-    const result = await executor.placeWithRetry(adapter, makeTokens(), makeOrder());
+    const result = await executor.placeWithRetry(adapter, makeCredentials(), makeOrder());
 
     expect(result.ok).toBe(false);
     if (!result.ok) {

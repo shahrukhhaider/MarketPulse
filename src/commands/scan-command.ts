@@ -550,8 +550,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         );
         const executionResult = await orderExecutor.execute(dedupFilteredSignals);
         console.log(
-          `[scan] Order execution: ${executionResult.ordersPlaced} placed, ${executionResult.ordersFailed} failed, ` +
-          `${executionResult.webhooksFired} webhooks fired, ${executionResult.webhookErrors} webhook errors`,
+          `[scan] Order execution: ${executionResult.ordersPlaced} placed, ${executionResult.ordersFailed} failed`,
         );
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
@@ -798,8 +797,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
         );
         const executionResult = await orderExecutor.execute(parallelDedupFiltered);
         console.log(
-          `[scan] Order execution: ${executionResult.ordersPlaced} placed, ${executionResult.ordersFailed} failed, ` +
-          `${executionResult.webhooksFired} webhooks fired, ${executionResult.webhookErrors} webhook errors`,
+          `[scan] Order execution: ${executionResult.ordersPlaced} placed, ${executionResult.ordersFailed} failed`,
         );
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
@@ -1041,8 +1039,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       );
       const executionResult = await orderExecutor.execute(seqDedupFiltered);
       console.log(
-        `[scan] Order execution: ${executionResult.ordersPlaced} placed, ${executionResult.ordersFailed} failed, ` +
-        `${executionResult.webhooksFired} webhooks fired, ${executionResult.webhookErrors} webhook errors`,
+        `[scan] Order execution: ${executionResult.ordersPlaced} placed, ${executionResult.ordersFailed} failed`,
       );
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);

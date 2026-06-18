@@ -251,6 +251,10 @@ app.get('/health', (_req, res) => {
   });
 });
 
+// Body parsing middleware (required for POST /connect/webull form submission)
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
 registerApiRoutes(app, STOCK_TRACKER_HOME);
 
 const server = app.listen(PORT, () => {

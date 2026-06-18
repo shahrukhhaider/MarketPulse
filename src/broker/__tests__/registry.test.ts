@@ -5,9 +5,7 @@ import type { BrokerAdapter } from '../types.js';
 function makeMockAdapter(brokerId: string): BrokerAdapter {
   return {
     brokerId,
-    buildAuthUrl: () => '',
-    exchangeCode: async () => ({ ok: true, data: {} as any }),
-    refreshToken: async () => ({ ok: true, data: {} as any }),
+    validateCredentials: async () => ({ ok: true, data: { accounts: [] } }),
     placeBracketOrder: async () => ({ ok: true, data: {} as any }),
     getPositions: async () => ({ ok: true, data: [] }),
     getAccount: async () => ({ ok: true, data: {} as any }),

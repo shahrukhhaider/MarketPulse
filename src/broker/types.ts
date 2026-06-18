@@ -50,35 +50,33 @@ export type BrokerResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: BrokerError };
 
-export interface TokenSet {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: Date;
+/** Credentials stored per-user for key-based auth */
+export interface BrokerCredentials {
+  appKey: string;
+  appSecret: string;
   accountId: string;
   accountType: AccountType;
+  accessToken?: string;         // Optional 2FA token (if user has 2FA enabled)
+  accessTokenExpiresAt?: Date;  // When the 2FA token expires
 }
 
 export interface BrokerAdapter {
   readonly brokerId: string;
 
-  /** Generate OAuth2 authorization URL for user onboarding */
-  buildAuthUrl(state: string): string;
+  /** Validate credentials by making a test API call (e.g., list accounts) */
+  validateCredentials(appKey: string, appSecret: string): Promise<BrokerResult<{
+    accounts: Array<{ accountId: string; accountType: AccountType }>;
+  }>>;
 
-  /** Exchange authorization code for token set */
-  exchangeCode(code: string): Promise<BrokerResult<TokenSet>>;
-
-  /** Refresh an expired access token */
-  refreshToken(refreshToken: string): Promise<BrokerResult<TokenSet>>;
-
-  /** Place a bracket order (entry + stop-loss + take-profit) */
-  placeBracketOrder(tokens: TokenSet, order: OrderRequest): Promise<BrokerResult<OrderResponse>>;
+  /** Place a bracket order using stored credentials */
+  placeBracketOrder(credentials: BrokerCredentials, order: OrderRequest): Promise<BrokerResult<OrderResponse>>;
 
   /** Get open positions for the authenticated account */
-  getPositions(tokens: TokenSet): Promise<BrokerResult<Position[]>>;
+  getPositions(credentials: BrokerCredentials): Promise<BrokerResult<Position[]>>;
 
   /** Get account summary (value, buying power, P&L) */
-  getAccount(tokens: TokenSet): Promise<BrokerResult<AccountSummary>>;
+  getAccount(credentials: BrokerCredentials): Promise<BrokerResult<AccountSummary>>;
 
   /** Cancel an open order by ID */
-  cancelOrder(tokens: TokenSet, orderId: string): Promise<BrokerResult<{ cancelled: boolean }>>;
+  cancelOrder(credentials: BrokerCredentials, orderId: string): Promise<BrokerResult<{ cancelled: boolean }>>;
 }

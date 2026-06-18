@@ -1,36 +1,34 @@
 import type {
   BrokerAdapter,
+  BrokerCredentials,
   BrokerError,
   BrokerResult,
-  TokenSet,
   OrderRequest,
   OrderResponse,
   Position,
   AccountSummary,
   AccountType,
 } from '../types.js';
+import { signRequest } from './request-signer.js';
 
 export interface WebullConfig {
-  clientId: string;
-  clientSecret: string;
-  redirectUri: string;
   sandbox: boolean;
 }
 
 /**
- * Webull Connect API base URLs (from developer.webull.com).
- * The OAuth authorize redirect (H5 page) is separate from the API endpoint.
+ * Webull OpenAPI base URLs (from developer.webull.com).
  */
 const WEBULL_URLS = {
   uat: {
-    authRedirect: 'https://passport.uat.webullbroker.com',
     api: 'https://us-oauth-open-api.uat.webullbroker.com',
   },
   production: {
-    authRedirect: 'https://passport.webull.com',
     api: 'https://us-oauth-open-api.webull.com',
   },
 } as const;
+
+/** Default timeout for all Webull API calls (30 seconds per requirement 5.6). */
+const API_TIMEOUT_MS = 30_000;
 
 /**
  * Maps an HTTP response (or network error) to a BrokerError with correct retryable flag.
@@ -82,108 +80,40 @@ function mapNetworkError(err: unknown): BrokerError {
 
 /**
  * Webull OpenAPI adapter implementing the BrokerAdapter interface.
- * Handles OAuth2 authentication, bracket orders, position tracking, and account queries.
+ * Uses HMAC-SHA1 request signing with app_key/app_secret for authentication.
  */
 export class WebullAdapter implements BrokerAdapter {
   readonly brokerId = 'webull';
 
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly redirectUri: string;
-  private readonly authRedirectUrl: string;
   private readonly apiBaseUrl: string;
 
   constructor(config: WebullConfig) {
-    this.clientId = config.clientId;
-    this.clientSecret = config.clientSecret;
-    this.redirectUri = config.redirectUri;
-
     const urls = config.sandbox ? WEBULL_URLS.uat : WEBULL_URLS.production;
-    this.authRedirectUrl = urls.authRedirect;
     this.apiBaseUrl = urls.api;
   }
 
   /**
-   * Generate OAuth2 authorization URL for user onboarding.
-   * Uses the Webull passport (H5) domain for the login redirect.
+   * Validate credentials by making a test API call (GET /account/list).
+   * Returns the list of accounts on success, or an error on invalid credentials.
    */
-  buildAuthUrl(state: string): string {
-    const params = new URLSearchParams({
-      client_id: this.clientId,
-      redirect_uri: this.redirectUri,
-      response_type: 'code',
-      state,
-    });
-    return `${this.authRedirectUrl}/oauth2/authorize?${params.toString()}`;
-  }
-
-  /**
-   * Exchange authorization code for token set.
-   */
-  async exchangeCode(code: string): Promise<BrokerResult<TokenSet>> {
-    const url = `${this.apiBaseUrl}/oauth2/token`;
-    const body = {
-      grant_type: 'authorization_code',
-      code,
-      client_id: this.clientId,
-      client_secret: this.clientSecret,
-      redirect_uri: this.redirectUri,
-    };
+  async validateCredentials(appKey: string, appSecret: string): Promise<BrokerResult<{
+    accounts: Array<{ accountId: string; accountType: AccountType }>;
+  }>> {
+    const url = `${this.apiBaseUrl}/account/list`;
 
     const result = await this.request<{
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-      account_id: string;
-      account_type: string;
-    }>('POST', url, { body, auth: false });
+      accounts: Array<{ account_id: string; account_type: string }>;
+    }>('GET', url, { appKey, appSecret });
 
     if (!result.ok) return result;
 
-    const { data } = result;
     return {
       ok: true,
       data: {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        expiresAt: new Date(Date.now() + data.expires_in * 1000),
-        accountId: data.account_id,
-        accountType: (data.account_type === 'paper' ? 'paper' : 'live') as AccountType,
-      },
-    };
-  }
-
-  /**
-   * Refresh an expired access token.
-   */
-  async refreshToken(refreshToken: string): Promise<BrokerResult<TokenSet>> {
-    const url = `${this.apiBaseUrl}/oauth2/token`;
-    const body = {
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: this.clientId,
-      client_secret: this.clientSecret,
-    };
-
-    const result = await this.request<{
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-      account_id: string;
-      account_type: string;
-    }>('POST', url, { body, auth: false });
-
-    if (!result.ok) return result;
-
-    const { data } = result;
-    return {
-      ok: true,
-      data: {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        expiresAt: new Date(Date.now() + data.expires_in * 1000),
-        accountId: data.account_id,
-        accountType: (data.account_type === 'paper' ? 'paper' : 'live') as AccountType,
+        accounts: result.data.accounts.map(a => ({
+          accountId: a.account_id,
+          accountType: (a.account_type === 'paper' ? 'paper' : 'live') as AccountType,
+        })),
       },
     };
   }
@@ -192,10 +122,10 @@ export class WebullAdapter implements BrokerAdapter {
    * Place a bracket order (entry + stop-loss + take-profit) via Webull OpenAPI.
    */
   async placeBracketOrder(
-    tokens: TokenSet,
+    credentials: BrokerCredentials,
     order: OrderRequest,
   ): Promise<BrokerResult<OrderResponse>> {
-    const url = `${this.apiBaseUrl}/api/v1/accounts/${tokens.accountId}/orders`;
+    const url = `${this.apiBaseUrl}/api/v1/accounts/${credentials.accountId}/orders`;
     const body = {
       ticker: order.ticker,
       action: order.action,
@@ -212,7 +142,12 @@ export class WebullAdapter implements BrokerAdapter {
       filled_price: number | null;
       filled_at: string | null;
       metadata?: Record<string, unknown>;
-    }>('POST', url, { body, accessToken: tokens.accessToken });
+    }>('POST', url, {
+      body,
+      appKey: credentials.appKey,
+      appSecret: credentials.appSecret,
+      accessToken: credentials.accessToken,
+    });
 
     if (!result.ok) return result;
 
@@ -232,8 +167,8 @@ export class WebullAdapter implements BrokerAdapter {
   /**
    * Get open positions for the authenticated account.
    */
-  async getPositions(tokens: TokenSet): Promise<BrokerResult<Position[]>> {
-    const url = `${this.apiBaseUrl}/api/v1/accounts/${tokens.accountId}/positions`;
+  async getPositions(credentials: BrokerCredentials): Promise<BrokerResult<Position[]>> {
+    const url = `${this.apiBaseUrl}/api/v1/accounts/${credentials.accountId}/positions`;
 
     const result = await this.request<
       Array<{
@@ -243,7 +178,11 @@ export class WebullAdapter implements BrokerAdapter {
         current_price: number;
         side: string;
       }>
-    >('GET', url, { accessToken: tokens.accessToken });
+    >('GET', url, {
+      appKey: credentials.appKey,
+      appSecret: credentials.appSecret,
+      accessToken: credentials.accessToken,
+    });
 
     if (!result.ok) return result;
 
@@ -270,8 +209,8 @@ export class WebullAdapter implements BrokerAdapter {
   /**
    * Get account summary (value, buying power, P&L).
    */
-  async getAccount(tokens: TokenSet): Promise<BrokerResult<AccountSummary>> {
-    const url = `${this.apiBaseUrl}/api/v1/accounts/${tokens.accountId}`;
+  async getAccount(credentials: BrokerCredentials): Promise<BrokerResult<AccountSummary>> {
+    const url = `${this.apiBaseUrl}/api/v1/accounts/${credentials.accountId}`;
 
     const result = await this.request<{
       account_id: string;
@@ -279,7 +218,11 @@ export class WebullAdapter implements BrokerAdapter {
       total_value: number;
       buying_power: number;
       total_unrealized_pnl: number;
-    }>('GET', url, { accessToken: tokens.accessToken });
+    }>('GET', url, {
+      appKey: credentials.appKey,
+      appSecret: credentials.appSecret,
+      accessToken: credentials.accessToken,
+    });
 
     if (!result.ok) return result;
 
@@ -300,15 +243,19 @@ export class WebullAdapter implements BrokerAdapter {
    * Cancel an open order by ID.
    */
   async cancelOrder(
-    tokens: TokenSet,
+    credentials: BrokerCredentials,
     orderId: string,
   ): Promise<BrokerResult<{ cancelled: boolean }>> {
-    const url = `${this.apiBaseUrl}/api/v1/accounts/${tokens.accountId}/orders/${orderId}`;
+    const url = `${this.apiBaseUrl}/api/v1/accounts/${credentials.accountId}/orders/${orderId}`;
 
     const result = await this.request<{ cancelled: boolean }>(
       'DELETE',
       url,
-      { accessToken: tokens.accessToken },
+      {
+        appKey: credentials.appKey,
+        appSecret: credentials.appSecret,
+        accessToken: credentials.accessToken,
+      },
     );
 
     if (!result.ok) return result;
@@ -317,37 +264,73 @@ export class WebullAdapter implements BrokerAdapter {
   }
 
   /**
-   * Internal HTTP helper using native fetch.
-   * Handles JSON serialization, auth headers, and error mapping.
-   * Respects Retry-After on 429 responses.
+   * Internal HTTP helper using native fetch with HMAC-SHA1 request signing.
+   * Handles JSON serialization, signed headers, and error mapping.
+   * Uses a 30-second AbortController timeout per requirement 5.6.
    */
   private async request<T>(
     method: 'GET' | 'POST' | 'DELETE',
     url: string,
     options: {
       body?: unknown;
+      appKey: string;
+      appSecret: string;
       accessToken?: string;
-      auth?: boolean;
-    } = {},
+    },
   ): Promise<BrokerResult<T>> {
+    // Parse URL to extract path, host, and query params for signing
+    const parsedUrl = new URL(url);
+    const path = parsedUrl.pathname;
+    const host = parsedUrl.host;
+    const queryParams: Record<string, string> = {};
+    parsedUrl.searchParams.forEach((value, key) => {
+      queryParams[key] = value;
+    });
+
+    // If user has a 2FA access token, include it as a query param
+    if (options.accessToken) {
+      queryParams['access_token'] = options.accessToken;
+    }
+
+    // Sign the request using HMAC-SHA1
+    const signedHeaders = signRequest({
+      method,
+      path,
+      queryParams,
+      body: options.body ?? null,
+      appKey: options.appKey,
+      appSecret: options.appSecret,
+      host,
+    });
+
+    // Build final headers: signed headers + Accept
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      ...signedHeaders,
       Accept: 'application/json',
     };
 
-    if (options.accessToken) {
-      headers['Authorization'] = `Bearer ${options.accessToken}`;
-    }
+    // Build the final URL with query params (including access_token if present)
+    const finalUrl = Object.keys(queryParams).length > 0
+      ? `${parsedUrl.origin}${path}?${new URLSearchParams(queryParams).toString()}`
+      : `${parsedUrl.origin}${path}`;
+
+    // 30-second timeout via AbortController
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
 
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await fetch(finalUrl, {
         method,
         headers,
         body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: controller.signal,
       });
     } catch (err: unknown) {
+      clearTimeout(timeout);
       return { ok: false, error: mapNetworkError(err) };
+    } finally {
+      clearTimeout(timeout);
     }
 
     if (!response.ok) {

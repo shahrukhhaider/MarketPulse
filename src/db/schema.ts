@@ -26,17 +26,6 @@ export const memberTrades = pgTable('member_trades', {
   updatedAt:   timestamp('updated_at', { withTimezone: true }),
 });
 
-export const userWebhook = pgTable('user_webhook', {
-  id:         serial('id').primaryKey(),
-  userId:     text('user_id').notNull(),
-  webhookUrl: text('webhook_url').notNull(),
-  enabled:    boolean('enabled').notNull().default(true),
-  createdAt:  timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt:  timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  uniqueIndex('user_webhook_user_id_idx').on(table.userId),
-]);
-
 export const brokerConnection = pgTable('broker_connection', {
   id:             serial('id').primaryKey(),
   userId:         text('user_id').notNull(),

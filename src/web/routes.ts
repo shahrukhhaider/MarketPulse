@@ -792,15 +792,15 @@ export function registerApiRoutes(app: Express, stockTrackerHome: string): void 
   app.get('/api/winning-trades/charts/:year/:month/:day/:filename', handleWinningTradesChart(stockTrackerHome));
   app.get('/api/winning-trades/:year/:month/:day', handleWinningTradesByDate(stockTrackerHome));
 
-  // Broker OAuth callback routes
+  // Broker key-form routes (mounted at root so /connect/webull is accessible directly)
   const tokenStore = new TokenStore();
   const brokerRouter = createBrokerRouter(
     brokerRegistry,
     tokenStore,
     async (userId: string, message: string) => {
-      // Placeholder Discord notifier - will be wired up in task 7.1
+      // TODO: Wire to Discord bot client.users.fetch(userId).send(message) once the bot exposes a sendDM helper
       console.log(`[broker] Discord DM to ${userId}: ${message}`);
     },
   );
-  app.use('/api/broker', brokerRouter);
+  app.use('', brokerRouter);
 }
