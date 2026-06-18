@@ -1000,7 +1000,7 @@ async function connectBrokerTool(userId: string, broker: string) {
   return {
     success: true,
     url,
-    message: `Click the link below to connect your ${broker} account. This link expires in 10 minutes.\n\n**Prerequisites:**\n• Webull account with $100+ net value\n• Approved OpenAPI access from developer.webull.com\n• Takes 1-2 business days if you haven't applied yet`,
+    message: `Here's your secure link to connect your ${broker} account:\n\n${url}\n\n⏳ This link expires in 10 minutes.\n\n**Prerequisites:**\n• Webull account with $100+ net value\n• Approved OpenAPI access from developer.webull.com\n• Takes 1-2 business days if you haven't applied yet`,
     ephemeral: true,
   };
 }
