@@ -4,6 +4,9 @@ import * as path from 'node:path';
 import { buildPriceMapFromCache } from '../utils/price-map.js';
 import { generateChartFilename } from '../chart-types.js';
 import { CacheFileStore } from '../data/cache-file-store.js';
+import { createBrokerRouter } from './broker-routes.js';
+import { brokerRegistry } from '../broker/registry.js';
+import { TokenStore } from '../db/token-store.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -788,4 +791,16 @@ export function registerApiRoutes(app: Express, stockTrackerHome: string): void 
   app.get('/api/winning-trades/dates', handleWinningTradesDates(stockTrackerHome));
   app.get('/api/winning-trades/charts/:year/:month/:day/:filename', handleWinningTradesChart(stockTrackerHome));
   app.get('/api/winning-trades/:year/:month/:day', handleWinningTradesByDate(stockTrackerHome));
+
+  // Broker OAuth callback routes
+  const tokenStore = new TokenStore();
+  const brokerRouter = createBrokerRouter(
+    brokerRegistry,
+    tokenStore,
+    async (userId: string, message: string) => {
+      // Placeholder Discord notifier - will be wired up in task 7.1
+      console.log(`[broker] Discord DM to ${userId}: ${message}`);
+    },
+  );
+  app.use('/api/broker', brokerRouter);
 }

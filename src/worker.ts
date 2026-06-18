@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { initDiscordBot } from './discord-bot/index.js';
 import { updateMemberTradePnL } from './db/update-member-pnl.js';
 import { registerApiRoutes } from './web/routes.js';
+import { setupBrokerAdapters } from './broker/setup.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -229,6 +230,12 @@ async function winningTrades(): Promise<void> {
 async function morningSentimentDigest(): Promise<void> {
   await runCli('morning-sentiment-digest', ['sentiment-check']);
 }
+
+// ---------------------------------------------------------------------------
+// Broker adapter registration (before routes/cron that may use broker)
+// ---------------------------------------------------------------------------
+
+setupBrokerAdapters();
 
 // ---------------------------------------------------------------------------
 // Health check server

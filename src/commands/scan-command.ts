@@ -22,7 +22,9 @@ import type { SignalOutput } from '../strategies/strategy-registry.js';
 import { V3_STRATEGIES } from '../strategies/v3-strategies.js';
 import { parallelScan } from '../pipeline/parallel-scan.js';
 import { runPipeline } from '../pipeline/signal-pipeline.js';
-import { notifyWebhooks } from '../pipeline/webhook-notifier.js';
+import { OrderExecutor } from '../pipeline/order-executor.js';
+import { brokerRegistry } from '../broker/registry.js';
+import { TokenStore } from '../db/token-store.js';
 import { RegimeDetector } from '../indicators/regime-detector.js';
 import type { RegimeResult, RegimeState } from '../indicators/regime-detector.js';
 import { load as loadJournal } from '../journal/journal-store.js';
@@ -536,10 +538,24 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       }
 
       try {
-        await notifyWebhooks(dedupFilteredSignals);
+        const tokenStore = new TokenStore();
+        const orderExecutor = new OrderExecutor(
+          {
+            maxRetriesPerOrder: 3,
+            baseRetryDelayMs: 1000,
+            perUserTimeoutMs: 60_000,
+          },
+          brokerRegistry,
+          tokenStore,
+        );
+        const executionResult = await orderExecutor.execute(dedupFilteredSignals);
+        console.log(
+          `[scan] Order execution: ${executionResult.ordersPlaced} placed, ${executionResult.ordersFailed} failed, ` +
+          `${executionResult.webhooksFired} webhooks fired, ${executionResult.webhookErrors} webhook errors`,
+        );
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
-        console.warn(`[scan] Webhook notification error: ${message}`);
+        console.warn(`[scan] Order execution error: ${message}`);
       }
 
       return successResult('scan', {
@@ -770,10 +786,24 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       }
 
       try {
-        await notifyWebhooks(parallelDedupFiltered);
+        const tokenStore = new TokenStore();
+        const orderExecutor = new OrderExecutor(
+          {
+            maxRetriesPerOrder: 3,
+            baseRetryDelayMs: 1000,
+            perUserTimeoutMs: 60_000,
+          },
+          brokerRegistry,
+          tokenStore,
+        );
+        const executionResult = await orderExecutor.execute(parallelDedupFiltered);
+        console.log(
+          `[scan] Order execution: ${executionResult.ordersPlaced} placed, ${executionResult.ordersFailed} failed, ` +
+          `${executionResult.webhooksFired} webhooks fired, ${executionResult.webhookErrors} webhook errors`,
+        );
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
-        console.warn(`[scan] Webhook notification error: ${message}`);
+        console.warn(`[scan] Order execution error: ${message}`);
       }
 
       return successResult('scan', output);
@@ -999,10 +1029,24 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
     }
 
     try {
-      await notifyWebhooks(seqDedupFiltered);
+      const tokenStore = new TokenStore();
+      const orderExecutor = new OrderExecutor(
+        {
+          maxRetriesPerOrder: 3,
+          baseRetryDelayMs: 1000,
+          perUserTimeoutMs: 60_000,
+        },
+        brokerRegistry,
+        tokenStore,
+      );
+      const executionResult = await orderExecutor.execute(seqDedupFiltered);
+      console.log(
+        `[scan] Order execution: ${executionResult.ordersPlaced} placed, ${executionResult.ordersFailed} failed, ` +
+        `${executionResult.webhooksFired} webhooks fired, ${executionResult.webhookErrors} webhook errors`,
+      );
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      console.warn(`[scan] Webhook notification error: ${message}`);
+      console.warn(`[scan] Order execution error: ${message}`);
     }
 
     return successResult('scan', output);

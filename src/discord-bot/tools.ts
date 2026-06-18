@@ -9,6 +9,9 @@ import { setWebhook, removeWebhook, getWebhook } from '../db/webhook-store.js';
 import { inProgressTickers, runTuningJob } from './tuning-job-manager.js';
 import { loadStrategyProfile } from '../data/profile-store.js';
 import { fetchTickerSentiment, fetchMarketSentiment } from '../sentiment/live-fetcher.js';
+import { brokerRegistry } from '../broker/registry.js';
+import { TokenStore } from '../db/token-store.js';
+import { encodeOAuthState } from '../broker/token-encryption.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -230,6 +233,42 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: ['ticker'],
     },
   },
+  {
+    name: 'connect_broker',
+    description:
+      'Generate a link for the user to connect their Webull brokerage account. Prerequisites: Webull account with $100+ net value and approved OpenAPI access from developer.webull.com',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        broker: {
+          type: 'string',
+          description: 'Broker to connect',
+          enum: ['webull'],
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_positions',
+    description:
+      "Get the user's open positions from their connected broker account, including ticker, quantity, average cost, current price, unrealized P&L, and position side (long/short)",
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'get_account',
+    description:
+      "Get the user's broker account summary including total value, buying power, unrealized P&L, and account type (paper/live)",
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 /**
@@ -289,6 +328,16 @@ export async function executeTool(
       const ticker = input.ticker as string;
       const force = (input.force as boolean | undefined) ?? false;
       return tuneTickerTool(ticker, context ?? {}, force);
+    }
+    case 'connect_broker': {
+      const broker = (input.broker as string) || 'webull';
+      return connectBrokerTool(userId ?? '', broker);
+    }
+    case 'get_positions': {
+      return getPositionsTool(userId ?? '');
+    }
+    case 'get_account': {
+      return getAccountTool(userId ?? '');
     }
     default:
       return { error: `Unknown tool: ${name}` };
@@ -1106,4 +1155,107 @@ export function tuneTickerTool(
     ticker: normalizedTicker,
     message: `Tuning ${normalizedTicker}... I'll post results here in ~5 min.`,
   };
+}
+
+
+// ---------------------------------------------------------------------------
+// Broker tool implementations
+// ---------------------------------------------------------------------------
+
+let _brokerTokenStore: TokenStore | null = null;
+function getBrokerTokenStore(): TokenStore {
+  if (!_brokerTokenStore) _brokerTokenStore = new TokenStore();
+  return _brokerTokenStore;
+}
+
+/**
+ * Generate an OAuth2 authorization URL for the user to connect their broker account.
+ * Returns an ephemeral link with prerequisites information.
+ */
+async function connectBrokerTool(userId: string, broker: string) {
+  if (!userId) return { success: false, error: 'User ID required' };
+
+  const adapter = brokerRegistry.resolve(broker);
+  if (!adapter) {
+    return {
+      success: false,
+      error: `Broker "${broker}" is not available. Currently supported: ${brokerRegistry.list().join(', ') || 'none'}`,
+    };
+  }
+
+  const state = encodeOAuthState(userId);
+  const url = adapter.buildAuthUrl(state);
+
+  return {
+    success: true,
+    url,
+    message: `Click the link below to connect your ${broker} account. This link expires in 10 minutes.\n\n**Prerequisites:**\n• Webull account with $100+ net value\n• Approved OpenAPI access from developer.webull.com\n• Takes 1-2 business days if you haven't applied yet`,
+    ephemeral: true,
+  };
+}
+
+/**
+ * Query open positions from the user's connected broker account.
+ * Guides user to connect_broker if no connection exists.
+ */
+async function getPositionsTool(userId: string) {
+  if (!userId) return { success: false, error: 'User ID required' };
+
+  const connection = await getBrokerTokenStore().getConnection(userId);
+  if (!connection) {
+    return {
+      success: false,
+      error: 'No broker connected. Use connect_broker to link your account first.',
+    };
+  }
+
+  const adapter = brokerRegistry.resolve(connection.brokerId);
+  if (!adapter) {
+    return {
+      success: false,
+      error: `Broker adapter "${connection.brokerId}" not available`,
+    };
+  }
+
+  const result = await adapter.getPositions(connection.tokenSet);
+  if (!result.ok) {
+    return { success: false, error: `Failed to fetch positions: ${result.error.message}` };
+  }
+
+  if (result.data.length === 0) {
+    return { success: true, positions: [], message: 'No open positions.' };
+  }
+
+  return { success: true, positions: result.data, account_type: connection.accountType };
+}
+
+/**
+ * Get the user's broker account summary including total value, buying power, and P&L.
+ * Guides user to connect_broker if no connection exists.
+ */
+async function getAccountTool(userId: string) {
+  if (!userId) return { success: false, error: 'User ID required' };
+
+  const connection = await getBrokerTokenStore().getConnection(userId);
+  if (!connection) {
+    return {
+      success: false,
+      error: 'No broker connected. Use connect_broker to link your account first.',
+    };
+  }
+
+  const adapter = brokerRegistry.resolve(connection.brokerId);
+  if (!adapter) {
+    return {
+      success: false,
+      error: `Broker adapter "${connection.brokerId}" not available`,
+    };
+  }
+
+  const result = await adapter.getAccount(connection.tokenSet);
+  if (!result.ok) {
+    return { success: false, error: `Failed to fetch account: ${result.error.message}` };
+  }
+
+  return { success: true, account: result.data };
 }

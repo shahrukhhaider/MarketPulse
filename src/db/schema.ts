@@ -36,3 +36,19 @@ export const userWebhook = pgTable('user_webhook', {
 }, (table) => [
   uniqueIndex('user_webhook_user_id_idx').on(table.userId),
 ]);
+
+export const brokerConnection = pgTable('broker_connection', {
+  id:             serial('id').primaryKey(),
+  userId:         text('user_id').notNull(),
+  brokerId:       text('broker_id').notNull().default('webull'),
+  accountId:      text('account_id').notNull(),
+  accountType:    text('account_type').notNull().default('paper'),
+  accessToken:    text('access_token').notNull(),
+  refreshToken:   text('refresh_token').notNull(),
+  tokenExpiresAt: timestamp('token_expires_at', { withTimezone: true }).notNull(),
+  isActive:       boolean('is_active').notNull().default(true),
+  createdAt:      timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:      timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('broker_connection_user_broker_idx').on(table.userId, table.brokerId),
+]);
