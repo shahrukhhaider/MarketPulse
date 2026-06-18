@@ -99,20 +99,23 @@ export class WebullAdapter implements BrokerAdapter {
   async validateCredentials(appKey: string, appSecret: string): Promise<BrokerResult<{
     accounts: Array<{ accountId: string; accountType: AccountType }>;
   }>> {
-    const url = `${this.apiBaseUrl}/account/list`;
+    const url = `${this.apiBaseUrl}/openapi/account/list`;
 
-    const result = await this.request<{
-      accounts: Array<{ account_id: string; account_type: string }>;
-    }>('GET', url, { appKey, appSecret });
+    const result = await this.request<
+      Array<{ account_id: string; account_type: string; account_number?: string; user_id?: string }>
+    >('GET', url, { appKey, appSecret });
 
     if (!result.ok) return result;
+
+    // Response is an array of account objects
+    const accounts = Array.isArray(result.data) ? result.data : [];
 
     return {
       ok: true,
       data: {
-        accounts: result.data.accounts.map(a => ({
+        accounts: accounts.map(a => ({
           accountId: a.account_id,
-          accountType: (a.account_type === 'paper' ? 'paper' : 'live') as AccountType,
+          accountType: (a.account_type === 'PAPER' || a.account_type === 'paper' ? 'paper' : 'live') as AccountType,
         })),
       },
     };
