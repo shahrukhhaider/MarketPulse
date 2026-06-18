@@ -29,7 +29,7 @@ import { load as loadJournal } from '../journal/journal-store.js';
 import { JOURNAL_DEFAULTS } from '../journal/journal-types.js';
 import { autoJournal } from '../journal/auto-journal.js';
 import { EarningsDateProvider } from '../data/earnings-date-provider.js';
-import { DEFAULT_PEAD_CONFIG } from '../strategies/strategy-configs.js';
+import { calibratePeadThresholds } from '../strategies/pead-threshold-calibrator.js';
 import type { JournalEntry } from '../journal/journal-types.js';
 import { computePositionMetrics } from '../utils/position-metrics.js';
 import type { PositionMetrics } from '../utils/position-metrics.js';
@@ -253,9 +253,18 @@ async function runSingleTickerScan(
       for (const strat of strategiesToScan) {
         let params: Record<string, number>;
         let signalOptions: DetectSignalOptions | undefined;
+        let peadCalibration: SignalOutput['peadCalibration'] | undefined;
 
         if (strat === 'post_earnings_drift') {
-          params = DEFAULT_PEAD_CONFIG as unknown as Record<string, number>;
+          const calibration = calibratePeadThresholds(ticker, { cacheDir: dataDir });
+          params = calibration.config as unknown as Record<string, number>;
+          peadCalibration = {
+            calibrated: calibration.calibrated,
+            gap_min_pct: calibration.config.gap_min_pct,
+            gap_volume_multiplier: calibration.config.gap_volume_multiplier,
+            max_range_pct: calibration.config.max_range_pct,
+            eventsUsed: calibration.eventsUsed,
+          };
           const earningsResult = await new EarningsDateProvider({ cacheDir: dataDir }).getEarningsDates(ticker);
           signalOptions = { earningsDates: earningsResult.success ? earningsResult.data.dates : [] };
         } else {
@@ -277,6 +286,11 @@ async function runSingleTickerScan(
 
         const signal = detectSignal(dataPoints, params, strat, signalOptions);
         signal.ticker = ticker;
+
+        // Attach PEAD calibration metadata for non-'none' signals
+        if (strat === 'post_earnings_drift' && signal.signal !== 'none' && peadCalibration) {
+          signal.peadCalibration = peadCalibration;
+        }
 
         // Apply RS confidence adjustment if regime data available
         if (regimeStateMap) {
@@ -791,8 +805,8 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
           let signalOptions: DetectSignalOptions | undefined;
 
           if (strat === 'post_earnings_drift') {
-            // PEAD uses universal defaults — no per-ticker tuning needed
-            params = DEFAULT_PEAD_CONFIG as unknown as Record<string, number>;
+            const calibration = calibratePeadThresholds(ticker, { cacheDir: dataDir });
+            params = calibration.config as unknown as Record<string, number>;
             const earningsResult = await new EarningsDateProvider({ cacheDir: dataDir }).getEarningsDates(ticker);
             signalOptions = { earningsDates: earningsResult.success ? earningsResult.data.dates : [] };
           } else {

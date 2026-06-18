@@ -26,6 +26,13 @@ export interface SignalOutput {
   candlestickAdjustment?: number;   // applied multiplier [0.85, 1.15]
   lineage?: SignalLineage;          // temporal context from signal history
   fundamentalData?: FundamentalData; // fundamental analysis metrics from fundamentalsMap
+  peadCalibration?: {
+    calibrated: boolean;
+    gap_min_pct: number;
+    gap_volume_multiplier: number;
+    max_range_pct: number;
+    eventsUsed: number;
+  };
 }
 
 export interface TunableStrategyInterface {

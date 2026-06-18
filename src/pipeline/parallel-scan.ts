@@ -20,7 +20,7 @@ import { WorkerPool } from './worker-pool.js';
 import type { WorkerTask, WorkerResult } from './worker-pool.js';
 import { fetchHistoricalDataStream } from '../data/data-fetcher.js';
 import { EarningsDateProvider } from '../data/earnings-date-provider.js';
-import { DEFAULT_PEAD_CONFIG } from '../strategies/strategy-configs.js';
+import { calibratePeadThresholds } from '../strategies/pead-threshold-calibrator.js';
 import { createProgressReporter } from '../formatters/progress-reporter.js';
 import type { HistoricalDataPoint } from '../types.js';
 import { computeConfluence } from '../indicators/confluence-calculator.js';
@@ -98,10 +98,18 @@ async function scanSingleTicker(options: ParallelScanOptions): Promise<ParallelS
     for (const strat of strategies) {
       let params: Record<string, number>;
       let signalOptions: DetectSignalOptions | undefined;
+      let peadCalibration: SignalOutput['peadCalibration'] | undefined;
 
       if (strat === 'post_earnings_drift') {
-        // PEAD uses universal defaults — no per-ticker tuning needed
-        params = DEFAULT_PEAD_CONFIG as unknown as Record<string, number>;
+        const calibration = calibratePeadThresholds(ticker, { cacheDir: options.dataDir });
+        params = calibration.config as unknown as Record<string, number>;
+        peadCalibration = {
+          calibrated: calibration.calibrated,
+          gap_min_pct: calibration.config.gap_min_pct,
+          gap_volume_multiplier: calibration.config.gap_volume_multiplier,
+          max_range_pct: calibration.config.max_range_pct,
+          eventsUsed: calibration.eventsUsed,
+        };
         const earningsResult = await new EarningsDateProvider({ cacheDir: options.dataDir }).getEarningsDates(ticker);
         signalOptions = { earningsDates: earningsResult.success ? earningsResult.data.dates : [] };
       } else {
@@ -135,6 +143,12 @@ async function scanSingleTicker(options: ParallelScanOptions): Promise<ParallelS
 
       const signal = detectSignal(dataPoints, params, strat, signalOptions);
       signal.ticker = ticker;
+
+      // Attach PEAD calibration metadata for non-'none' signals
+      if (strat === 'post_earnings_drift' && signal.signal !== 'none' && peadCalibration) {
+        signal.peadCalibration = peadCalibration;
+      }
+
       signals.push(signal);
     }
 
@@ -216,8 +230,8 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
 
     // Track dispatched tasks for completion tracking
     const dispatchedTaskIds = new Set<string>();
-    // Map taskId → { ticker, strategy, rvol } for result processing
-    const taskMeta = new Map<string, { ticker: string; strategy: string; rvol: number | null }>();
+    // Map taskId → { ticker, strategy, rvol, peadCalibration } for result processing
+    const taskMeta = new Map<string, { ticker: string; strategy: string; rvol: number | null; peadCalibration?: SignalOutput['peadCalibration'] }>();
 
     // Register result-collecting listener BEFORE dispatching tasks.
     // This prevents a race condition where workers complete tasks during
@@ -235,6 +249,10 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
         if (meta) {
           signalOutput.ticker = meta.ticker;
           signalOutput.rvol = meta.rvol;
+          // Attach PEAD calibration metadata for non-'none' signals
+          if (meta.peadCalibration && signalOutput.signal !== 'none') {
+            signalOutput.peadCalibration = meta.peadCalibration;
+          }
         }
         signals.push(signalOutput);
         scannedCount++;
@@ -277,10 +295,18 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
       for (const strat of strategies) {
         let params: Record<string, number>;
         let earningsDates: string[] | undefined;
+        let peadCalibration: SignalOutput['peadCalibration'] | undefined;
 
         if (strat === 'post_earnings_drift') {
-          // PEAD uses universal defaults — no per-ticker tuning needed
-          params = DEFAULT_PEAD_CONFIG as unknown as Record<string, number>;
+          const calibration = calibratePeadThresholds(fetchResult.ticker, { cacheDir: dataDir });
+          params = calibration.config as unknown as Record<string, number>;
+          peadCalibration = {
+            calibrated: calibration.calibrated,
+            gap_min_pct: calibration.config.gap_min_pct,
+            gap_volume_multiplier: calibration.config.gap_volume_multiplier,
+            max_range_pct: calibration.config.max_range_pct,
+            eventsUsed: calibration.eventsUsed,
+          };
           const earningsResult = await new EarningsDateProvider({ cacheDir: dataDir }).getEarningsDates(fetchResult.ticker);
           earningsDates = earningsResult.success ? earningsResult.data.dates : [];
         } else {
@@ -325,7 +351,7 @@ export async function parallelScan(options: ParallelScanOptions): Promise<Parall
         };
 
         dispatchedTaskIds.add(taskId);
-        taskMeta.set(taskId, { ticker: fetchResult.ticker, strategy: strat, rvol: tickerRvol });
+        taskMeta.set(taskId, { ticker: fetchResult.ticker, strategy: strat, rvol: tickerRvol, peadCalibration });
         tickerDispatched = true;
         pool.submit(task);
       }
