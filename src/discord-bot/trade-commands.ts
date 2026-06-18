@@ -7,7 +7,6 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
 } from 'discord.js';
-import { validateActiveTicker } from './active-signal-validator.js';
 import { insertTrade, closeTrade, getOpenTrades } from '../db/database.js';
 
 // ---------------------------------------------------------------------------
@@ -95,12 +94,8 @@ async function handleTradeAdd(interaction: ChatInputCommandInteraction): Promise
   const stop = interaction.options.getNumber('stop', true);
   const target = interaction.options.getNumber('target', true);
 
-  // Validate against active signals
-  const validation = await validateActiveTicker(ticker);
-  if ('error' in validation) {
-    await interaction.reply({ content: validation.error, ephemeral: true });
-    return;
-  }
+  // Validate against active signals — allow any valid ticker
+  // (Previously restricted to active-only; relaxed to let users log any trade)
 
   // Check for duplicate open trade
   const openTrades = await getOpenTrades(interaction.user.id);
