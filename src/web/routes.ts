@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildPriceMapFromCache } from '../utils/price-map.js';
 import { generateChartFilename } from '../chart-types.js';
+import { CacheFileStore } from '../data/cache-file-store.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -99,6 +100,45 @@ function handleMarket(stockTrackerHome: string) {
  */
 function buildLatestPriceMap(stockTrackerHome: string): Map<string, number> {
   return buildPriceMapFromCache(stockTrackerHome);
+}
+
+/**
+ * Find the date when a trade's stop or target was first breached.
+ * Scans bars from the signal date forward.
+ * Returns the date string (YYYY-MM-DD) or null if not found.
+ */
+function findCloseDate(
+  stockTrackerHome: string,
+  ticker: string,
+  signalDate: string,
+  stop: number,
+  target: number,
+  isBearBreakdown: boolean
+): string | null {
+  const cacheDir = path.join(stockTrackerHome, '.stock-tracker', 'history-cache');
+  const store = new CacheFileStore(cacheDir);
+  const cacheFile = store.read(ticker);
+  if (!cacheFile) return null;
+
+  const bars = cacheFile.dataPoints;
+  // Find the first bar after the signal date
+  const startIdx = bars.findIndex(b => b.date > signalDate);
+  if (startIdx < 0) return null;
+
+  for (let i = startIdx; i < bars.length; i++) {
+    const bar = bars[i];
+    if (isBearBreakdown) {
+      // Short: target hit when low <= target, stopped out when high >= stop
+      if (bar.low <= target) return bar.date;
+      if (bar.high >= stop) return bar.date;
+    } else {
+      // Long: target hit when high >= target, stopped out when low <= stop
+      if (bar.high >= target) return bar.date;
+      if (bar.low <= stop) return bar.date;
+    }
+  }
+
+  return null;
 }
 
 function handleSignalsWeekAgo(stockTrackerHome: string) {
@@ -412,17 +452,7 @@ function handleSignalArchiveByDate(stockTrackerHome: string) {
 
       const isBearBreakdown = sig.strategy === 'bear_breakdown';
 
-      // P&L calculation: inverted for bear_breakdown (short)
-      let pnlPct: number | null = null;
-      if (sig.entry > 0) {
-        if (isBearBreakdown) {
-          pnlPct = Math.round(((sig.entry - currentPrice) / sig.entry) * 10000) / 100;
-        } else {
-          pnlPct = Math.round(((currentPrice - sig.entry) / sig.entry) * 10000) / 100;
-        }
-      }
-
-      // Outcome classification
+      // Outcome classification (determine first, then compute P&L based on outcome)
       let outcome: 'target_hit' | 'stopped_out' | 'open';
       if (isBearBreakdown) {
         // Short: target is below entry, stop is above entry
@@ -444,7 +474,32 @@ function handleSignalArchiveByDate(stockTrackerHome: string) {
         }
       }
 
-      return { ...sig, currentPrice, pnlPct, outcome, chartUrl };
+      // P&L: use outcome price for resolved trades, current price for open
+      let pnlPct: number | null = null;
+      if (sig.entry > 0) {
+        let exitPrice: number;
+        if (outcome === 'target_hit') {
+          exitPrice = sig.target;
+        } else if (outcome === 'stopped_out') {
+          exitPrice = sig.stop;
+        } else {
+          exitPrice = currentPrice;
+        }
+
+        if (isBearBreakdown) {
+          pnlPct = Math.round(((sig.entry - exitPrice) / sig.entry) * 10000) / 100;
+        } else {
+          pnlPct = Math.round(((exitPrice - sig.entry) / sig.entry) * 10000) / 100;
+        }
+      }
+
+      // Find close date for resolved trades by scanning price bars
+      let closedDate: string | null = null;
+      if (outcome === 'target_hit' || outcome === 'stopped_out') {
+        closedDate = findCloseDate(stockTrackerHome, sig.ticker, date, sig.stop, sig.target, isBearBreakdown);
+      }
+
+      return { ...sig, currentPrice, pnlPct, outcome, chartUrl, closedDate };
     });
 
     const nearSignals = Array.from(nearMap.values());
