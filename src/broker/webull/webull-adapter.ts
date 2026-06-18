@@ -18,6 +18,21 @@ export interface WebullConfig {
 }
 
 /**
+ * Webull Connect API base URLs (from developer.webull.com).
+ * The OAuth authorize redirect (H5 page) is separate from the API endpoint.
+ */
+const WEBULL_URLS = {
+  uat: {
+    authRedirect: 'https://passport.uat.webullbroker.com',
+    api: 'https://us-oauth-open-api.uat.webullbroker.com',
+  },
+  production: {
+    authRedirect: 'https://passport.webull.com',
+    api: 'https://us-oauth-open-api.webull.com',
+  },
+} as const;
+
+/**
  * Maps an HTTP response (or network error) to a BrokerError with correct retryable flag.
  *
  * Error mapping rules:
@@ -75,19 +90,22 @@ export class WebullAdapter implements BrokerAdapter {
   private readonly clientId: string;
   private readonly clientSecret: string;
   private readonly redirectUri: string;
-  private readonly baseUrl: string;
+  private readonly authRedirectUrl: string;
+  private readonly apiBaseUrl: string;
 
   constructor(config: WebullConfig) {
     this.clientId = config.clientId;
     this.clientSecret = config.clientSecret;
     this.redirectUri = config.redirectUri;
-    this.baseUrl = config.sandbox
-      ? 'https://sandbox-api.webull.com'
-      : 'https://api.webull.com';
+
+    const urls = config.sandbox ? WEBULL_URLS.uat : WEBULL_URLS.production;
+    this.authRedirectUrl = urls.authRedirect;
+    this.apiBaseUrl = urls.api;
   }
 
   /**
    * Generate OAuth2 authorization URL for user onboarding.
+   * Uses the Webull passport (H5) domain for the login redirect.
    */
   buildAuthUrl(state: string): string {
     const params = new URLSearchParams({
@@ -96,14 +114,14 @@ export class WebullAdapter implements BrokerAdapter {
       response_type: 'code',
       state,
     });
-    return `${this.baseUrl}/oauth2/authorize?${params.toString()}`;
+    return `${this.authRedirectUrl}/oauth2/authorize?${params.toString()}`;
   }
 
   /**
    * Exchange authorization code for token set.
    */
   async exchangeCode(code: string): Promise<BrokerResult<TokenSet>> {
-    const url = `${this.baseUrl}/oauth2/token`;
+    const url = `${this.apiBaseUrl}/oauth2/token`;
     const body = {
       grant_type: 'authorization_code',
       code,
@@ -139,7 +157,7 @@ export class WebullAdapter implements BrokerAdapter {
    * Refresh an expired access token.
    */
   async refreshToken(refreshToken: string): Promise<BrokerResult<TokenSet>> {
-    const url = `${this.baseUrl}/oauth2/token`;
+    const url = `${this.apiBaseUrl}/oauth2/token`;
     const body = {
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
@@ -177,7 +195,7 @@ export class WebullAdapter implements BrokerAdapter {
     tokens: TokenSet,
     order: OrderRequest,
   ): Promise<BrokerResult<OrderResponse>> {
-    const url = `${this.baseUrl}/api/v1/accounts/${tokens.accountId}/orders`;
+    const url = `${this.apiBaseUrl}/api/v1/accounts/${tokens.accountId}/orders`;
     const body = {
       ticker: order.ticker,
       action: order.action,
@@ -215,7 +233,7 @@ export class WebullAdapter implements BrokerAdapter {
    * Get open positions for the authenticated account.
    */
   async getPositions(tokens: TokenSet): Promise<BrokerResult<Position[]>> {
-    const url = `${this.baseUrl}/api/v1/accounts/${tokens.accountId}/positions`;
+    const url = `${this.apiBaseUrl}/api/v1/accounts/${tokens.accountId}/positions`;
 
     const result = await this.request<
       Array<{
@@ -253,7 +271,7 @@ export class WebullAdapter implements BrokerAdapter {
    * Get account summary (value, buying power, P&L).
    */
   async getAccount(tokens: TokenSet): Promise<BrokerResult<AccountSummary>> {
-    const url = `${this.baseUrl}/api/v1/accounts/${tokens.accountId}`;
+    const url = `${this.apiBaseUrl}/api/v1/accounts/${tokens.accountId}`;
 
     const result = await this.request<{
       account_id: string;
@@ -285,7 +303,7 @@ export class WebullAdapter implements BrokerAdapter {
     tokens: TokenSet,
     orderId: string,
   ): Promise<BrokerResult<{ cancelled: boolean }>> {
-    const url = `${this.baseUrl}/api/v1/accounts/${tokens.accountId}/orders/${orderId}`;
+    const url = `${this.apiBaseUrl}/api/v1/accounts/${tokens.accountId}/orders/${orderId}`;
 
     const result = await this.request<{ cancelled: boolean }>(
       'DELETE',

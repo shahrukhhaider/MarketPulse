@@ -43,7 +43,7 @@ describe('WebullAdapter', () => {
     it('should generate a valid OAuth2 authorization URL with sandbox base', () => {
       const url = adapter.buildAuthUrl('my-state-123');
 
-      expect(url).toContain('https://sandbox-api.webull.com/oauth2/authorize');
+      expect(url).toContain('https://passport.uat.webullbroker.com/oauth2/authorize');
       expect(url).toContain('client_id=test-client-id');
       expect(url).toContain('redirect_uri=https%3A%2F%2Fexample.com%2Fcallback');
       expect(url).toContain('response_type=code');
@@ -54,7 +54,7 @@ describe('WebullAdapter', () => {
       const prodAdapter = makeAdapter(false);
       const url = prodAdapter.buildAuthUrl('state-abc');
 
-      expect(url).toContain('https://api.webull.com/oauth2/authorize');
+      expect(url).toContain('https://passport.webull.com/oauth2/authorize');
       expect(url).toContain('state=state-abc');
     });
 
