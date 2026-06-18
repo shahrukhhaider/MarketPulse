@@ -5,6 +5,7 @@
 import { Client, GatewayIntentBits, Events, REST, Routes } from 'discord.js';
 import { handleMessage } from './handler.js';
 import { handleTradeInteraction, buildTradeCommands } from './trade-commands.js';
+import { buildConnectCommand, handleConnectInteraction } from './connect-command.js';
 import { getDb } from '../db/database.js';
 
 /**
@@ -56,9 +57,12 @@ export async function initDiscordBot(): Promise<void> {
 
     try {
       const rest = new REST({ version: '10' }).setToken(token);
-      const commands = buildTradeCommands().map((c) => c.toJSON());
+      const commands = [
+        ...buildTradeCommands().map((c) => c.toJSON()),
+        buildConnectCommand().toJSON(),
+      ];
       await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
-      console.log(`[discord-bot] Registered ${commands.length} trade slash commands`);
+      console.log(`[discord-bot] Registered ${commands.length} slash commands`);
     } catch (err) {
       console.error('[discord-bot] Failed to register slash commands:', err);
     }
@@ -67,6 +71,24 @@ export async function initDiscordBot(): Promise<void> {
   // Task 6.1 — Route trade slash commands to handleTradeInteraction
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
+
+    // Route /connect command
+    if (interaction.commandName === 'connect') {
+      try {
+        await handleConnectInteraction(interaction);
+      } catch (err) {
+        console.error('[discord-bot] Connect command error:', err);
+        const content = 'Something went wrong generating your connection link.';
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp({ content, ephemeral: true }).catch(() => {});
+        } else {
+          await interaction.reply({ content, ephemeral: true }).catch(() => {});
+        }
+      }
+      return;
+    }
+
+    // Route /trade-* commands
     if (!interaction.commandName.startsWith('trade-')) return;
 
     try {
