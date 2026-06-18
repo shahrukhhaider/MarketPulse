@@ -53,13 +53,14 @@ const TEN_MINUTES_MS = 10 * 60 * 1000;
 
 /**
  * Encodes a secure link token for the key submission form.
- * Contains userId, timestamp, and a 16-byte nonce.
+ * Contains userId, mode, timestamp, and a 16-byte nonce.
  * Encrypted with AES-256-GCM (existing encrypt function).
  */
-export function encodeFormToken(userId: string): { token: string; nonce: string } {
+export function encodeFormToken(userId: string, mode: 'paper' | 'live' = 'paper'): { token: string; nonce: string } {
   const nonce = randomBytes(16).toString('hex');
   const payload = JSON.stringify({
     userId,
+    mode,
     timestamp: Date.now(),
     nonce,
   });
@@ -69,12 +70,13 @@ export function encodeFormToken(userId: string): { token: string; nonce: string 
 /**
  * Decodes and validates a form token.
  * Throws if expired (>10 minutes).
- * Returns userId and nonce for single-use validation.
+ * Returns userId, mode, and nonce for single-use validation.
  */
-export function decodeFormToken(token: string): { userId: string; nonce: string } {
+export function decodeFormToken(token: string): { userId: string; mode: 'paper' | 'live'; nonce: string } {
   const json = decrypt(token);
   const payload = JSON.parse(json) as {
     userId: string;
+    mode?: 'paper' | 'live';
     timestamp: number;
     nonce: string;
   };
@@ -84,5 +86,5 @@ export function decodeFormToken(token: string): { userId: string; nonce: string 
     throw new Error('Link expired (older than 10 minutes)');
   }
 
-  return { userId: payload.userId, nonce: payload.nonce };
+  return { userId: payload.userId, mode: payload.mode ?? 'paper', nonce: payload.nonce };
 }

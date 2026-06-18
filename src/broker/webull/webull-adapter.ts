@@ -81,15 +81,18 @@ function mapNetworkError(err: unknown): BrokerError {
 /**
  * Webull OpenAPI adapter implementing the BrokerAdapter interface.
  * Uses HMAC-SHA1 request signing with app_key/app_secret for authentication.
+ * Endpoint is determined per-request based on accountType (paper → UAT, live → production).
  */
 export class WebullAdapter implements BrokerAdapter {
   readonly brokerId = 'webull';
 
-  private readonly apiBaseUrl: string;
+  constructor(_config: WebullConfig) {
+    // Config is kept for future use but endpoint is now per-user via accountType
+  }
 
-  constructor(config: WebullConfig) {
-    const urls = config.sandbox ? WEBULL_URLS.uat : WEBULL_URLS.production;
-    this.apiBaseUrl = urls.api;
+  /** Resolve API base URL from account type. Paper uses UAT, live uses production. */
+  private getBaseUrl(accountType?: string): string {
+    return accountType === 'paper' ? WEBULL_URLS.uat.api : WEBULL_URLS.production.api;
   }
 
   /**
@@ -99,7 +102,8 @@ export class WebullAdapter implements BrokerAdapter {
   async validateCredentials(appKey: string, appSecret: string): Promise<BrokerResult<{
     accounts: Array<{ accountId: string; accountType: AccountType }>;
   }>> {
-    const url = `${this.apiBaseUrl}/openapi/account/list`;
+    // Always validate against production — user's credentials are real
+    const url = `${WEBULL_URLS.production.api}/openapi/account/list`;
 
     const result = await this.request<
       Array<{ account_id: string; account_type: string; account_number?: string; user_id?: string }>
@@ -128,7 +132,7 @@ export class WebullAdapter implements BrokerAdapter {
     credentials: BrokerCredentials,
     order: OrderRequest,
   ): Promise<BrokerResult<OrderResponse>> {
-    const url = `${this.apiBaseUrl}/api/v1/accounts/${credentials.accountId}/orders`;
+    const url = `${this.getBaseUrl(credentials.accountType)}/api/v1/accounts/${credentials.accountId}/orders`;
     const body = {
       ticker: order.ticker,
       action: order.action,
@@ -171,7 +175,7 @@ export class WebullAdapter implements BrokerAdapter {
    * Get open positions for the authenticated account.
    */
   async getPositions(credentials: BrokerCredentials): Promise<BrokerResult<Position[]>> {
-    const url = `${this.apiBaseUrl}/api/v1/accounts/${credentials.accountId}/positions`;
+    const url = `${this.getBaseUrl(credentials.accountType)}/api/v1/accounts/${credentials.accountId}/positions`;
 
     const result = await this.request<
       Array<{
@@ -213,7 +217,7 @@ export class WebullAdapter implements BrokerAdapter {
    * Get account summary (value, buying power, P&L).
    */
   async getAccount(credentials: BrokerCredentials): Promise<BrokerResult<AccountSummary>> {
-    const url = `${this.apiBaseUrl}/api/v1/accounts/${credentials.accountId}`;
+    const url = `${this.getBaseUrl(credentials.accountType)}/api/v1/accounts/${credentials.accountId}`;
 
     const result = await this.request<{
       account_id: string;
@@ -249,7 +253,7 @@ export class WebullAdapter implements BrokerAdapter {
     credentials: BrokerCredentials,
     orderId: string,
   ): Promise<BrokerResult<{ cancelled: boolean }>> {
-    const url = `${this.apiBaseUrl}/api/v1/accounts/${credentials.accountId}/orders/${orderId}`;
+    const url = `${this.getBaseUrl(credentials.accountType)}/api/v1/accounts/${credentials.accountId}/orders/${orderId}`;
 
     const result = await this.request<{ cancelled: boolean }>(
       'DELETE',

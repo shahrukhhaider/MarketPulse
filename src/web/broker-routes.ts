@@ -55,10 +55,12 @@ export function createBrokerRouter(
     // 1. Validate token
     let userId: string;
     let nonce: string;
+    let mode: 'paper' | 'live';
     try {
       const decoded = decodeFormToken(token);
       userId = decoded.userId;
       nonce = decoded.nonce;
+      mode = decoded.mode;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Invalid link';
       res.status(400).send(errorPage(msg));
@@ -113,30 +115,31 @@ export function createBrokerRouter(
         return;
       }
 
-      // 5. Select paper account (prefer paper, fall back to first available)
+      // 5. Select first account from the list
       const accounts = result.data.accounts;
-      const paperAccount = accounts.find(a => a.accountType === 'paper') ?? accounts[0];
+      const account = accounts[0];
 
-      // 6. Store encrypted credentials
+      // 6. Store encrypted credentials with user-selected mode
       await tokenStore.saveCredentials(userId, 'webull', {
         appKey: trimmedKey,
         appSecret: trimmedSecret,
-        accountId: paperAccount.accountId,
-        accountType: paperAccount.accountType,
+        accountId: account.accountId,
+        accountType: mode,
       });
 
       // 7. Notify via Discord (best-effort)
+      const modeLabel = mode === 'live' ? 'Live trading' : 'Paper trading';
       try {
         await discordNotifier(
           userId,
-          '✅ Your Webull broker connection is active! Paper trading is ready.',
+          `✅ Your Webull broker connection is active! ${modeLabel} mode is ready.`,
         );
       } catch {
         /* best-effort — don't fail the user flow */
       }
 
       // 8. Success page
-      res.status(200).send(successPage(paperAccount.accountType));
+      res.status(200).send(successPage(mode));
     } catch (err) {
       clearTimeout(timeout);
       // Timeout or network error — retryable
