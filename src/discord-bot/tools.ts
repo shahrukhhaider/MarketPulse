@@ -994,7 +994,9 @@ async function connectBrokerTool(userId: string, broker: string) {
   }
 
   const { token } = encodeFormToken(userId);
-  const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+  const baseUrl = process.env.BASE_URL
+    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null)
+    || 'http://localhost:3000';
   const url = `${baseUrl}/connect/webull?token=${encodeURIComponent(token)}`;
 
   return {
