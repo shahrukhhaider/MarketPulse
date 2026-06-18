@@ -111,6 +111,13 @@ describe('webhook-notifier', () => {
       orderType: 'limit',
       limitPrice: 150.0,
       quantity: 1,
+      takeProfit: {
+        limitPrice: 160.0,
+      },
+      stopLoss: {
+        type: 'stop',
+        stopPrice: 145.0,
+      },
     });
   });
 

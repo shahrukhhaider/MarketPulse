@@ -24,6 +24,13 @@ interface TradersPostPayload {
   orderType: 'limit';
   limitPrice: number;
   quantity: number;
+  takeProfit: {
+    limitPrice: number;
+  };
+  stopLoss: {
+    type: 'stop';
+    stopPrice: number;
+  };
 }
 
 // ============================================================
@@ -44,15 +51,39 @@ function mapStrategyToAction(strategy: string): string {
 }
 
 /**
+ * Compute the target price from entry/stop using a 2R reward-to-risk ratio.
+ * For bear_breakdown (short), target is below entry.
+ */
+function computeTarget(entry: number, stop: number, strategy: string): number {
+  if (entry === 0) return 0;
+  const risk = Math.abs(entry - stop);
+  if (strategy === 'bear_breakdown') {
+    return entry - risk * 2;
+  }
+  return entry + risk * 2;
+}
+
+/**
  * Build the TradersPost JSON payload for a given signal.
+ * Includes bracket order (takeProfit + stopLoss) so the broker
+ * automatically manages exits via OCO orders.
  */
 function buildPayload(signal: SignalOutput): TradersPostPayload {
+  const target = computeTarget(signal.entry, signal.stop, signal.strategy);
+
   return {
     ticker: signal.ticker,
     action: mapStrategyToAction(signal.strategy),
     orderType: 'limit',
     limitPrice: signal.entry,
     quantity: 1,
+    takeProfit: {
+      limitPrice: target,
+    },
+    stopLoss: {
+      type: 'stop',
+      stopPrice: signal.stop,
+    },
   };
 }
 
