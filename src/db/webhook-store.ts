@@ -3,13 +3,14 @@ import { getDb } from './database.js';
 import { userWebhook, userWatchlist } from './schema.js';
 
 const TRADERSPOST_URL_PREFIX = 'https://traderspost.io/';
+const TRADERSPOST_WEBHOOKS_PREFIX = 'https://webhooks.traderspost.io/';
 
 export async function setWebhook(
   userId: string,
   webhookUrl: string,
 ): Promise<{ ok: true } | { error: string }> {
-  if (!webhookUrl.startsWith(TRADERSPOST_URL_PREFIX)) {
-    return { error: 'Webhook URL must start with https://traderspost.io/' };
+  if (!webhookUrl.startsWith(TRADERSPOST_URL_PREFIX) && !webhookUrl.startsWith(TRADERSPOST_WEBHOOKS_PREFIX)) {
+    return { error: 'Webhook URL must start with https://traderspost.io/ or https://webhooks.traderspost.io/' };
   }
 
   const db = getDb();
