@@ -158,10 +158,6 @@ async function dailyScanLargeCap(): Promise<void> {
 
   // Journal update (large_cap only)
   await runCli(`${jobName}:journal-update`, ['journal-update']);
-
-  // Discord notification (generates + persists charts inline for top 5 only)
-  const notifyScript = path.join(__dirname, 'discord-notify.js');
-  await runCli(`${jobName}:notify`, [logFile], notifyScript);
 }
 
 async function dailyScanTech(): Promise<void> {
@@ -191,10 +187,35 @@ async function dailyScanTech(): Promise<void> {
     '--scan-output', logFile,
     '--universe', 'tech',
   ]);
+}
 
-  // Discord notification (generates + persists charts inline for top 5 only)
+/**
+ * Discord notification (chart generation + posting) for the latest scan logs.
+ * Runs as a separate job after scans complete so Puppeteer has full memory available.
+ */
+async function discordNotify(): Promise<void> {
+  const logsDir = path.join(STOCK_TRACKER_HOME, '.stock-tracker', 'logs');
   const notifyScript = path.join(__dirname, 'discord-notify.js');
-  await runCli(`${jobName}:notify`, [logFile], notifyScript);
+
+  // Find the most recent large_cap scan log
+  const lcLogs = require('node:fs').readdirSync(logsDir)
+    .filter((f: string) => f.startsWith('scan_') && !f.startsWith('scan_tech_') && f.endsWith('.json'))
+    .sort((a: string, b: string) => b.localeCompare(a));
+
+  if (lcLogs.length > 0) {
+    const lcLogFile = path.join(logsDir, lcLogs[0]);
+    await runCli('notify-lc', [lcLogFile], notifyScript);
+  }
+
+  // Find the most recent tech scan log
+  const techLogs = require('node:fs').readdirSync(logsDir)
+    .filter((f: string) => f.startsWith('scan_tech_') && f.endsWith('.json'))
+    .sort((a: string, b: string) => b.localeCompare(a));
+
+  if (techLogs.length > 0) {
+    const techLogFile = path.join(logsDir, techLogs[0]);
+    await runCli('notify-tech', [techLogFile], notifyScript);
+  }
 }
 
 async function weeklyTuneLargeCap(): Promise<void> {
@@ -301,6 +322,17 @@ cron.schedule('0 14 * * 1-5', () => {
   })();
 }, ET);
 
+// Discord notification with charts — 3 min after scan to avoid memory pressure from Puppeteer
+cron.schedule('3 14 * * 1-5', () => {
+  (async () => {
+    try {
+      await discordNotify();
+    } catch (err) {
+      console.error('[worker] discordNotify error:', err instanceof Error ? err.message : err);
+    }
+  })();
+}, ET);
+
 // Monday market-open scan at 6:30 AM PT
 cron.schedule('30 6 * * 1', () => {
   (async () => {
@@ -313,6 +345,17 @@ cron.schedule('30 6 * * 1', () => {
       await dailyScanTech();
     } catch (err) {
       console.error('[worker] mondayScanTech error:', err instanceof Error ? err.message : err);
+    }
+  })();
+}, ET);
+
+// Monday notification with charts — 3 min after Monday scan
+cron.schedule('33 6 * * 1', () => {
+  (async () => {
+    try {
+      await discordNotify();
+    } catch (err) {
+      console.error('[worker] mondayDiscordNotify error:', err instanceof Error ? err.message : err);
     }
   })();
 }, ET);
