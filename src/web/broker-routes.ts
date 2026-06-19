@@ -381,7 +381,6 @@ function successPage(accountType: string): string {
     <div class="icon">✅</div>
     <h1>Webull ${escapeHtml(accountType)} Account Connected</h1>
     <p>Your broker connection is active. You can close this window and return to Discord.</p>
-    <p>Use <strong>/get_positions</strong> or <strong>/get_account</strong> to confirm everything is working.</p>
   </div>
 </body>
 </html>`;

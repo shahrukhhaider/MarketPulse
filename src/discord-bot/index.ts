@@ -6,6 +6,7 @@ import { Client, GatewayIntentBits, Events, REST, Routes } from 'discord.js';
 import { handleMessage } from './handler.js';
 import { handleTradeInteraction, buildTradeCommands } from './trade-commands.js';
 import { buildConnectCommand, handleConnectInteraction } from './connect-command.js';
+import { buildTradeWebullCommand, handleTradeWebullInteraction } from './trade-webull-command.js';
 import { getDb } from '../db/database.js';
 
 /**
@@ -60,6 +61,7 @@ export async function initDiscordBot(): Promise<void> {
       const commands = [
         ...buildTradeCommands().map((c) => c.toJSON()),
         buildConnectCommand().toJSON(),
+        buildTradeWebullCommand().toJSON(),
       ];
       await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
       console.log(`[discord-bot] Registered ${commands.length} slash commands`);
@@ -79,6 +81,22 @@ export async function initDiscordBot(): Promise<void> {
       } catch (err) {
         console.error('[discord-bot] Connect command error:', err);
         const content = 'Something went wrong generating your connection link.';
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp({ content, ephemeral: true }).catch(() => {});
+        } else {
+          await interaction.reply({ content, ephemeral: true }).catch(() => {});
+        }
+      }
+      return;
+    }
+
+    // Route /trade-webull command (must be before the generic trade-* check)
+    if (interaction.commandName === 'trade-webull') {
+      try {
+        await handleTradeWebullInteraction(interaction);
+      } catch (err) {
+        console.error('[discord-bot] Trade-webull command error:', err);
+        const content = 'Something went wrong processing your trade command.';
         if (interaction.replied || interaction.deferred) {
           await interaction.followUp({ content, ephemeral: true }).catch(() => {});
         } else {
