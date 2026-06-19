@@ -380,10 +380,8 @@ export class WebullAdapter implements BrokerAdapter {
       queryParams[key] = value;
     });
 
-    // If user has a 2FA access token, include it as a header
-    if (options.accessToken) {
-      queryParams['access_token'] = options.accessToken;
-    }
+    // If user has a 2FA access token, it's sent as the x-access-token header only
+    // It should NOT be included in query params or signature computation
 
     // Sign the request using HMAC-SHA1
     const signedHeaders = signRequest({
@@ -396,9 +394,10 @@ export class WebullAdapter implements BrokerAdapter {
       host,
     });
 
-    // Build final headers: signed headers + Accept + access token
+    // Build final headers: signed headers + Accept + app-secret + access token
     const headers: Record<string, string> = {
       ...signedHeaders,
+      'x-app-secret': options.appSecret,
       Accept: 'application/json',
     };
     if (options.accessToken) {
