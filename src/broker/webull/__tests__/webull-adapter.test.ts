@@ -39,7 +39,7 @@ describe('WebullAdapter', () => {
       const tokens = makeCredentials();
       const mockResponse = {
         order_id: 'ord-789',
-        client_order_id: 'abc123',
+        client_combo_order_id: 'combo-123',
       };
 
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
@@ -60,7 +60,8 @@ describe('WebullAdapter', () => {
         expect(result.data.orderId).toBe('ord-789');
         expect(result.data.status).toBe('pending');
         expect(result.data.filledPrice).toBeNull();
-        expect(result.data.metadata).toEqual({ clientOrderId: 'abc123' });
+        expect(result.data.metadata).toHaveProperty('clientComboOrderId');
+        expect(result.data.metadata).toHaveProperty('masterClientId');
       }
     });
 
@@ -91,8 +92,8 @@ describe('WebullAdapter', () => {
       expect(headers['x-signature-nonce']).toBeDefined();
       expect(headers['x-timestamp']).toBeDefined();
       expect(headers['x-version']).toBe('v2');
-      // 2FA access token should be passed as query param
-      expect(String(url)).toContain('access_token=my-2fa-token');
+      // 2FA access token should be passed as header
+      expect(headers['x-access-token']).toBe('my-2fa-token');
     });
 
     it('should handle rate limiting (429) as retryable', async () => {
@@ -151,8 +152,8 @@ describe('WebullAdapter', () => {
     it('should return mapped positions with unrealizedPnl for long', async () => {
       const tokens = makeCredentials();
       const mockResponse = [
-        { ticker: 'AAPL', quantity: 10, average_cost: 150.0, current_price: 160.0, side: 'long' },
-        { ticker: 'MSFT', quantity: 5, average_cost: 400.0, current_price: 380.0, side: 'long' },
+        { symbol: 'AAPL', quantity: '10', cost_price: '150.0', last_price: '160.0', unrealized_profit_loss: '100.0' },
+        { symbol: 'MSFT', quantity: '5', cost_price: '400.0', last_price: '380.0', unrealized_profit_loss: '-100.0' },
       ];
 
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
@@ -164,16 +165,15 @@ describe('WebullAdapter', () => {
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.data).toHaveLength(2);
-        // Long: (currentPrice - averageCost) * quantity
-        expect(result.data[0].unrealizedPnl).toBe(100.0); // (160-150)*10
-        expect(result.data[1].unrealizedPnl).toBe(-100.0); // (380-400)*5
+        expect(result.data[0].unrealizedPnl).toBe(100.0);
+        expect(result.data[1].unrealizedPnl).toBe(-100.0);
       }
     });
 
     it('should compute unrealizedPnl for short positions', async () => {
       const tokens = makeCredentials();
       const mockResponse = [
-        { ticker: 'TSLA', quantity: 3, average_cost: 250.0, current_price: 230.0, side: 'short' },
+        { symbol: 'TSLA', quantity: '-3', cost_price: '250.0', last_price: '230.0', unrealized_profit_loss: '60.0' },
       ];
 
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
@@ -184,9 +184,9 @@ describe('WebullAdapter', () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        // Short: (averageCost - currentPrice) * quantity
-        expect(result.data[0].unrealizedPnl).toBe(60.0); // (250-230)*3
+        expect(result.data[0].unrealizedPnl).toBe(60.0);
         expect(result.data[0].side).toBe('short');
+        expect(result.data[0].quantity).toBe(3);
       }
     });
   });
@@ -195,11 +195,12 @@ describe('WebullAdapter', () => {
     it('should return account summary', async () => {
       const tokens = makeCredentials();
       const mockResponse = {
-        account_id: 'acc-123',
-        account_type: 'paper',
-        total_value: 25000.0,
-        buying_power: 12000.0,
-        total_unrealized_pnl: 350.0,
+        total_net_liquidation_value: '25000.0',
+        total_market_value: '25000.0',
+        total_unrealized_profit_loss: '350.0',
+        account_currency_assets: [
+          { currency: 'USD', buying_power: '12000.0', cash_balance: '13000.0' },
+        ],
       };
 
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
@@ -223,7 +224,7 @@ describe('WebullAdapter', () => {
     it('should cancel an order and return result', async () => {
       const tokens = makeCredentials();
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-        new Response(JSON.stringify({ cancelled: true }), { status: 200 }),
+        new Response(JSON.stringify({ client_order_id: 'ord-789' }), { status: 200 }),
       );
 
       const result = await adapter.cancelOrder(tokens, 'ord-789');
@@ -237,14 +238,14 @@ describe('WebullAdapter', () => {
     it('should use POST method for cancel', async () => {
       const tokens = makeCredentials();
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-        new Response(JSON.stringify({ cancelled: true }), { status: 200 }),
+        new Response(JSON.stringify({ client_order_id: 'ord-456' }), { status: 200 }),
       );
 
       await adapter.cancelOrder(tokens, 'ord-456');
 
       const [url, options] = fetchSpy.mock.calls[0];
       expect(options?.method).toBe('POST');
-      expect(url).toContain('/openapi/account/orders/cancel');
+      expect(url).toContain('/openapi/trade/order/cancel');
     });
   });
 

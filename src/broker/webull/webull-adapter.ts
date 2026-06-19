@@ -130,27 +130,38 @@ export class WebullAdapter implements BrokerAdapter {
    * Place a bracket order (entry + stop-loss + take-profit) via Webull OpenAPI v2.
    *
    * Uses the v2 order placement endpoint:
-   *   POST /openapi/account/orders/place?account_id={account_id}
+   *   POST /openapi/trade/order/place
    *
-   * For bracket-style orders, we place a LIMIT entry order with OTO (one-triggers-other)
-   * combo containing the stop-loss and take-profit legs.
+   * For bracket-style orders, we place a LIMIT entry order as a MASTER with
+   * STOP_LOSS and STOP_PROFIT combo legs (OTO pattern).
    */
   async placeBracketOrder(
     credentials: BrokerCredentials,
     order: OrderRequest,
   ): Promise<BrokerResult<OrderResponse>> {
     const baseUrl = this.getBaseUrl(credentials.accountType);
-    const url = `${baseUrl}/openapi/account/orders/place?account_id=${credentials.accountId}`;
+    const url = `${baseUrl}/openapi/trade/order/place`;
 
     // Map internal action to Webull side
     const side = order.action === 'buy' ? 'BUY' : 'SELL';
+    // The closing side for stop/target legs
+    const closeSide = order.action === 'buy' ? 'SELL' : 'BUY';
 
-    // Build the order body per Webull OpenAPI v2 spec
-    const clientOrderId = crypto.randomUUID().replace(/-/g, '');
+    // Build unique client order IDs for each leg
+    const masterClientId = crypto.randomUUID().replace(/-/g, '').slice(0, 32);
+    const stopClientId = crypto.randomUUID().replace(/-/g, '').slice(0, 32);
+    const targetClientId = crypto.randomUUID().replace(/-/g, '').slice(0, 32);
+    const comboId = crypto.randomUUID().replace(/-/g, '').slice(0, 32);
+
+    // Build the bracket order body per Webull OpenAPI v2 spec
+    // MASTER entry order + STOP_LOSS + STOP_PROFIT legs
     const body = {
+      account_id: credentials.accountId,
+      client_combo_order_id: comboId,
       new_orders: [
         {
-          client_order_id: clientOrderId,
+          client_order_id: masterClientId,
+          combo_type: 'MASTER',
           symbol: order.ticker,
           instrument_type: 'EQUITY',
           market: 'US',
@@ -160,16 +171,44 @@ export class WebullAdapter implements BrokerAdapter {
           quantity: String(order.quantity),
           time_in_force: 'DAY',
           entrust_type: 'QTY',
-          support_trading_session: 'N',
-          account_tax_type: 'GENERAL',
+          support_trading_session: 'CORE',
+        },
+        {
+          client_order_id: stopClientId,
+          combo_type: 'STOP_LOSS',
+          symbol: order.ticker,
+          instrument_type: 'EQUITY',
+          market: 'US',
+          side: closeSide,
+          order_type: 'STOP_LOSS',
           stop_price: String(order.stopPrice),
+          quantity: String(order.quantity),
+          time_in_force: 'GTC',
+          entrust_type: 'QTY',
+          support_trading_session: 'CORE',
+        },
+        {
+          client_order_id: targetClientId,
+          combo_type: 'STOP_PROFIT',
+          symbol: order.ticker,
+          instrument_type: 'EQUITY',
+          market: 'US',
+          side: closeSide,
+          order_type: 'LIMIT',
+          limit_price: String(order.targetPrice),
+          quantity: String(order.quantity),
+          time_in_force: 'GTC',
+          entrust_type: 'QTY',
+          support_trading_session: 'CORE',
         },
       ],
     };
 
     const result = await this.request<{
-      client_order_id: string;
-      order_id: string;
+      client_order_id?: string;
+      client_combo_order_id?: string;
+      combo_order_id?: string;
+      order_id?: string;
     }>('POST', url, {
       body,
       appKey: credentials.appKey,
@@ -183,28 +222,35 @@ export class WebullAdapter implements BrokerAdapter {
     return {
       ok: true,
       data: {
-        orderId: data.order_id ?? data.client_order_id ?? clientOrderId,
+        orderId: data.order_id ?? data.combo_order_id ?? data.client_combo_order_id ?? comboId,
         status: 'pending',
         filledPrice: null,
         filledAt: null,
-        metadata: { clientOrderId: data.client_order_id },
+        metadata: {
+          clientComboOrderId: data.client_combo_order_id ?? comboId,
+          masterClientId,
+          stopClientId,
+          targetClientId,
+        },
       },
     };
   }
 
   /**
    * Get open positions for the authenticated account.
+   * Endpoint: GET /openapi/assets/positions?account_id={account_id}
    */
   async getPositions(credentials: BrokerCredentials): Promise<BrokerResult<Position[]>> {
-    const url = `${this.getBaseUrl(credentials.accountType)}/openapi/account/positions?account_id=${credentials.accountId}`;
+    const url = `${this.getBaseUrl(credentials.accountType)}/openapi/assets/positions?account_id=${credentials.accountId}`;
 
     const result = await this.request<
       Array<{
-        ticker: string;
-        quantity: number;
-        average_cost: number;
-        current_price: number;
-        side: string;
+        symbol: string;
+        quantity: string;
+        cost_price: string;
+        last_price: string;
+        unrealized_profit_loss: string;
+        instrument_type?: string;
       }>
     >('GET', url, {
       appKey: credentials.appKey,
@@ -214,18 +260,21 @@ export class WebullAdapter implements BrokerAdapter {
 
     if (!result.ok) return result;
 
-    const positions: Position[] = result.data.map((p) => {
-      const side: 'long' | 'short' = p.side === 'short' ? 'short' : 'long';
-      const unrealizedPnl =
-        side === 'long'
-          ? (p.current_price - p.average_cost) * p.quantity
-          : (p.average_cost - p.current_price) * p.quantity;
+    const rawPositions = Array.isArray(result.data) ? result.data : [];
+
+    const positions: Position[] = rawPositions.map((p) => {
+      const quantity = Number(p.quantity) || 0;
+      const averageCost = Number(p.cost_price) || 0;
+      const currentPrice = Number(p.last_price) || 0;
+      const unrealizedPnl = Number(p.unrealized_profit_loss) || 0;
+      // Webull doesn't explicitly return side — infer from quantity sign
+      const side: 'long' | 'short' = quantity < 0 ? 'short' : 'long';
 
       return {
-        ticker: p.ticker,
-        quantity: p.quantity,
-        averageCost: p.average_cost,
-        currentPrice: p.current_price,
+        ticker: p.symbol,
+        quantity: Math.abs(quantity),
+        averageCost,
+        currentPrice,
         unrealizedPnl,
         side,
       };
@@ -236,16 +285,19 @@ export class WebullAdapter implements BrokerAdapter {
 
   /**
    * Get account summary (value, buying power, P&L).
+   * Endpoint: GET /openapi/assets/balance?account_id={account_id}
    */
   async getAccount(credentials: BrokerCredentials): Promise<BrokerResult<AccountSummary>> {
-    const url = `${this.getBaseUrl(credentials.accountType)}/openapi/account/profile?account_id=${credentials.accountId}`;
+    const url = `${this.getBaseUrl(credentials.accountType)}/openapi/assets/balance?account_id=${credentials.accountId}`;
 
     const result = await this.request<{
-      account_id: string;
-      account_type: string;
-      total_value: number;
-      buying_power: number;
-      total_unrealized_pnl: number;
+      total_net_liquidation_value?: string;
+      total_market_value?: string;
+      total_unrealized_profit_loss?: string;
+      account_currency_assets?: Array<{
+        buying_power?: string;
+        cash_balance?: string;
+      }>;
     }>('GET', url, {
       appKey: credentials.appKey,
       appSecret: credentials.appSecret,
@@ -255,32 +307,44 @@ export class WebullAdapter implements BrokerAdapter {
     if (!result.ok) return result;
 
     const { data } = result;
+    const totalValue = Number(data.total_net_liquidation_value ?? data.total_market_value ?? '0');
+    const totalUnrealizedPnl = Number(data.total_unrealized_profit_loss ?? '0');
+    const buyingPower = Number(data.account_currency_assets?.[0]?.buying_power ?? '0');
+
     return {
       ok: true,
       data: {
-        accountId: data.account_id,
-        accountType: (data.account_type === 'paper' ? 'paper' : 'live') as AccountType,
-        totalValue: data.total_value,
-        buyingPower: data.buying_power,
-        totalUnrealizedPnl: data.total_unrealized_pnl,
+        accountId: credentials.accountId,
+        accountType: credentials.accountType,
+        totalValue,
+        buyingPower,
+        totalUnrealizedPnl,
       },
     };
   }
 
   /**
    * Cancel an open order by ID.
+   * Endpoint: POST /openapi/trade/order/cancel
+   * Body: { account_id, client_order_id }
    */
   async cancelOrder(
     credentials: BrokerCredentials,
     orderId: string,
   ): Promise<BrokerResult<{ cancelled: boolean }>> {
-    const url = `${this.getBaseUrl(credentials.accountType)}/openapi/account/orders/cancel?account_id=${credentials.accountId}`;
+    const url = `${this.getBaseUrl(credentials.accountType)}/openapi/trade/order/cancel`;
 
-    const result = await this.request<{ cancelled: boolean }>(
+    const result = await this.request<{
+      client_order_id?: string;
+      order_id?: string;
+    }>(
       'POST',
       url,
       {
-        body: { client_order_id: orderId },
+        body: {
+          account_id: credentials.accountId,
+          client_order_id: orderId,
+        },
         appKey: credentials.appKey,
         appSecret: credentials.appSecret,
         accessToken: credentials.accessToken,
@@ -289,7 +353,7 @@ export class WebullAdapter implements BrokerAdapter {
 
     if (!result.ok) return result;
 
-    return { ok: true, data: { cancelled: result.data.cancelled } };
+    return { ok: true, data: { cancelled: true } };
   }
 
   /**
@@ -316,7 +380,7 @@ export class WebullAdapter implements BrokerAdapter {
       queryParams[key] = value;
     });
 
-    // If user has a 2FA access token, include it as a query param
+    // If user has a 2FA access token, include it as a header
     if (options.accessToken) {
       queryParams['access_token'] = options.accessToken;
     }
@@ -332,11 +396,14 @@ export class WebullAdapter implements BrokerAdapter {
       host,
     });
 
-    // Build final headers: signed headers + Accept
+    // Build final headers: signed headers + Accept + access token
     const headers: Record<string, string> = {
       ...signedHeaders,
       Accept: 'application/json',
     };
+    if (options.accessToken) {
+      headers['x-access-token'] = options.accessToken;
+    }
 
     // Build the final URL with query params (including access_token if present)
     const finalUrl = Object.keys(queryParams).length > 0

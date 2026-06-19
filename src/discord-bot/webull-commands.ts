@@ -3,7 +3,7 @@
 // Ephemeral replies only visible to the requesting user.
 // ---------------------------------------------------------------------------
 
-import { ChatInputCommandInteraction, EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { ChatInputCommandInteraction, EmbedBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { TokenStore, StoredCredentials } from '../db/token-store.js';
 import { brokerRegistry } from '../broker/registry.js';
 import type { BrokerCredentials, OrderRequest, Position } from '../broker/types.js';
@@ -174,7 +174,7 @@ export async function withConnectionGuard(
     if (!stored) {
       await interaction.reply({
         content: '❌ No Webull account connected. Use `/connect` to link your broker.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return null;
     }
@@ -182,7 +182,7 @@ export async function withConnectionGuard(
   } catch (_err: unknown) {
     await interaction.reply({
       content: '❌ Could not verify your connection. Please try again later.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return null;
   }
@@ -204,7 +204,7 @@ export async function handleWebullCloseInteraction(
 
   const validationError = validateOrderId(orderId);
   if (validationError) {
-    await interaction.reply({ content: validationError, ephemeral: true });
+    await interaction.reply({ content: validationError, flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -214,7 +214,7 @@ export async function handleWebullCloseInteraction(
   if (!adapter) {
     await interaction.reply({
       content: '❌ Broker integration is not available right now.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -224,14 +224,14 @@ export async function handleWebullCloseInteraction(
   if (!result.ok) {
     await interaction.reply({
       content: `❌ Webull error: ${result.error.message}`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
   await interaction.reply({
     content: `✅ Order \`${orderId}\` cancelled.`,
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }
 
@@ -256,7 +256,7 @@ export async function handleWebullAddInteraction(
   // Validate parameters
   const validationError = validateTradeParams(ticker, entry, stop, target);
   if (validationError) {
-    await interaction.reply({ content: validationError, ephemeral: true });
+    await interaction.reply({ content: validationError, flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -266,7 +266,7 @@ export async function handleWebullAddInteraction(
     direction = inferDirection(entry, stop);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : '❌ Entry and stop cannot be the same price.';
-    await interaction.reply({ content: message, ephemeral: true });
+    await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -275,7 +275,7 @@ export async function handleWebullAddInteraction(
   if (!adapter) {
     await interaction.reply({
       content: '❌ Broker integration is not available right now.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -297,7 +297,7 @@ export async function handleWebullAddInteraction(
   if (!result.ok) {
     await interaction.reply({
       content: `❌ Webull error: ${result.error.message}`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -320,7 +320,7 @@ export async function handleWebullAddInteraction(
     .setColor(direction === 'buy' ? 0x00cc66 : 0xff4444)
     .setTimestamp();
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 // ---------------------------------------------------------------------------
@@ -336,7 +336,7 @@ export async function handleWebullPositionsInteraction(
   interaction: ChatInputCommandInteraction,
   stored: StoredCredentials,
 ): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const credentials = toBrokerCredentials(stored);
 
@@ -395,7 +395,7 @@ export async function handleWebullInteraction(
 
     const validationError = validateTradeParams(ticker, entry, stop, target);
     if (validationError) {
-      await interaction.reply({ content: validationError, ephemeral: true });
+      await interaction.reply({ content: validationError, flags: MessageFlags.Ephemeral });
       return;
     }
   }
