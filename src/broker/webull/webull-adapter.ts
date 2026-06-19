@@ -91,9 +91,9 @@ export class WebullAdapter implements BrokerAdapter {
     // Config is kept for future use but endpoint is now per-user via accountType
   }
 
-  /** Resolve API base URL from account type. Paper uses UAT, live uses production. */
-  private getBaseUrl(accountType?: string): string {
-    return accountType === 'paper' ? WEBULL_URLS.uat.api : WEBULL_URLS.production.api;
+  /** Resolve API base URL. Always uses production — paper vs live is an account type, not an environment. */
+  private getBaseUrl(_accountType?: string): string {
+    return WEBULL_URLS.production.api;
   }
 
   /**
@@ -394,10 +394,9 @@ export class WebullAdapter implements BrokerAdapter {
       host,
     });
 
-    // Build final headers: signed headers + Accept + app-secret + access token
+    // Build final headers: signed headers + Accept + access token
     const headers: Record<string, string> = {
       ...signedHeaders,
-      'x-app-secret': options.appSecret,
       Accept: 'application/json',
     };
     if (options.accessToken) {
