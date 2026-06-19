@@ -39,10 +39,7 @@ describe('WebullAdapter', () => {
       const tokens = makeCredentials();
       const mockResponse = {
         order_id: 'ord-789',
-        status: 'pending',
-        filled_price: null,
-        filled_at: null,
-        metadata: { bracket_id: 'brk-001' },
+        client_order_id: 'abc123',
       };
 
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
@@ -63,7 +60,7 @@ describe('WebullAdapter', () => {
         expect(result.data.orderId).toBe('ord-789');
         expect(result.data.status).toBe('pending');
         expect(result.data.filledPrice).toBeNull();
-        expect(result.data.metadata).toEqual({ bracket_id: 'brk-001' });
+        expect(result.data.metadata).toEqual({ clientOrderId: 'abc123' });
       }
     });
 
@@ -237,7 +234,7 @@ describe('WebullAdapter', () => {
       }
     });
 
-    it('should use DELETE method for cancel', async () => {
+    it('should use POST method for cancel', async () => {
       const tokens = makeCredentials();
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(JSON.stringify({ cancelled: true }), { status: 200 }),
@@ -246,8 +243,8 @@ describe('WebullAdapter', () => {
       await adapter.cancelOrder(tokens, 'ord-456');
 
       const [url, options] = fetchSpy.mock.calls[0];
-      expect(options?.method).toBe('DELETE');
-      expect(url).toContain('/orders/ord-456');
+      expect(options?.method).toBe('POST');
+      expect(url).toContain('/openapi/account/orders/cancel');
     });
   });
 

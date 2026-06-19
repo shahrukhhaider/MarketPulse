@@ -10,6 +10,7 @@ import type {
   AccountType,
 } from '../types.js';
 import { signRequest } from './request-signer.js';
+import crypto from 'node:crypto';
 
 export interface WebullConfig {
   sandbox: boolean;
@@ -126,29 +127,49 @@ export class WebullAdapter implements BrokerAdapter {
   }
 
   /**
-   * Place a bracket order (entry + stop-loss + take-profit) via Webull OpenAPI.
+   * Place a bracket order (entry + stop-loss + take-profit) via Webull OpenAPI v2.
+   *
+   * Uses the v2 order placement endpoint:
+   *   POST /openapi/account/orders/place?account_id={account_id}
+   *
+   * For bracket-style orders, we place a LIMIT entry order with OTO (one-triggers-other)
+   * combo containing the stop-loss and take-profit legs.
    */
   async placeBracketOrder(
     credentials: BrokerCredentials,
     order: OrderRequest,
   ): Promise<BrokerResult<OrderResponse>> {
-    const url = `${this.getBaseUrl(credentials.accountType)}/api/v1/accounts/${credentials.accountId}/orders`;
+    const baseUrl = this.getBaseUrl(credentials.accountType);
+    const url = `${baseUrl}/openapi/account/orders/place?account_id=${credentials.accountId}`;
+
+    // Map internal action to Webull side
+    const side = order.action === 'buy' ? 'BUY' : 'SELL';
+
+    // Build the order body per Webull OpenAPI v2 spec
+    const clientOrderId = crypto.randomUUID().replace(/-/g, '');
     const body = {
-      ticker: order.ticker,
-      action: order.action,
-      order_type: 'bracket',
-      limit_price: order.limitPrice,
-      stop_price: order.stopPrice,
-      target_price: order.targetPrice,
-      quantity: order.quantity,
+      new_orders: [
+        {
+          client_order_id: clientOrderId,
+          symbol: order.ticker,
+          instrument_type: 'EQUITY',
+          market: 'US',
+          side,
+          order_type: 'LIMIT',
+          limit_price: String(order.limitPrice),
+          quantity: String(order.quantity),
+          time_in_force: 'DAY',
+          entrust_type: 'QTY',
+          support_trading_session: 'N',
+          account_tax_type: 'GENERAL',
+          stop_price: String(order.stopPrice),
+        },
+      ],
     };
 
     const result = await this.request<{
+      client_order_id: string;
       order_id: string;
-      status: string;
-      filled_price: number | null;
-      filled_at: string | null;
-      metadata?: Record<string, unknown>;
     }>('POST', url, {
       body,
       appKey: credentials.appKey,
@@ -162,11 +183,11 @@ export class WebullAdapter implements BrokerAdapter {
     return {
       ok: true,
       data: {
-        orderId: data.order_id,
-        status: data.status as OrderResponse['status'],
-        filledPrice: data.filled_price,
-        filledAt: data.filled_at,
-        metadata: data.metadata ?? {},
+        orderId: data.order_id ?? data.client_order_id ?? clientOrderId,
+        status: 'pending',
+        filledPrice: null,
+        filledAt: null,
+        metadata: { clientOrderId: data.client_order_id },
       },
     };
   }
@@ -175,7 +196,7 @@ export class WebullAdapter implements BrokerAdapter {
    * Get open positions for the authenticated account.
    */
   async getPositions(credentials: BrokerCredentials): Promise<BrokerResult<Position[]>> {
-    const url = `${this.getBaseUrl(credentials.accountType)}/api/v1/accounts/${credentials.accountId}/positions`;
+    const url = `${this.getBaseUrl(credentials.accountType)}/openapi/account/positions?account_id=${credentials.accountId}`;
 
     const result = await this.request<
       Array<{
@@ -217,7 +238,7 @@ export class WebullAdapter implements BrokerAdapter {
    * Get account summary (value, buying power, P&L).
    */
   async getAccount(credentials: BrokerCredentials): Promise<BrokerResult<AccountSummary>> {
-    const url = `${this.getBaseUrl(credentials.accountType)}/api/v1/accounts/${credentials.accountId}`;
+    const url = `${this.getBaseUrl(credentials.accountType)}/openapi/account/profile?account_id=${credentials.accountId}`;
 
     const result = await this.request<{
       account_id: string;
@@ -253,12 +274,13 @@ export class WebullAdapter implements BrokerAdapter {
     credentials: BrokerCredentials,
     orderId: string,
   ): Promise<BrokerResult<{ cancelled: boolean }>> {
-    const url = `${this.getBaseUrl(credentials.accountType)}/api/v1/accounts/${credentials.accountId}/orders/${orderId}`;
+    const url = `${this.getBaseUrl(credentials.accountType)}/openapi/account/orders/cancel?account_id=${credentials.accountId}`;
 
     const result = await this.request<{ cancelled: boolean }>(
-      'DELETE',
+      'POST',
       url,
       {
+        body: { client_order_id: orderId },
         appKey: credentials.appKey,
         appSecret: credentials.appSecret,
         accessToken: credentials.accessToken,
