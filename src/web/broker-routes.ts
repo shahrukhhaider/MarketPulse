@@ -142,6 +142,8 @@ export function createBrokerRouter(
       res.status(200).send(successPage(mode));
     } catch (err) {
       clearTimeout(timeout);
+      // Log the actual error for debugging
+      console.error('[broker-routes] validateCredentials error:', err instanceof Error ? err.stack || err.message : err);
       // Timeout or network error — retryable
       res.status(500).send(retryableErrorPage(
         'Could not reach Webull — this may be a temporary issue. Please try again.',
