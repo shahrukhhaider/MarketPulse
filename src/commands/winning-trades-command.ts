@@ -157,10 +157,13 @@ function validateOutputPath(outputPath: string): { valid: true } | { valid: fals
  * Returns null if neither is found.
  */
 function loadLightweightChartsJs(): string | null {
-  const projectRoot = process.cwd();
+  // Use __dirname to resolve from the compiled JS location — cwd in production
+  // points to the data volume, not the application directory.
+  // Compiled JS is at dist/src/commands/winning-trades-command.js → go up 3 levels.
+  const appRoot = resolve(__dirname, '..', '..', '..');
   const lwcPaths = [
-    resolve(projectRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
-    resolve(projectRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
+    resolve(appRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
+    resolve(appRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
   ];
 
   for (const lwcPath of lwcPaths) {
