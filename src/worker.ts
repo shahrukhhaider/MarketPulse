@@ -314,11 +314,6 @@ cron.schedule('0 14 * * 1-5', () => {
       console.error('[worker] dailyScanTech error:', err instanceof Error ? err.message : err);
     }
     try {
-      await winningTrades();
-    } catch (err) {
-      console.error('[worker] winningTrades error:', err instanceof Error ? err.message : err);
-    }
-    try {
       await updateMemberTradePnL();
     } catch (err) {
       console.warn('[worker] updateMemberTradePnL error:', err);
@@ -370,6 +365,9 @@ cron.schedule('0 11 * * 0', () => { weeklyTuneTech(); }, ET);
 
 // Regenerate backtest manifest after both tunes complete (Sunday 12 PM PT)
 cron.schedule('0 12 * * 0', () => { regenerateBacktestManifest(); }, ET);
+
+// Weekly winning trades showcase (Sunday 1 PM PT — after manifest generation)
+cron.schedule('0 13 * * 0', () => { winningTrades(); }, ET);
 
 // Morning sentiment digest at 6 AM PT on weekdays (before market open)
 cron.schedule('0 6 * * 1-5', () => { morningSentimentDigest(); }, ET);

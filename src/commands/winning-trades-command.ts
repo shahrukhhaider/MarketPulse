@@ -17,7 +17,7 @@ import type { CommandHandler } from '../command-router.js';
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import { parseEntries } from '../signal-history/ndjson.js';
 import type { SignalEntry, ActiveSignal } from '../signal-history/signal-entry.js';
-import { buildPriceMapFromCache } from '../utils/price-map.js';
+import { CacheFileStore } from '../data/cache-file-store.js';
 import { todayPST } from '../utils/date-utils.js';
 import { generateChartImages } from '../chart-image-generator.js';
 import type { SignalInput } from '../chart-types.js';
@@ -35,6 +35,7 @@ export interface WinningTradeResult {
   ticker: string;
   strategy: string;
   entryDate: string;        // YYYY-MM-DD from parent SignalEntry.date
+  exitDate: string;         // YYYY-MM-DD when target was hit
   entryPrice: number;
   stopPrice: number;
   targetPrice: number;
@@ -87,15 +88,44 @@ function isShortSignal(signal: ActiveSignal): boolean {
 }
 
 /**
- * Check win condition based on direction.
- * Long: currentPrice >= target
- * Short: currentPrice <= target
+ * Check if target was ever hit by scanning OHLC bars after the signal date.
+ * Returns { hit: true, hitDate, hitPrice } or { hit: false }.
+ *
+ * Long: target hit when any bar's high >= target
+ * Short: target hit when any bar's low <= target
+ * Also checks if stop was hit FIRST (if stop hit before target → not a winner)
  */
-function checkWinCondition(signal: ActiveSignal, currentPrice: number): boolean {
-  if (isShortSignal(signal)) {
-    return currentPrice <= signal.target;
+function checkTargetHitInBars(
+  cacheDir: string,
+  ticker: string,
+  signalDate: string,
+  target: number,
+  stop: number,
+  isShort: boolean,
+): { hit: true; hitDate: string; hitPrice: number } | { hit: false } {
+  const store = new CacheFileStore(cacheDir);
+  const cacheFile = store.read(ticker);
+  if (!cacheFile) return { hit: false };
+
+  const bars = cacheFile.dataPoints;
+  // Find the first bar after the signal date
+  const startIdx = bars.findIndex(b => b.date > signalDate);
+  if (startIdx < 0) return { hit: false };
+
+  for (let i = startIdx; i < bars.length; i++) {
+    const bar = bars[i];
+    if (isShort) {
+      // Short: stop hit when high >= stop (loss), target hit when low <= target (win)
+      if (bar.high >= stop) return { hit: false }; // stopped out first
+      if (bar.low <= target) return { hit: true, hitDate: bar.date, hitPrice: target };
+    } else {
+      // Long: stop hit when low <= stop (loss), target hit when high >= target (win)
+      if (bar.low <= stop) return { hit: false }; // stopped out first
+      if (bar.high >= target) return { hit: true, hitDate: bar.date, hitPrice: target };
+    }
   }
-  return currentPrice >= signal.target;
+
+  return { hit: false };
 }
 
 /**
@@ -217,14 +247,13 @@ export function createWinningTradesHandler(deps: WinningTradesCommandDeps): Comm
     const allEntries = [...mainEntries, ...techEntries];
 
     // ----------------------------------------------------------
-    // 3. Build price map from history-cache
+    // 3. Set up history-cache access for bar scanning
     // ----------------------------------------------------------
-    // buildPriceMapFromCache expects the parent directory of .stock-tracker
     const homeDir = resolve(dataDir, '..');
-    const priceMap = buildPriceMapFromCache(homeDir);
+    const cacheDir = join(homeDir, '.stock-tracker', 'history-cache');
 
     // ----------------------------------------------------------
-    // 4. Filter for winning trades
+    // 4. Filter for winning trades (scan bars for target hits)
     // ----------------------------------------------------------
     const today = todayPST();
     const winners: WinningTradeResult[] = [];
@@ -239,31 +268,34 @@ export function createWinningTradesHandler(deps: WinningTradesCommandDeps): Comm
       // Process each active signal in this entry
       for (const signal of entry.active) {
         const ticker = signal.ticker.toUpperCase();
-        const currentPrice = priceMap.get(ticker);
+        const isShort = isShortSignal(signal);
 
-        // Skip if no price data available
-        if (currentPrice === undefined) {
-          continue;
-        }
+        // Scan bars from signal date forward to check if target was hit before stop
+        const result = checkTargetHitInBars(
+          cacheDir,
+          ticker,
+          entry.date,
+          signal.target,
+          signal.stop,
+          isShort,
+        );
 
-        // Check win condition
-        if (!checkWinCondition(signal, currentPrice)) {
-          continue;
-        }
+        if (!result.hit) continue;
 
-        // Calculate P&L
-        const pnlPercent = calculatePnl(signal, currentPrice);
+        // Calculate P&L using target price (since we know it was hit)
+        const pnlPercent = calculatePnl(signal, result.hitPrice);
 
         winners.push({
           ticker,
           strategy: signal.strategy,
           entryDate: entry.date,
+          exitDate: result.hitDate,
           entryPrice: signal.entry,
           stopPrice: signal.stop,
           targetPrice: signal.target,
-          currentPrice,
+          currentPrice: result.hitPrice,
           pnlPercent,
-          chartFilename: null, // Will be updated after chart generation
+          chartFilename: null,
         });
       }
     }
@@ -285,6 +317,9 @@ export function createWinningTradesHandler(deps: WinningTradesCommandDeps): Comm
     // ----------------------------------------------------------
     const sortedTrades = Array.from(deduped.values()).sort((a, b) => b.pnlPercent - a.pnlPercent);
 
+    // Limit to top 20 trades to avoid excessive chart generation
+    const topTrades = sortedTrades.slice(0, 20);
+
     // ----------------------------------------------------------
     // 7. Compute output directory (date-based, Pacific time)
     // ----------------------------------------------------------
@@ -300,13 +335,13 @@ export function createWinningTradesHandler(deps: WinningTradesCommandDeps): Comm
     // ----------------------------------------------------------
     let chartsGenerated = 0;
 
-    if (sortedTrades.length > 0) {
+    if (topTrades.length > 0) {
       // Load lightweight-charts JS
       const lightweightChartsJs = loadLightweightChartsJs();
 
       if (lightweightChartsJs) {
         // Build SignalInput[] from winning trades
-        const signalInputs: SignalInput[] = sortedTrades.map((trade) => ({
+        const signalInputs: SignalInput[] = topTrades.map((trade) => ({
           ticker: trade.ticker,
           strategy: trade.strategy,
           entry: trade.entryPrice,
@@ -322,21 +357,21 @@ export function createWinningTradesHandler(deps: WinningTradesCommandDeps): Comm
         });
 
         // Write successful PNGs and update trade results
-        for (let i = 0; i < sortedTrades.length; i++) {
+        for (let i = 0; i < topTrades.length; i++) {
           const chartResult = chartResults[i];
           if (chartResult && chartResult.success) {
-            const filename = `${sortedTrades[i].strategy}_${sortedTrades[i].ticker}_${sortedTrades[i].entryDate}.png`;
+            const filename = `${topTrades[i].strategy}_${topTrades[i].ticker}_${topTrades[i].entryDate}.png`;
             const pngPath = join(outputDir, filename);
             writeFileSync(pngPath, chartResult.pngBuffer);
-            sortedTrades[i].chartFilename = filename;
+            topTrades[i].chartFilename = filename;
             chartsGenerated++;
           } else {
             // Chart generation failed — log reason and leave chartFilename as null
             const reason = chartResult && !chartResult.success ? chartResult.reason : 'Unknown error';
             process.stderr.write(
-              `[winning-trades] Chart failed for ${sortedTrades[i].ticker}/${sortedTrades[i].strategy}: ${reason}\n`
+              `[winning-trades] Chart failed for ${topTrades[i].ticker}/${topTrades[i].strategy}: ${reason}\n`
             );
-            sortedTrades[i].chartFilename = null;
+            topTrades[i].chartFilename = null;
           }
         }
       } else {
@@ -352,7 +387,7 @@ export function createWinningTradesHandler(deps: WinningTradesCommandDeps): Comm
     const manifest: WinningTradesManifest = {
       date: today,
       generatedAt: new Date().toISOString(),
-      trades: sortedTrades,
+      trades: topTrades,
     };
 
     try {
@@ -373,15 +408,15 @@ export function createWinningTradesHandler(deps: WinningTradesCommandDeps): Comm
     // 10. Print summary to stdout
     // ----------------------------------------------------------
     process.stdout.write(
-      `[winning-trades] ${sortedTrades.length} winning trade(s) found, ${chartsGenerated} chart(s) generated → ${outputDir}\n`
+      `[winning-trades] ${topTrades.length} winning trade(s) found, ${chartsGenerated} chart(s) generated → ${outputDir}\n`
     );
 
     // ----------------------------------------------------------
     // 11. Return success result
     // ----------------------------------------------------------
     return successResult('winning-trades', {
-      trades: sortedTrades,
-      count: sortedTrades.length,
+      trades: topTrades,
+      count: topTrades.length,
       chartsGenerated,
       minAge,
       scanDate: today,
