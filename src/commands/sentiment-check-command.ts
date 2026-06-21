@@ -149,9 +149,15 @@ export function createSentimentCheckHandler(deps: { dataDir: string }): CommandH
     }
 
     // ---- Step 7: Format embeds (header + ticker embeds sorted alphabetically) ----
-    const headerEmbed = formatHeaderEmbed(now, resolved.length);
+    // Filter out tickers with "unknown" sentiment (no data available)
+    const tickersWithData = resolved.filter(({ ticker }) => {
+      const sentiment = sentimentMap.get(ticker);
+      return sentiment && sentiment.band !== 'unknown';
+    });
 
-    const tickerEmbeds: DiscordEmbed[] = resolved.map(({ ticker, strategy }) => {
+    const headerEmbed = formatHeaderEmbed(now, tickersWithData.length);
+
+    const tickerEmbeds: DiscordEmbed[] = tickersWithData.map(({ ticker, strategy }) => {
       const embedData: TickerEmbedData = {
         ticker,
         strategy,
