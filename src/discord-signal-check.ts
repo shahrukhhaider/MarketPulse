@@ -493,23 +493,44 @@ export async function main(): Promise<void> {
     }
   }
 
-  // Step 5: Determine scan date for footer
+  // Step 5: Skip posting if no quotes are available (e.g. market holiday)
+  const resolvedPrices = [...priceMap.values()].filter((v) => v !== null).length;
+  if (resolvedPrices === 0) {
+    process.stderr.write(
+      `[discord-signal-check] No price data available for any ticker — skipping post\n`,
+    );
+    process.exit(0);
+  }
+
+  // Filter out signals with no quote — only post signals that have price data
+  const signalsWithQuotes = selected.combined.filter(
+    (s) => priceMap.get(s.ticker) !== null,
+  );
+
+  if (signalsWithQuotes.length === 0) {
+    process.stderr.write(
+      `[discord-signal-check] All signals have no quote data — skipping post\n`,
+    );
+    process.exit(0);
+  }
+
+  // Step 6: Determine scan date for footer
   const scanDate =
-    selected.combined.length > 0
-      ? selected.combined[0].date
+    signalsWithQuotes.length > 0
+      ? signalsWithQuotes[0].date
       : todayPST();
 
-  // Step 6: Build payload (Req 5.1–5.7)
-  const payload = buildSignalCheckPayload(selected.combined, priceMap, scanDate);
+  // Step 7: Build payload (Req 5.1–5.7)
+  const payload = buildSignalCheckPayload(signalsWithQuotes, priceMap, scanDate);
 
-  // Step 7: Read webhook URL — prefer env var, fall back to file. Exit 0 if missing.
+  // Step 8: Read webhook URL — prefer env var, fall back to file. Exit 0 if missing.
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL?.trim() || readDiscordWebhookUrl(basePath);
   if (!webhookUrl) {
     process.stderr.write('[discord-signal-check] No webhook URL found — skipping\n');
     process.exit(0);
   }
 
-  // Step 8: Post to Discord — exit 1 on failure (Req 6.7)
+  // Step 9: Post to Discord — exit 1 on failure (Req 6.7)
   try {
     const sent = await postToDiscord(webhookUrl, payload);
     if (!sent) {
