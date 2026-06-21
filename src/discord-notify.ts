@@ -718,10 +718,13 @@ async function main(): Promise<void> {
 
     if (topSignals.length > 0) {
       // Load lightweight-charts JS
-      const projectRoot = process.cwd();
+      // Use __dirname to find node_modules relative to the compiled JS location,
+      // since cwd in production points to the data volume, not the app directory.
+      // Compiled JS is at dist/src/discord-notify.js → go up 2 levels to reach project root.
+      const appRoot = resolve(__dirname, '..', '..');
       const lwcPaths = [
-        resolve(projectRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
-        resolve(projectRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
+        resolve(appRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.production.js'),
+        resolve(appRoot, 'node_modules', 'lightweight-charts', 'dist', 'lightweight-charts.standalone.development.js'),
       ];
       let lightweightChartsJs: string | null = null;
       for (const lwcPath of lwcPaths) {
@@ -819,8 +822,12 @@ async function main(): Promise<void> {
   payloads.push(...buildActiveSignalsPayloads(data));
   const nearPayload = buildNearSignalsPayload(data);
   if (nearPayload) payloads.push(nearPayload);
-  const posPayload = buildOpenPositionsPayload(data);
-  if (posPayload) payloads.push(posPayload);
+  // Open positions come from a single shared journal — only post in the
+  // large_cap channel to avoid duplicates with stale/divergent snapshots.
+  if (!isTechScan) {
+    const posPayload = buildOpenPositionsPayload(data);
+    if (posPayload) payloads.push(posPayload);
+  }
 
   // 8. Post sequentially with 1000ms delay between each (or print in dry-run)
   if (dryRun) {

@@ -695,22 +695,26 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       }
 
       // Auto-journal qualifying signals (after all confidence adjustments)
+      // Only auto-journal for non-tech universes — tech channel is signals-only
       const parallelJournalPath = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
-      const parallelExposureTier = regimeResult ? toExposureTier(regimeResult.market.market_regime) : undefined;
-      const parallelAutoJournalResult = autoJournal(fundamentalAnnotatedSignals, parallelJournalPath, {
-        maxSlots: parallelExposureTier?.slots[1],
-      });
-      if (parallelAutoJournalResult.errors.length > 0) {
-        warnings.push(...parallelAutoJournalResult.errors);
-      }
-      if (parallelAutoJournalResult.entered.length > 0) {
-        const enteredTickers = parallelAutoJournalResult.entered.map(e => e.ticker).join(', ');
-        console.log(`[scan] Auto-journaled: ${enteredTickers}`);
+      if (universeArg !== 'tech') {
+        const parallelExposureTier = regimeResult ? toExposureTier(regimeResult.market.market_regime) : undefined;
+        const parallelAutoJournalResult = autoJournal(fundamentalAnnotatedSignals, parallelJournalPath, {
+          maxSlots: parallelExposureTier?.slots[1],
+        });
+        if (parallelAutoJournalResult.errors.length > 0) {
+          warnings.push(...parallelAutoJournalResult.errors);
+        }
+        if (parallelAutoJournalResult.entered.length > 0) {
+          const enteredTickers = parallelAutoJournalResult.entered.map(e => e.ticker).join(', ');
+          console.log(`[scan] Auto-journaled: ${enteredTickers}`);
+        }
       }
 
-      // Load and process open positions
-      // Price data reuse happens transparently via the caching provider
-      const positionsResult = await loadOpenPositions(dataDir, cachingProvider, new Map());
+      // Load and process open positions (skip for tech — journal is managed by large_cap only)
+      const positionsResult = universeArg !== 'tech'
+        ? await loadOpenPositions(dataDir, cachingProvider, new Map())
+        : { openPositions: [], warnings: [] as string[] };
 
       // Scan dedup: suppress active/near signals for tickers already held in journal
       const parallelJournalLoadForDedup = loadJournal(parallelJournalPath);
