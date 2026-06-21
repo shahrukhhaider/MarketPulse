@@ -5,6 +5,7 @@ import { buildPriceMapFromCache } from '../utils/price-map.js';
 import { generateChartFilename } from '../chart-types.js';
 import { CacheFileStore } from '../data/cache-file-store.js';
 import { createBrokerRouter } from './broker-routes.js';
+import { handleBacktestSummary, handleBacktestDetail } from './backtest-routes.js';
 import { brokerRegistry } from '../broker/registry.js';
 import { TokenStore } from '../db/token-store.js';
 
@@ -785,6 +786,10 @@ export function registerApiRoutes(app: Express, stockTrackerHome: string): void 
   app.get('/api/signals/archive/dates', handleSignalArchiveDates(stockTrackerHome));
   app.get('/api/signals/archive/charts/:date/:filename', handleSignalCharts(stockTrackerHome));
   app.get('/api/signals/archive/:date', handleSignalArchiveByDate(stockTrackerHome));
+
+  // Backtest routes
+  app.get('/api/backtests', handleBacktestSummary(stockTrackerHome));
+  app.get('/api/backtests/:ticker', handleBacktestDetail(stockTrackerHome));
 
   // Winning trades routes
   app.get('/api/winning-trades', handleWinningTradesLatest(stockTrackerHome));

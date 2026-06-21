@@ -252,6 +252,10 @@ async function morningSentimentDigest(): Promise<void> {
   await runCli('morning-sentiment-digest', ['sentiment-check']);
 }
 
+async function regenerateBacktestManifest(): Promise<void> {
+  await runCli('backtest-manifest', ['generate-backtest-manifest']);
+}
+
 // ---------------------------------------------------------------------------
 // Broker adapter registration (before routes/cron that may use broker)
 // ---------------------------------------------------------------------------
@@ -363,6 +367,9 @@ cron.schedule('33 6 * * 1', () => {
 // Weekly tunes on Sunday
 cron.schedule('0 9 * * 0', () => { weeklyTuneLargeCap(); }, ET);
 cron.schedule('0 11 * * 0', () => { weeklyTuneTech(); }, ET);
+
+// Regenerate backtest manifest after both tunes complete (Sunday 12 PM PT)
+cron.schedule('0 12 * * 0', () => { regenerateBacktestManifest(); }, ET);
 
 // Morning sentiment digest at 6 AM PT on weekdays (before market open)
 cron.schedule('0 6 * * 1-5', () => { morningSentimentDigest(); }, ET);
