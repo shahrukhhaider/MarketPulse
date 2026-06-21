@@ -2,8 +2,9 @@
 
 A TypeScript CLI tool for automated stock signal detection, strategy tuning, backtesting, and trade journaling. Designed for personal, non-commercial use as a daily trading assistant.
 
+**Website:** [https://getpaperedge.com](https://getpaperedge.com/)
+
 ## Documentation
-- [See historical data]: https://getpaperedge.com/
 - [Strategies Guide](docs/STRATEGIES.md) — Annotated charts explaining each trading strategy
 - [Signal Glossary](docs/SIGNAL-GLOSSARY.md) — Reference for reading daily scan notifications and Discord alerts
 
