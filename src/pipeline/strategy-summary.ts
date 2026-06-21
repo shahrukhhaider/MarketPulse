@@ -109,6 +109,20 @@ export function buildStrategySummary(
       } as TuneSummary;
     }
 
+    // Gate: skip strategies with negative OOS return — don't generate signals for losers
+    if (result.oosMetrics.totalReturnPercent < 0) {
+      return {
+        ticker,
+        strategy: strategyName,
+        status: 'skipped',
+        in_sample: result.isMetrics,
+        out_of_sample: result.oosMetrics,
+        configurations_evaluated: result.configurationsEvaluated,
+        profile_saved: false,
+        skip_reason: 'Negative OOS return — strategy lost money on unseen data',
+      } as TuneSummary;
+    }
+
     const lastTunedAt = new Date().toISOString();
     const validUntil = computeExpiry(lastTunedAt);
 
