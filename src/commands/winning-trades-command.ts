@@ -6,7 +6,7 @@
 // calculates P&L, de-duplicates, generates annotated chart PNGs,
 // and writes a date-based manifest.
 //
-// Usage: cli.js winning-trades [--min-age 30] [--output /path/to/dir]
+// Usage: cli.js winning-trades [--min-age 30] [--window 7] [--output /path/to/dir]
 // ============================================================
 
 import { readFileSync, writeFileSync, copyFileSync, accessSync, mkdirSync } from 'node:fs';
@@ -71,7 +71,7 @@ function readHistoryFile(filePath: string): SignalEntry[] {
  * Compute the number of calendar days between two YYYY-MM-DD date strings.
  * Returns the difference in days (today - signalDate).
  */
-function daysBetween(signalDate: string, today: string): number {
+export function daysBetween(signalDate: string, today: string): number {
   const d1 = new Date(signalDate + 'T12:00:00');
   const d2 = new Date(today + 'T12:00:00');
   const diffMs = d2.getTime() - d1.getTime();
@@ -145,6 +145,14 @@ function calculatePnl(signal: ActiveSignal, currentPrice: number): number {
 }
 
 /**
+ * Returns true if the trade's hitDate is within the rolling window.
+ * Inclusive: daysBetween(hitDate, today) <= window means the trade qualifies.
+ */
+export function isWithinRollingWindow(hitDate: string, today: string, window: number): boolean {
+  return daysBetween(hitDate, today) <= window;
+}
+
+/**
  * Validate the --min-age flag value.
  * Must be an integer between 1 and 365 (inclusive).
  */
@@ -157,6 +165,21 @@ function validateMinAge(value: string): { valid: true; minAge: number } | { vali
     };
   }
   return { valid: true, minAge: parsed };
+}
+
+/**
+ * Validate the --window flag value.
+ * Must be an integer between 1 and 365 (inclusive).
+ */
+export function validateWindow(value: string): { valid: true; window: number } | { valid: false; error: string } {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 365) {
+    return {
+      valid: false,
+      error: `Invalid --window value '${value}'. Must be an integer between 1 and 365.`,
+    };
+  }
+  return { valid: true, window: parsed };
 }
 
 /**
@@ -236,11 +259,31 @@ export function createWinningTradesHandler(deps: WinningTradesCommandDeps): Comm
       }
     }
 
+    const windowArg = opts['window'];
+    let window = 7; // default
+    if (windowArg !== undefined) {
+      const validation = validateWindow(windowArg);
+      if (!validation.valid) {
+        return errorResult('winning-trades', 'INVALID_PARAM_RANGE', validation.error);
+      }
+      window = validation.window;
+    }
+
     // ----------------------------------------------------------
     // 2. Read signal history from both NDJSON files
     // ----------------------------------------------------------
     const mainHistoryPath = join(dataDir, 'signal-history.ndjson');
     const techHistoryPath = join(dataDir, 'signal-history-tech.ndjson');
+
+    // Check if at least one signal history file exists on disk
+    let mainExists = false;
+    let techExists = false;
+    try { accessSync(mainHistoryPath, fs.constants.F_OK); mainExists = true; } catch {}
+    try { accessSync(techHistoryPath, fs.constants.F_OK); techExists = true; } catch {}
+
+    if (!mainExists && !techExists) {
+      return errorResult('winning-trades', 'DATA_NOT_AVAILABLE', 'Signal history has not been populated. Run daily scans first.');
+    }
 
     const mainEntries = readHistoryFile(mainHistoryPath);
     const techEntries = readHistoryFile(techHistoryPath);
@@ -281,6 +324,9 @@ export function createWinningTradesHandler(deps: WinningTradesCommandDeps): Comm
         );
 
         if (!result.hit) continue;
+
+        // Rolling window filter: only include trades hit within the window
+        if (!isWithinRollingWindow(result.hitDate, today, window)) continue;
 
         // Calculate P&L using target price (since we know it was hit)
         const pnlPercent = calculatePnl(signal, result.hitPrice);
@@ -419,6 +465,7 @@ export function createWinningTradesHandler(deps: WinningTradesCommandDeps): Comm
       count: topTrades.length,
       chartsGenerated,
       minAge,
+      window,
       scanDate: today,
       outputDir,
     });
