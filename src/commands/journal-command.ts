@@ -14,6 +14,7 @@ import type { CommandHandler } from '../command-router.js';
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import { load, record, save } from '../journal/journal-store.js';
 import type { RecordInput } from '../journal/journal-store.js';
+import { findLatestScanLog } from '../scan-types.js';
 import { createJournalUpdater } from '../journal/journal-updater.js';
 import { computeStats } from '../journal/journal-reporter.js';
 import { formatJournalStatus } from '../journal/journal-formatter.js';
@@ -39,29 +40,6 @@ export interface JournalCommandDeps {
  */
 function getJournalPath(dataDir: string): string {
   return path.join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
-}
-
-/**
- * Find the most recent scan log file in the logs directory.
- * Scan logs follow the naming pattern: scan_YYYYMMDD_HHMMSS.json
- */
-function findMostRecentScanLog(dataDir: string): string | null {
-  const logsDir = path.join(dataDir, 'logs');
-
-  if (!fs.existsSync(logsDir)) {
-    return null;
-  }
-
-  const files = fs.readdirSync(logsDir)
-    .filter((f) => f.startsWith('scan_') && f.endsWith('.json'))
-    .sort()
-    .reverse();
-
-  if (files.length === 0) {
-    return null;
-  }
-
-  return path.join(logsDir, files[0]);
 }
 
 /**
@@ -186,7 +164,7 @@ export function createJournalRecordHandler(deps: JournalCommandDeps): CommandHan
           `Scan log file not found: ${logPath}`);
       }
     } else {
-      logPath = findMostRecentScanLog(dataDir);
+      logPath = findLatestScanLog(path.join(dataDir, 'logs'), 'large_cap');
       if (!logPath) {
         return errorResult('journal-record', 'FILE_NOT_FOUND',
           `No scan log files found in ${path.join(dataDir, 'logs/')}`);

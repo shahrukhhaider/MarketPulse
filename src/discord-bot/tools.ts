@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import type Anthropic from '@anthropic-ai/sdk';
 import { toExposureTier } from '../formatters/market-exposure.js';
+import { findLatestScanLog } from '../scan-types.js';
 import { executeScanTicker } from './scan-ticker-executor.js';
 import { addToWatchlist, removeFromWatchlist, getUserWatchlist } from '../db/watchlist-store.js';
 
@@ -282,42 +283,6 @@ export async function executeTool(
 // ---------------------------------------------------------------------------
 
 /**
- * Find the most recent scan log file for the given universe.
- * - large_cap: scan_*.json (excluding scan_tech_*)
- * - tech: scan_tech_*.json
- */
-function findLatestScanFile(universe: string): string | null {
-  const logsDir = path.join(getDataDir(), 'logs');
-
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(logsDir);
-  } catch {
-    return null;
-  }
-
-  let scanFiles: string[];
-  if (universe === 'tech') {
-    scanFiles = entries
-      .filter((f) => f.startsWith('scan_tech_') && f.endsWith('.json'))
-      .sort((a, b) => b.localeCompare(a));
-  } else {
-    // large_cap: scan_*.json but NOT scan_tech_*
-    scanFiles = entries
-      .filter(
-        (f) =>
-          f.startsWith('scan_') &&
-          !f.startsWith('scan_tech_') &&
-          f.endsWith('.json'),
-      )
-      .sort((a, b) => b.localeCompare(a));
-  }
-
-  if (scanFiles.length === 0) return null;
-  return path.join(logsDir, scanFiles[0]);
-}
-
-/**
  * Implements the get_latest_signals tool.
  * Returns a compact summary of the most recent scan: active signals, near signals, and market mood.
  */
@@ -325,7 +290,8 @@ function getLatestSignals(input: Record<string, unknown>): unknown {
   const universe =
     typeof input.universe === 'string' ? input.universe : 'large_cap';
 
-  const filePath = findLatestScanFile(universe);
+  const logsDir = path.join(getDataDir(), 'logs');
+  const filePath = findLatestScanLog(logsDir, universe === 'tech' ? 'tech' : 'large_cap');
   if (!filePath) {
     return { error: 'No scan data available yet' };
   }

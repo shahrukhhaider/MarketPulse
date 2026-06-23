@@ -84,13 +84,19 @@ export function formatPct(n: number): string {
 // --- File utilities ---
 
 /**
- * Find the most recent scan_*.json file in the given logs directory.
+ * Find the most recent scan log file for a given universe.
  * Returns the full path to the file, or null if no matching files exist.
  *
- * Prefers the large_cap (non-tech) scan. Falls back to any scan file.
+ * This is the single interface all consumers should use to locate scan logs.
  * Files are sorted by modification time descending — the newest file wins.
+ *
+ * @param logsDir  Path to the logs directory
+ * @param universe 'large_cap' | 'tech' | 'any' (default: 'any')
+ *   - 'large_cap': scan_*.json excluding scan_tech_*
+ *   - 'tech': scan_tech_*.json only
+ *   - 'any': prefers large_cap, falls back to any scan file
  */
-export function findLatestScanLog(logsDir: string): string | null {
+export function findLatestScanLog(logsDir: string, universe: 'large_cap' | 'tech' | 'any' = 'any'): string | null {
   let entries: string[];
   try {
     entries = fs.readdirSync(logsDir);
@@ -98,8 +104,14 @@ export function findLatestScanLog(logsDir: string): string | null {
     return null;
   }
 
-  const scanFiles = entries
-    .filter((f) => f.startsWith('scan_') && f.endsWith('.json'));
+  let scanFiles: string[];
+  if (universe === 'tech') {
+    scanFiles = entries.filter((f) => f.startsWith('scan_tech_') && f.endsWith('.json'));
+  } else if (universe === 'large_cap') {
+    scanFiles = entries.filter((f) => f.startsWith('scan_') && !f.startsWith('scan_tech_') && f.endsWith('.json'));
+  } else {
+    scanFiles = entries.filter((f) => f.startsWith('scan_') && f.endsWith('.json'));
+  }
 
   if (scanFiles.length === 0) {
     return null;
@@ -117,13 +129,14 @@ export function findLatestScanLog(logsDir: string): string | null {
   });
   withMtime.sort((a, b) => b.mtime - a.mtime);
 
-  // Prefer large_cap scan (files that do NOT contain "tech" in their name)
-  const largeCap = withMtime.find((f) => !f.file.includes('tech'));
-  if (largeCap) {
-    return path.join(logsDir, largeCap.file);
+  if (universe === 'any') {
+    // Prefer large_cap scan (files that do NOT contain "tech" in their name)
+    const largeCap = withMtime.find((f) => !f.file.includes('tech'));
+    if (largeCap) {
+      return path.join(logsDir, largeCap.file);
+    }
   }
 
-  // Fallback: newest file regardless of type
   return path.join(logsDir, withMtime[0].file);
 }
 
