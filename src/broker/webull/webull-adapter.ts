@@ -115,6 +115,9 @@ export class WebullAdapter implements BrokerAdapter {
     // Response is an array of account objects
     const accounts = Array.isArray(result.data) ? result.data : [];
 
+    // Log raw account types for debugging paper/live detection
+    console.log('[webull-adapter] Accounts from API:', accounts.map(a => ({ id: a.account_id, type: a.account_type })));
+
     return {
       ok: true,
       data: {
