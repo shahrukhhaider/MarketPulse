@@ -115,24 +115,30 @@ export function createBrokerRouter(
         return;
       }
 
-      // 5. Select first account from the list
+      // 5. Select account matching user's chosen mode (paper/live)
       const accounts = result.data.accounts;
-      const account = accounts[0];
+      const account = accounts.find(a => a.accountType === mode) ?? accounts[0];
+
+      let modeWarning = '';
+      if (account.accountType !== mode) {
+        console.warn(`[broker-routes] User ${userId} selected '${mode}' but only found account type '${account.accountType}' — using it anyway`);
+        modeWarning = `\n⚠️ No ${mode} account found on your Webull. Connected to your **${account.accountType}** account instead. If you have a paper account, enable it in Webull first.`;
+      }
 
       // 6. Store encrypted credentials with user-selected mode
       await tokenStore.saveCredentials(userId, 'webull', {
         appKey: trimmedKey,
         appSecret: trimmedSecret,
         accountId: account.accountId,
-        accountType: mode,
+        accountType: account.accountType,
       });
 
       // 7. Notify via Discord (best-effort)
-      const modeLabel = mode === 'live' ? 'Live trading' : 'Paper trading';
+      const modeLabel = account.accountType === 'live' ? 'Live trading' : 'Paper trading';
       try {
         await discordNotifier(
           userId,
-          `✅ Your Webull broker connection is active! ${modeLabel} mode is ready.`,
+          `✅ Your Webull broker connection is active! ${modeLabel} mode is ready.${modeWarning}`,
         );
       } catch {
         /* best-effort — don't fail the user flow */
