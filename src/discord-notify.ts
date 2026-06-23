@@ -17,7 +17,8 @@ import { persistChartImages } from './chart-persistence.js';
 import { generateChartImages } from './chart-image-generator.js';
 import type { ChartSuccess, AttachmentMeta, MultipartPayload, SignalInput } from './chart-types.js';
 import type { SignalLineage } from './indicators/signal-lineage.js';
-import { readProcessedSignals, flattenProcessedSignals } from './pipeline/read-processed-signals.js';
+import { readProcessedSignals } from './pipeline/read-processed-signals.js';
+import { presentSignals } from './pipeline/signal-presenter.js';
 import { HistoricalDataCache } from './data/historical-data-cache.js';
 import { YahooFinanceAdapter } from './data/yahoo-finance-adapter.js';
 import { loadStrategyProfile } from './data/profile-store.js';
@@ -351,82 +352,64 @@ export function buildOpenPositionsPayload(data: ScanData): DiscordPayload | null
  * Charts attach via embed.image when available.
  */
 export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
-  // Read pre-processed signals from pipeline output (no re-sorting)
-  const topSignals = flattenProcessedSignals(readProcessedSignals(data as any)).slice(0, 5);
+  // Use the shared presenter for ticker dedup and sorting
+  const presented = presentSignals(readProcessedSignals(data as any), { limit: 5 });
 
   // No signals → placeholder
-  if (topSignals.length === 0) {
+  if (presented.length === 0) {
     return [{ embeds: [{ title: 'No Active Signals', color: COLORS.GREY }] }];
   }
 
-  // Build one embed per signal (top 5 from pre-sorted pipeline output)
-  const top = topSignals as unknown as Array<Signal & Record<string, any>>;
-  const embeds: DiscordEmbed[] = top.map((signal) => {
-    const side = determineSide(signal.strategy);
-    const sideIcon = side === 'SHORT' ? '🔴' : '🟢';
-    const sideLabel = side === 'SHORT' ? 'SHORT' : 'BUY';
-    const stratName = signal.strategy.replace(/_/g, ' ');
-    const lineage = (signal as any).lineage as SignalLineage | undefined;
-    const dayStr = lineage ? `${lineage.daysInState}` : '1';
-    const color = side === 'SHORT' ? COLORS.RED : COLORS.GREEN;
+  const embeds: DiscordEmbed[] = presented.map((p) => {
+    const sideIcon = p.side === 'SHORT' ? '🔴' : '🟢';
+    const sideLabel = p.side === 'SHORT' ? 'SHORT' : 'BUY';
+    const color = p.side === 'SHORT' ? COLORS.RED : COLORS.GREEN;
 
-    // Title: ticker — strategy (used for chart matching)
-    const title = `${signal.ticker} — ${stratName}`;
+    // Title: ticker — strategy (or combined strategies if merged)
+    const stratNames = p.strategies.map(s => s.replace(/_/g, ' ')).join(' + ');
+    const title = `${p.ticker} — ${stratNames}`;
 
-    // Header line: {sideIcon} **{SIDE}** · Day {N} · {confidence_badge} · RS {rs_rating} · F {badge}
+    // Header line
+    const dayStr = p.lineage ? `${p.lineage.daysInState}` : '1';
     const headerParts: string[] = [`${sideIcon} **${sideLabel}**`, `Day ${dayStr}`];
-    const badge = confidenceBadge((signal as any).confidence);
+    const badge = confidenceBadge(p.confidence);
     if (badge) headerParts.push(badge);
-    const rs = (signal as any).regimeState?.rs_rating;
-    if (rs && rs > 0) headerParts.push(`RS ${rs}`);
-    const fundData = (signal as any).fundamentalData as FundamentalData | undefined;
-    const fundBadge = fundamentalBadge(fundData?.fundamental_tier);
+    if (p.rsRating && p.rsRating > 0) headerParts.push(`RS ${p.rsRating}`);
+    const fundBadge = fundamentalBadge(p.fundamentalData?.fundamental_tier);
     if (fundBadge) headerParts.push(fundBadge);
     const headerLine = headerParts.join(' · ');
 
-    // Metrics line: Entry → Stop → Target · Risk · R:R
-    const rrFromReason = (signal.reason ?? []).find((r: string) => r.includes('R:R'))?.match(/R:R\s*=\s*([\d:.]+)/)?.[1];
-    const rrStr = rrFromReason ?? '—';
-    const riskStr = signal.risk_pct != null ? `${signal.risk_pct.toFixed(1)}%` : '—';
-    const rvol = (signal as any).rvol as number | null | undefined;
-
-    const targetFromReason = (signal.reason ?? []).find((r: string) => r.includes('Target:'))?.match(/Target:\s*([\d.]+)/)?.[1];
-    const targetValue = signal.target ?? (targetFromReason ? parseFloat(targetFromReason) : undefined);
-
-    const entryStr = signal.entry.toFixed(2);
-    const stopStr = signal.stop.toFixed(2);
-    const targetStr = targetValue != null ? targetValue.toFixed(2) : '—';
-
-    const priceLine = `Entry **${entryStr}** → Stop **${stopStr}** → Target **${targetStr}** · Risk ${riskStr} · R:R ${rrStr}`;
-
-    const metricParts: string[] = [];
-    if (rvol != null) metricParts.push(`Vol ${rvol.toFixed(1)}×`);
-    const candlestickPatterns = (signal as any).candlestickPatterns as string[] | undefined;
-    if (candlestickPatterns && candlestickPatterns.length > 0) metricParts.push(candlestickPatterns.join(', '));
-    const metricsLine = metricParts.length > 0 ? metricParts.join(' · ') : '';
-
-    // Narrative/rationale
-    const narrateInput = {
-      ticker: signal.ticker,
-      strategy: signal.strategy,
-      signal: signal.signal === 'active_late' ? 'active' : signal.signal,
-      entry: signal.entry,
-      stop: signal.stop,
-      target: signal.target,
-      reason: signal.reason,
-    };
-    const narrative = narrateSignal(narrateInput as any);
-    const rationale = narrative && narrative.length > 0
-      ? narrative
-      : (signal.reason && signal.reason.length > 0 ? signal.reason[0] : '');
-
-    // Assemble description: header, rationale, price line, extras
+    // Description lines
     const descLines: string[] = [headerLine];
-    if (rationale) descLines.push(rationale);
-    descLines.push(priceLine);
-    if (metricsLine) descLines.push(metricsLine);
 
-    // Fundamental metrics line for strong/weak tiers
+    if (p.merged) {
+      // Merged: show narrative for primary, then per-strategy price lines
+      if (p.narrative) descLines.push(p.narrative);
+      for (const detail of p.strategyDetails) {
+        const stratLabel = detail.strategy.replace(/_/g, ' ');
+        const tgt = detail.target != null ? detail.target.toFixed(2) : '—';
+        const dRisk = detail.riskPct != null ? `${detail.riskPct.toFixed(1)}%` : '—';
+        descLines.push(
+          `**${stratLabel}**: Entry ${detail.entry.toFixed(2)} → Stop ${detail.stop.toFixed(2)} → Target ${tgt} · Risk ${dRisk} · R:R ${detail.rrRatio}`
+        );
+      }
+    } else {
+      // Solo: same format as before
+      if (p.narrative) descLines.push(p.narrative);
+      const targetStr = p.target != null ? p.target.toFixed(2) : '—';
+      const riskStr = p.riskPct != null ? `${p.riskPct.toFixed(1)}%` : '—';
+      const priceLine = `Entry **${p.entry.toFixed(2)}** → Stop **${p.stop.toFixed(2)}** → Target **${targetStr}** · Risk ${riskStr} · R:R ${p.rrRatio}`;
+      descLines.push(priceLine);
+    }
+
+    // Metrics line (rvol, candlestick patterns)
+    const metricParts: string[] = [];
+    if (p.rvol != null) metricParts.push(`Vol ${p.rvol.toFixed(1)}×`);
+    if (p.candlestickPatterns && p.candlestickPatterns.length > 0) metricParts.push(p.candlestickPatterns.join(', '));
+    if (metricParts.length > 0) descLines.push(metricParts.join(' · '));
+
+    // Fundamental metrics line
+    const fundData = p.fundamentalData;
     if (fundData && (fundData.fundamental_tier === 'strong' || fundData.fundamental_tier === 'weak')) {
       const fundParts: string[] = [];
       if (fundData.eps_growth_yoy != null) {
@@ -444,11 +427,9 @@ export function buildActiveSignalsPayloads(data: ScanData): DiscordPayload[] {
       if (fundParts.length > 0) descLines.push(fundParts.join(' · '));
     }
 
-    const description = descLines.join('\n');
-
     const embed: DiscordEmbed = {
       title,
-      description,
+      description: descLines.join('\n'),
       color,
     };
 
@@ -712,9 +693,9 @@ async function main(): Promise<void> {
 
   if (chartsEnabled && activeSignals.length > 0) {
     // Determine which signals will actually be posted (top 5 from pipeline output)
-    const topSignals = flattenProcessedSignals(readProcessedSignals(data as any))
-      .filter((s) => s.signal === 'active' || s.signal === 'active_late')
-      .slice(0, 5);
+    // Determine which signals will actually be posted (deduped by ticker via presenter)
+    const presentedForCharts = presentSignals(readProcessedSignals(data as any), { limit: 5 });
+    const topSignals = presentedForCharts.map(p => p.primarySignal);
 
     if (topSignals.length > 0) {
       // Load lightweight-charts JS
@@ -850,13 +831,15 @@ async function main(): Promise<void> {
       if (chartMap.size > 0 && payload.embeds) {
         for (const embed of payload.embeds) {
           // Match embed to chart by extracting ticker+strategy from embed title
-          // Title format: "TICKER — strategy name"
+          // Title format: "TICKER — strategy name" or "TICKER — strategy1 + strategy2"
           if (!embed.title) continue;
           const titleMatch = embed.title.match(/^(\S+)\s*—\s*(.+)$/);
           if (!titleMatch) continue;
 
           const embedTicker = titleMatch[1];
-          const embedStrategy = titleMatch[2].replace(/ /g, '_');
+          // For merged signals, use only the first (primary) strategy for chart matching
+          const rawStrategy = titleMatch[2].split(' + ')[0];
+          const embedStrategy = rawStrategy.replace(/ /g, '_');
           const key = `${embedTicker}+${embedStrategy}`;
           const chartSuccess = chartMap.get(key);
 

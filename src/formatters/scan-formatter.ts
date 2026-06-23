@@ -12,9 +12,9 @@ import type { SignalLineage } from '../indicators/signal-lineage.js';
 import { toExposureTier } from './market-exposure.js';
 import type { MarketRegimeData } from './market-exposure.js';
 import { narrateSignal } from './signal-narrator.js';
-import { computeCompositeScore, compareSignals } from './signal-sort.js';
 import type { ProcessedSignals } from '../pipeline/signal-pipeline.js';
 import { readProcessedSignals } from '../pipeline/read-processed-signals.js';
+import { presentSignals } from '../pipeline/signal-presenter.js';
 
 // ============================================================
 // ANSI Color Helpers
@@ -275,7 +275,7 @@ function buildExitPlan(entry: number, profitTarget: number, isShort: boolean): s
   return `Exit plan: ${verb} ⅓ at ${formatPrice(target1)} (${sign}${pct1.toFixed(1)}%) · ${verb} ⅓ at ${formatPrice(target2)} (${sign}${pct2.toFixed(1)}%) · Trail ⅓ on SMA10`;
 }
 
-function renderActive(signals: AnnotatedSignal[]): string {
+function renderActive(signals: AnnotatedSignal[], processedSignals: ProcessedSignals): string {
   if (signals.length === 0) return '';
 
   const lines: string[] = [];
@@ -285,34 +285,13 @@ function renderActive(signals: AnnotatedSignal[]): string {
   lines.push(dim('  Ticker   Side    Strategy              Buy Zone              Stop        Risk     R:R    RS'));
   lines.push(dim('  ──────   ────    ────────              ────────              ────        ────     ───    ──'));
 
-  // Group signals by ticker to merge multi-strategy confluences
-  const byTicker = new Map<string, AnnotatedSignal[]>();
-  for (const sig of signals) {
-    const group = byTicker.get(sig.ticker) ?? [];
-    group.push(sig);
-    byTicker.set(sig.ticker, group);
-  }
+  // Use the shared presenter for grouping, dedup, and sorting (same as Discord)
+  const presented = presentSignals(processedSignals, { limit: 10 });
 
-  // Sort ticker groups by composite score desc → regime alignment → confluence desc → RS desc → risk asc
-  const sortedGroups = [...byTicker.entries()].sort((a, b) => {
-    const bestA = a[1].reduce((best, s) => {
-      const scoreS = computeCompositeScore(s.rvol, s.confidence);
-      const scoreBest = computeCompositeScore(best.rvol, best.confidence);
-      return scoreS > scoreBest ? s : best;
-    }, a[1][0]);
-    const bestB = b[1].reduce((best, s) => {
-      const scoreS = computeCompositeScore(s.rvol, s.confidence);
-      const scoreBest = computeCompositeScore(best.rvol, best.confidence);
-      return scoreS > scoreBest ? s : best;
-    }, b[1][0]);
-
-    return compareSignals(bestA, bestB);
-  });
-
-  for (const [, tickerSignals] of sortedGroups) {
-    if (tickerSignals.length === 1) {
-      // Single strategy — render normally
-      const sig = tickerSignals[0];
+  for (const p of presented) {
+    if (!p.merged) {
+      // Single strategy — render normally using the raw signal
+      const sig = p.primarySignal as AnnotatedSignal;
       lines.push(renderActiveSignalLine(sig));
       const targetStr = extractTarget(sig.reason ?? []);
       const targetNum = parseFloat(targetStr);
@@ -338,7 +317,8 @@ function renderActive(signals: AnnotatedSignal[]): string {
         }
       }
     } else {
-      // Multiple strategies — merge into combined entry
+      // Multiple strategies — merge into combined entry using raw signals
+      const tickerSignals = signals.filter(s => s.ticker === p.ticker && (s.signal === 'active' || s.signal === 'active_late'));
       lines.push(renderMergedSignalBlock(tickerSignals));
     }
   }
@@ -943,7 +923,7 @@ export function formatScanSummary(data: ScanSummaryData): string {
   lines.push(dim(`  ${headerParts.join(' · ')}`));
 
   // Sections
-  lines.push(renderActive(active));
+  lines.push(renderActive(active, processed));
   lines.push(renderNear(near));
   lines.push(renderFormingBreakouts(forming_breakout.slice(0, MAX_PER_CATEGORY)));
   lines.push(renderFormingPullbacks(forming_pullback.slice(0, MAX_PER_CATEGORY)));
