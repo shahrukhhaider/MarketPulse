@@ -2,8 +2,10 @@ import express from 'express';
 import cron from 'node-cron';
 import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { initDiscordBot } from './discord-bot/index.js';
 import { updateMemberTradePnL } from './db/update-member-pnl.js';
+import { todayPST } from './utils/date-utils.js';
 import { registerApiRoutes } from './web/routes.js';
 import { setupBrokerAdapters } from './broker/setup.js';
 
@@ -134,7 +136,7 @@ async function dailyScanLargeCap(): Promise<void> {
     STOCK_TRACKER_HOME,
     '.stock-tracker',
     'logs',
-    `scan_${Date.now()}.json`,
+    `scan_${todayPST()}.json`,
   );
 
   const code = await runCli(jobName, [
@@ -166,7 +168,7 @@ async function dailyScanTech(): Promise<void> {
     STOCK_TRACKER_HOME,
     '.stock-tracker',
     'logs',
-    `scan_tech_${Date.now()}.json`,
+    `scan_tech_${todayPST()}.json`,
   );
 
   const code = await runCli(jobName, [
@@ -196,25 +198,22 @@ async function dailyScanTech(): Promise<void> {
 async function discordNotify(): Promise<void> {
   const logsDir = path.join(STOCK_TRACKER_HOME, '.stock-tracker', 'logs');
   const notifyScript = path.join(__dirname, 'discord-notify.js');
+  const today = todayPST();
 
-  // Find the most recent large_cap scan log
-  const lcLogs = require('node:fs').readdirSync(logsDir)
-    .filter((f: string) => f.startsWith('scan_') && !f.startsWith('scan_tech_') && f.endsWith('.json'))
-    .sort((a: string, b: string) => b.localeCompare(a));
-
-  if (lcLogs.length > 0) {
-    const lcLogFile = path.join(logsDir, lcLogs[0]);
+  // Look for today's large_cap scan log
+  const lcLogFile = path.join(logsDir, `scan_${today}.json`);
+  if (fs.existsSync(lcLogFile)) {
     await runCli('notify-lc', [lcLogFile], notifyScript);
+  } else {
+    log('notify-lc', `No scan log for today (${today}) — skipping`);
   }
 
-  // Find the most recent tech scan log
-  const techLogs = require('node:fs').readdirSync(logsDir)
-    .filter((f: string) => f.startsWith('scan_tech_') && f.endsWith('.json'))
-    .sort((a: string, b: string) => b.localeCompare(a));
-
-  if (techLogs.length > 0) {
-    const techLogFile = path.join(logsDir, techLogs[0]);
+  // Look for today's tech scan log
+  const techLogFile = path.join(logsDir, `scan_tech_${today}.json`);
+  if (fs.existsSync(techLogFile)) {
     await runCli('notify-tech', [techLogFile], notifyScript);
+  } else {
+    log('notify-tech', `No tech scan log for today (${today}) — skipping`);
   }
 }
 
