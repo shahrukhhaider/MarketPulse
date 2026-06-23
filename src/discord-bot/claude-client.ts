@@ -106,8 +106,9 @@ export async function askClaude(
     // If we exhausted iterations, return whatever text we have from the last response
     // or a fallback message
     return ERROR_MSG;
-  } catch {
-    // API error or timeout — return user-friendly message
+  } catch (err) {
+    // API error or timeout — log for diagnostics, return user-friendly message
+    console.error('[claude-client] Error:', err instanceof Error ? err.message : String(err));
     return ERROR_MSG;
   }
 }
