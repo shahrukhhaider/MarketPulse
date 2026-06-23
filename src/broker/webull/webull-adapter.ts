@@ -91,8 +91,15 @@ export class WebullAdapter implements BrokerAdapter {
     // Config is kept for future use but endpoint is now per-user via accountType
   }
 
-  /** Resolve API base URL. Always uses production — paper vs live is an account type, not an environment. */
-  private getBaseUrl(_accountType?: string): string {
+  /**
+   * Resolve API base URL based on account type.
+   * Paper trading uses Webull's UAT environment; live uses production.
+   * Note: UAT requires separate credentials (test app_key/app_secret).
+   */
+  private getBaseUrl(accountType?: string): string {
+    if (accountType === 'paper') {
+      return WEBULL_URLS.uat.api;
+    }
     return WEBULL_URLS.production.api;
   }
 
