@@ -778,8 +778,11 @@ export function handleSignalCharts(stockTrackerHome: string) {
 // Register all API routes
 // ---------------------------------------------------------------------------
 
+import { handlePortfolio } from './portfolio-routes.js';
+
 export function registerApiRoutes(app: Express, stockTrackerHome: string): void {
   app.get('/api/market', handleMarket(stockTrackerHome));
+  app.get('/api/portfolio', handlePortfolio(stockTrackerHome));
   app.get('/api/signals/week-ago', handleSignalsWeekAgo(stockTrackerHome));
 
   // Signal archive routes
