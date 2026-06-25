@@ -329,7 +329,26 @@ export function buildOpenPositionsPayload(data: ScanData): DiscordPayload | null
     lines.push(`${tickerPad} ${abbrevPad} ${pnlPad} ${daysPad} ${bar} ${progressPct}`);
   }
 
-  const description = `\`\`\`\n${lines.join('\n')}\n\`\`\``;
+  // Build summary line with aggregate P&L
+  const avgPnl = aggregatePnl / data.openPositions.length;
+  const pnlSign = avgPnl >= 0 ? '+' : '';
+  let summaryLine = `Avg P&L: ${pnlSign}${avgPnl.toFixed(1)}%`;
+
+  // Add total P&L from journal
+  const journalPnl = (data as any).journalPnl as number | null | undefined;
+  if (journalPnl != null) {
+    const totalSign = journalPnl >= 0 ? '+' : '-';
+    summaryLine += ` · Total P&L: ${totalSign}$${Math.abs(journalPnl).toFixed(2)}`;
+  }
+
+  // Add journal stats if available (total trades, win rate)
+  const stats = (data as any).journalStats as { total_trades: number; win_rate: number; wins: number; losses: number } | null | undefined;
+  if (stats && stats.total_trades > 0) {
+    const winPct = Math.round(stats.win_rate * 100);
+    summaryLine += ` · ${stats.total_trades} trades · ${winPct}% win (${stats.wins}W/${stats.losses}L)`;
+  }
+
+  const description = `\`\`\`\n${lines.join('\n')}\n\`\`\`\n${summaryLine}`;
 
   const payload: DiscordPayload = {
     embeds: [
