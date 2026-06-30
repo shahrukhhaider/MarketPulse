@@ -247,6 +247,10 @@ async function morningSentimentDigest(): Promise<void> {
   await runCli('morning-sentiment-digest', ['sentiment-check']);
 }
 
+async function socialDiscovery(): Promise<void> {
+  await runCli('social-discovery', ['social-discovery']);
+}
+
 async function regenerateBacktestManifest(): Promise<void> {
   await runCli('backtest-manifest', ['generate-backtest-manifest']);
 }
@@ -366,6 +370,9 @@ cron.schedule('0 13 * * 0', () => { winningTrades(); }, ET);
 
 // Morning sentiment digest at 6 AM PT on weekdays (before market open)
 cron.schedule('0 6 * * 1-5', () => { morningSentimentDigest(); }, ET);
+
+// Social ticker discovery at 6:15 AM PT on weekdays (after sentiment, before market open)
+cron.schedule('15 6 * * 1-5', () => { socialDiscovery(); }, ET);
 
 // Nightly news timeline at 6 PM PT on weekdays
 cron.schedule('0 18 * * 1-5', () => { runCli('news-timeline', ['news-timeline']); }, ET);

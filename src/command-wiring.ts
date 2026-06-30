@@ -37,6 +37,7 @@ import { createV3Handler } from './commands/v3-command.js';
 import { createTunePipelineHandler } from './commands/tune-pipeline-command.js';
 import { createWinningTradesHandler } from './commands/winning-trades-command.js';
 import { createPersistChartsHandler } from './commands/persist-charts-command.js';
+import { createSocialDiscoveryHandler } from './commands/social-discovery-command.js';
 import { createGenerateBacktestManifestHandler } from './backtests/generate-manifest.js';
 import { createDependencies } from './di/container.js';
 
@@ -105,6 +106,7 @@ export function createWiredRouter(options: WiringOptions = {}): WiredRouter {
   router.register('winning-trades', [], createWinningTradesHandler({ dataDir, cachingProvider }));
   router.register('persist-charts', ['scan-output'], createPersistChartsHandler({ dataDir, cachingProvider }));
   router.register('generate-backtest-manifest', [], createGenerateBacktestManifestHandler({ dataDir }));
+  router.register('social-discovery', [], createSocialDiscoveryHandler({ dataDir }));
 
   return {
     router,
