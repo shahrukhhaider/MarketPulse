@@ -342,10 +342,11 @@ export function buildOpenPositionsPayload(data: ScanData): DiscordPayload | null
   }
 
   // Add journal stats if available (total trades, win rate)
-  const stats = (data as any).journalStats as { total_trades: number; win_rate: number; wins: number; losses: number } | null | undefined;
+  const stats = (data as any).journalStats as { total_trades: number; win_rate: number; wins: number; losses: number; breakeven: number } | null | undefined;
   if (stats && stats.total_trades > 0) {
     const winPct = Math.round(stats.win_rate * 100);
-    summaryLine += ` · ${stats.total_trades} trades · ${winPct}% win (${stats.wins}W/${stats.losses}L)`;
+    const bePart = stats.breakeven > 0 ? `/${stats.breakeven}BE` : '';
+    summaryLine += ` · ${stats.total_trades} trades · ${winPct}% win (${stats.wins}W/${stats.losses}L${bePart})`;
   }
 
   const description = `\`\`\`\n${lines.join('\n')}\n\`\`\`\n${summaryLine}`;

@@ -8,8 +8,9 @@
  * - won: profit target was hit
  * - lost: stop loss was hit
  * - expired: neither hit within the expiry window
+ * - breakeven: trailing stop hit at entry price (0% P&L)
  */
-export type EntryStatus = 'open' | 'won' | 'lost' | 'expired';
+export type EntryStatus = 'open' | 'won' | 'lost' | 'expired' | 'breakeven';
 
 /**
  * A single recorded signal with its trade parameters and outcome tracking fields.

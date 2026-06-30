@@ -50,7 +50,10 @@ const BAND_EMOJI: Record<SentimentBand, string> = {
 
 const MAX_DESCRIPTION_LENGTH = 4096;
 const MAX_EMBEDS_PER_MESSAGE = 10;
-const MAX_HEADLINES = 3;
+const MAX_HEADLINES = 2;
+const MAX_EMBED_CHARS = 500;
+const MAX_SUMMARY_CHARS = 200;
+const MAX_PAYLOAD_CHARS = 5800; // Discord limit is 6000, leave buffer
 const HEADLINE_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
 
 // ============================================================
@@ -169,18 +172,33 @@ function buildDescription(
   newsSummary: string | null,
   now: Date,
 ): string {
+  // Truncate AI summary to MAX_SUMMARY_CHARS
+  const truncatedSummary = newsSummary && newsSummary.length > MAX_SUMMARY_CHARS
+    ? newsSummary.slice(0, MAX_SUMMARY_CHARS - 1) + '…'
+    : newsSummary;
+
   // Build sections
   const divergenceSection = divergence ? `${divergence}\n\n` : '';
   const sentimentSection = formatSentimentLine(sentiment);
-  const summarySection = newsSummary ? `\n\n📰 AI Summary\n${newsSummary}` : '';
+  const summarySection = truncatedSummary ? `\n\n📰 AI Summary\n${truncatedSummary}` : '';
   const headlineSection = formatHeadlineSection(headlines, now);
 
   // Assemble full description
   let description = divergenceSection + sentimentSection + summarySection + headlineSection;
 
-  // Truncation strategy if over 4096 chars
-  if (description.length > MAX_DESCRIPTION_LENGTH) {
-    description = truncateDescription(divergence, sentiment, headlines, newsSummary, now);
+  // Compact embed cap: if over MAX_EMBED_CHARS, progressively truncate
+  if (description.length > MAX_EMBED_CHARS) {
+    // First try: remove AI summary, keep headlines (with links)
+    description = divergenceSection + sentimentSection + headlineSection;
+  }
+  if (description.length > MAX_EMBED_CHARS && headlines.length > 1) {
+    // Second try: reduce to 1 headline
+    const singleHeadline = formatHeadlineSection(headlines.slice(0, 1), now);
+    description = divergenceSection + sentimentSection + singleHeadline;
+  }
+  if (description.length > MAX_EMBED_CHARS) {
+    // Last resort: hard truncate
+    description = description.slice(0, MAX_EMBED_CHARS - 1) + '…';
   }
 
   return description;
@@ -267,15 +285,40 @@ function assembleDescription(
 // ============================================================
 
 /**
- * Splits an array of embeds into chunks of at most `maxPerMessage` (default 10)
- * for Discord's embed limit per message. Preserves order.
+ * Compute total character count of an embed (title + description).
+ */
+function embedCharCount(embed: DiscordEmbed): number {
+  return (embed.title?.length ?? 0) + (embed.description?.length ?? 0);
+}
+
+/**
+ * Splits an array of embeds into chunks respecting both embed count (≤10)
+ * and total character budget (≤5800) per message.
  */
 export function chunkEmbeds(embeds: DiscordEmbed[], maxPerMessage: number = MAX_EMBEDS_PER_MESSAGE): DiscordEmbed[][] {
   if (embeds.length === 0) return [];
 
   const chunks: DiscordEmbed[][] = [];
-  for (let i = 0; i < embeds.length; i += maxPerMessage) {
-    chunks.push(embeds.slice(i, i + maxPerMessage));
+  let currentChunk: DiscordEmbed[] = [];
+  let currentChars = 0;
+
+  for (const embed of embeds) {
+    const chars = embedCharCount(embed);
+
+    // Would adding this embed exceed either limit?
+    if (currentChunk.length >= maxPerMessage || (currentChars + chars > MAX_PAYLOAD_CHARS && currentChunk.length > 0)) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+      currentChars = 0;
+    }
+
+    currentChunk.push(embed);
+    currentChars += chars;
   }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
   return chunks;
 }

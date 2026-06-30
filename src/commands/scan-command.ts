@@ -747,7 +747,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
       const journalPath2 = join(dataDir, JOURNAL_DEFAULTS.JOURNAL_PATH);
       const journalLoadResult2 = loadJournal(journalPath2);
       let journalPnl2: number | null = null;
-      let journalStats: { total_trades: number; win_rate: number; wins: number; losses: number } | null = null;
+      let journalStats: { total_trades: number; win_rate: number; wins: number; losses: number; breakeven: number } | null = null;
       if (journalLoadResult2.success && journalLoadResult2.data.length > 0) {
         const stats = computeStats(journalLoadResult2.data);
         journalPnl2 = stats.total_pnl;
@@ -756,6 +756,7 @@ export function createScanHandler(deps: ScanCommandDeps): CommandHandler {
           win_rate: stats.win_rate,
           wins: stats.wins,
           losses: stats.losses,
+          breakeven: stats.breakeven,
         };
       }
 

@@ -53,7 +53,7 @@ describe('selectHeadlines', () => {
     source_domain: 'example.com',
   });
 
-  it('returns at most 3 headlines', () => {
+  it('returns at most 2 headlines', () => {
     const items = [
       makeItem('A', 'http://a.com', 1),
       makeItem('B', 'http://b.com', 2),
@@ -61,7 +61,7 @@ describe('selectHeadlines', () => {
       makeItem('D', 'http://d.com', 4),
     ];
     const result = selectHeadlines(items, now, new Set());
-    expect(result).toHaveLength(3);
+    expect(result).toHaveLength(2);
   });
 
   it('excludes headlines older than 48h', () => {
@@ -92,9 +92,9 @@ describe('selectHeadlines', () => {
       makeItem('Middle', 'http://middle.com', 5),
     ];
     const result = selectHeadlines(items, now, new Set());
+    expect(result).toHaveLength(2);
     expect(result[0].title).toBe('Newest');
     expect(result[1].title).toBe('Middle');
-    expect(result[2].title).toBe('Oldest');
   });
 
   it('returns empty array when no headlines qualify', () => {

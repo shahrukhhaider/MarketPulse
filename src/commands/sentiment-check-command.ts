@@ -52,9 +52,9 @@ export function createSentimentCheckHandler(deps: { dataDir: string }): CommandH
     if (resolved.length === 0) {
       // Post plain-text "no active signals" message
       if (!dryRun) {
-        const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+        const webhookUrl = process.env.DISCORD_WEBHOOK_SENTIMENT_URL?.trim() || process.env.DISCORD_WEBHOOK_URL;
         if (!webhookUrl) {
-          console.error('[sentiment-check] Error: DISCORD_WEBHOOK_URL environment variable is not set');
+          console.error('[sentiment-check] Error: No webhook URL configured');
           process.exit(1);
         }
         try {
@@ -155,9 +155,19 @@ export function createSentimentCheckHandler(deps: { dataDir: string }): CommandH
       return sentiment && sentiment.band !== 'unknown';
     });
 
-    const headerEmbed = formatHeaderEmbed(now, tickersWithData.length);
+    // Limit to top 15 tickers (keep brief digestible)
+    const MAX_SENTIMENT_TICKERS = 15;
+    const limitedTickers = tickersWithData.slice(0, MAX_SENTIMENT_TICKERS);
 
-    const tickerEmbeds: DiscordEmbed[] = tickersWithData.map(({ ticker, strategy }) => {
+    const headerText = tickersWithData.length > MAX_SENTIMENT_TICKERS
+      ? `Reporting on top **${limitedTickers.length}** of ${tickersWithData.length} active signals`
+      : `Reporting on **${limitedTickers.length}** active signal${limitedTickers.length === 1 ? '' : 's'}`;
+
+    const headerEmbed = formatHeaderEmbed(now, limitedTickers.length);
+    // Override header description with the count info
+    headerEmbed.description = headerText;
+
+    const tickerEmbeds: DiscordEmbed[] = limitedTickers.map(({ ticker, strategy }) => {
       const embedData: TickerEmbedData = {
         ticker,
         strategy,
@@ -187,19 +197,29 @@ export function createSentimentCheckHandler(deps: { dataDir: string }): CommandH
       });
     }
 
-    // ---- Step 10: Post to Discord ----
-    const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+    // ---- Step 10: Post to Discord (prefer dedicated sentiment webhook) ----
+    const webhookUrl = process.env.DISCORD_WEBHOOK_SENTIMENT_URL?.trim() || process.env.DISCORD_WEBHOOK_URL;
     if (!webhookUrl) {
-      console.error('[sentiment-check] Error: DISCORD_WEBHOOK_URL environment variable is not set');
+      console.error('[sentiment-check] Error: No webhook URL configured (DISCORD_WEBHOOK_SENTIMENT_URL or DISCORD_WEBHOOK_URL)');
       process.exit(1);
     }
 
     for (const chunk of chunks) {
       const result = await postToDiscord(webhookUrl, { embeds: chunk });
       if (!result.success) {
-        console.error(`[sentiment-check] Discord POST failed after retry: ${result.error}`);
-        // Do NOT update brief-seen cache on failure
-        process.exit(1);
+        // Graceful degradation: if 400 error (embed too large), retry with fewer embeds
+        if (result.error?.includes('400') || result.error?.includes('size')) {
+          const reduced = chunk.slice(0, Math.max(1, chunk.length - 2));
+          console.warn(`[sentiment-check] Retrying with ${reduced.length}/${chunk.length} embeds after size error`);
+          const retry = await postToDiscord(webhookUrl, { embeds: reduced });
+          if (!retry.success) {
+            console.error(`[sentiment-check] Discord POST failed after reduction: ${retry.error}`);
+          }
+        } else {
+          console.error(`[sentiment-check] Discord POST failed after retry: ${result.error}`);
+          // Do NOT update brief-seen cache on failure
+          process.exit(1);
+        }
       }
     }
 

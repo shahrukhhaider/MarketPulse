@@ -18,6 +18,21 @@ export interface JournalUpdaterDeps {
 }
 
 // ============================================================
+// Trailing Stop Levels
+// ============================================================
+
+/**
+ * Graduated trailing stop levels. Each level activates when price progress
+ * reaches the `activation` fraction of the total move, and moves the effective
+ * stop to `stopAt` fraction of the total move above entry.
+ */
+const TRAILING_LEVELS = [
+  { activation: 0.25, stopAt: 0.00 },  // Level 1: breakeven
+  { activation: 0.50, stopAt: 0.33 },  // Level 2: 33% of move
+  { activation: 0.75, stopAt: 0.55 },  // Level 3: 55% of move
+] as const;
+
+// ============================================================
 // Outcome Determination
 // ============================================================
 
@@ -26,9 +41,10 @@ export interface JournalUpdaterDeps {
  * daily bars after the signal date.
  *
  * Rules (applied to bars in chronological order):
- * 1. Stop hit: bar low ≤ stop_price → lost
+ * 1. Original stop hit: bar low ≤ stop_price → lost (always active, highest priority)
  * 2. Target hit: bar high ≥ target_price → won
- * 3. Same-bar conflict: stop takes priority → lost
+ * 3. Trailing stop hit: bar low ≤ effectiveStopPrice (if level > 0) →
+ *    breakeven (level 1) or won (level 2+)
  * 4. Expiry: trading days > expiryDays and neither hit → expired
  * 5. First chronological bar that triggers determines outcome
  */
@@ -40,14 +56,38 @@ export function determineOutcome(
   // Filter bars to only those after the signal date
   const relevantBars = bars.filter((b) => b.date > entry.signal_date);
 
+  const totalMove = entry.target_price - entry.entry_price;
+
+  // Track graduated trailing stop state
+  let effectiveStopPrice = entry.stop_price; // starts at original stop
+  let currentLevel = 0; // 0 = none, 1/2/3 = activated levels
+
   for (let i = 0; i < relevantBars.length; i++) {
     const bar = relevantBars[i];
 
-    // Check stop hit (stop takes priority over target on same bar)
-    const stopHit = bar.low <= entry.stop_price;
-    const targetHit = bar.high >= entry.target_price;
+    // Check if bar.high activates the next trailing level
+    // Levels are checked in order; multiple levels can activate on the same bar
+    while (currentLevel < TRAILING_LEVELS.length) {
+      const nextLevel = TRAILING_LEVELS[currentLevel];
+      const activationPrice = entry.entry_price + totalMove * nextLevel.activation;
+      if (bar.high >= activationPrice) {
+        currentLevel++;
+        effectiveStopPrice = entry.entry_price + totalMove * nextLevel.stopAt;
+      } else {
+        break;
+      }
+    }
 
-    if (stopHit) {
+    // Priority rules for same-bar conflicts:
+    // 1. Original stop loss takes highest priority → 'lost'
+    // 2. Target hit next → 'won'
+    // 3. Trailing stop last → 'breakeven' (level 1) or 'won' (level 2+)
+
+    const originalStopHit = bar.low <= entry.stop_price;
+    const targetHit = bar.high >= entry.target_price;
+    const trailingStopHit = currentLevel > 0 && bar.low <= effectiveStopPrice;
+
+    if (originalStopHit) {
       return {
         status: 'lost',
         outcome_date: bar.date,
@@ -60,6 +100,45 @@ export function determineOutcome(
         status: 'won',
         outcome_date: bar.date,
         outcome_price: entry.target_price,
+      };
+    }
+
+    if (trailingStopHit) {
+      // Level 1 → breakeven (exit at entry price), Level 2+ → won
+      const status: EntryStatus = currentLevel === 1 ? 'breakeven' : 'won';
+      return {
+        status,
+        outcome_date: bar.date,
+        outcome_price: effectiveStopPrice,
+      };
+    }
+  }
+
+  // Fallback: if latest bar's close confirms an outcome not captured by high/low
+  if (relevantBars.length > 0) {
+    const lastBar = relevantBars[relevantBars.length - 1];
+
+    if (lastBar.close >= entry.target_price) {
+      return {
+        status: 'won',
+        outcome_date: lastBar.date,
+        outcome_price: entry.target_price,
+      };
+    }
+    if (lastBar.close <= entry.stop_price) {
+      return {
+        status: 'lost',
+        outcome_date: lastBar.date,
+        outcome_price: entry.stop_price,
+      };
+    }
+    // Trailing stop fallback: if a level was activated and close dropped to trailing level
+    if (currentLevel > 0 && lastBar.close <= effectiveStopPrice) {
+      const status: EntryStatus = currentLevel === 1 ? 'breakeven' : 'won';
+      return {
+        status,
+        outcome_date: lastBar.date,
+        outcome_price: effectiveStopPrice,
       };
     }
   }

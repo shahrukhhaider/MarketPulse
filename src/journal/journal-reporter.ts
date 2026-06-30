@@ -23,6 +23,7 @@ export interface PerformanceStats {
   wins: number;
   losses: number;
   expired: number;
+  breakeven: number;
 }
 
 // ============================================================
@@ -41,6 +42,9 @@ function getPctChange(entry: JournalEntry): number {
   }
   if (entry.status === 'lost') {
     return (entry.stop_price - entry.entry_price) / entry.entry_price;
+  }
+  if (entry.status === 'breakeven') {
+    return 0;
   }
   if (entry.status === 'expired' && entry.outcome_price !== null) {
     return (entry.outcome_price - entry.entry_price) / entry.entry_price;
@@ -66,6 +70,9 @@ function getRMultiple(entry: JournalEntry): number {
     const actualPct = getPctChange(entry) * 100; // convert to percentage
     return actualPct / entry.risk_pct;
   }
+  if (entry.status === 'breakeven') {
+    return 0;
+  }
   return 0;
 }
 
@@ -85,8 +92,9 @@ export function computeStats(
   const wonEntries = entries.filter((e) => e.status === 'won');
   const lostEntries = entries.filter((e) => e.status === 'lost');
   const expiredEntries = entries.filter((e) => e.status === 'expired');
+  const breakevenEntries = entries.filter((e) => e.status === 'breakeven');
 
-  const closedEntries = [...wonEntries, ...lostEntries, ...expiredEntries];
+  const closedEntries = [...wonEntries, ...lostEntries, ...expiredEntries, ...breakevenEntries];
 
   const total_trades = entries.length;
   const open_trades = openEntries.length;
@@ -94,6 +102,7 @@ export function computeStats(
   const wins = wonEntries.length;
   const losses = lostEntries.length;
   const expired = expiredEntries.length;
+  const breakeven = breakevenEntries.length;
 
   // Edge case: no closed entries → return zeroed stats
   if (closed_trades === 0) {
@@ -108,11 +117,13 @@ export function computeStats(
       wins: 0,
       losses: 0,
       expired: 0,
+      breakeven: 0,
     };
   }
 
-  // Win rate: won / (won + lost + expired)
-  const win_rate = wins / closed_trades;
+  // Win rate: won / (won + lost + expired) — breakeven excluded from denominator
+  const winRateDenominator = wins + losses + expired;
+  const win_rate = winRateDenominator > 0 ? wins / winRateDenominator : 0;
 
   // Average R-multiple: mean of R-multiples across closed entries
   const rMultiples = closedEntries.map(getRMultiple);
@@ -158,5 +169,6 @@ export function computeStats(
     wins,
     losses,
     expired,
+    breakeven,
   };
 }

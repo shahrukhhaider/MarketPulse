@@ -19,6 +19,8 @@ function computeClosedPnlPct(entry: JournalEntry): number {
     return ((entry.target_price - entry.entry_price) / entry.entry_price) * 100;
   } else if (entry.status === 'lost') {
     return ((entry.stop_price - entry.entry_price) / entry.entry_price) * 100;
+  } else if (entry.status === 'breakeven') {
+    return 0;
   } else if (entry.outcome_price != null) {
     return ((entry.outcome_price - entry.entry_price) / entry.entry_price) * 100;
   }
@@ -78,7 +80,7 @@ export function handlePortfolio(stockTrackerHome: string) {
         confidence_threshold: 0.85,
         stats: {
           total_trades: 0, open_count: 0, closed_trades: 0,
-          win_rate: 0, wins: 0, losses: 0, expired: 0,
+          win_rate: 0, wins: 0, losses: 0, expired: 0, breakeven: 0,
           avg_r_multiple: 0, total_pnl: 0, expectancy: 0,
         },
         openPositions: [],
@@ -123,7 +125,7 @@ export function handlePortfolio(stockTrackerHome: string) {
       entry_price: e.entry_price,
       stop_price: e.stop_price,
       target_price: e.target_price,
-      outcome: e.status as 'won' | 'lost' | 'expired',
+      outcome: e.status as 'won' | 'lost' | 'expired' | 'breakeven',
       outcome_date: e.outcome_date ?? e.signal_date,
       outcome_price: e.outcome_price,
       pnl_pct: Math.round(computeClosedPnlPct(e) * 10) / 10,
@@ -141,6 +143,7 @@ export function handlePortfolio(stockTrackerHome: string) {
         wins: stats.wins,
         losses: stats.losses,
         expired: stats.expired,
+        breakeven: stats.breakeven,
         avg_r_multiple: stats.average_r,
         total_pnl: stats.total_pnl,
         expectancy: stats.expectancy,

@@ -66,6 +66,7 @@ function colorByStatus(s: string, status: string): string {
   switch (status) {
     case 'won': return green(s);
     case 'lost': return red(s);
+    case 'breakeven': return blue(s);
     case 'open': return yellow(s);
     case 'expired': return dim(s);
     default: return s;
@@ -91,6 +92,9 @@ function computeEntryPnl(entry: JournalEntry, positionSize: number): number {
   }
   if (entry.status === 'lost') {
     return positionSize * ((entry.stop_price - entry.entry_price) / entry.entry_price);
+  }
+  if (entry.status === 'breakeven') {
+    return 0;
   }
   if (entry.status === 'expired' && entry.outcome_price !== null) {
     return positionSize * ((entry.outcome_price - entry.entry_price) / entry.entry_price);
@@ -157,7 +161,7 @@ function renderPerformanceSummary(stats: PerformanceStats): string {
   lines.push(`  Expectancy:  ${expectStr}`);
   lines.push('');
   lines.push(`  Trades:      ${bold(String(stats.total_trades))} total  │  ${yellow(String(stats.open_trades))} open  │  ${dim(String(stats.closed_trades))} closed`);
-  lines.push(`  Outcomes:    ${green(String(stats.wins))} won  │  ${red(String(stats.losses))} lost  │  ${dim(String(stats.expired))} expired`);
+  lines.push(`  Outcomes:    ${green(String(stats.wins))} won  │  ${red(String(stats.losses))} lost  │  ${blue(String(stats.breakeven))} breakeven  │  ${dim(String(stats.expired))} expired`);
 
   return lines.join('\n') + '\n';
 }
