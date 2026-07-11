@@ -275,6 +275,18 @@ app.get('/health', (_req, res) => {
   });
 });
 
+// Global CORS middleware — handles preflight OPTIONS and sets headers on all responses
+app.use((_req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (_req.method === 'OPTIONS') {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
+
 // Body parsing middleware (required for POST /connect/webull form submission)
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
