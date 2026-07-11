@@ -97,8 +97,11 @@ export function generateBacktestManifest(dataDir: string): BacktestManifest {
 
       const profile = parsed as StrategyProfile;
 
-      // Filter: trades > 0
+      // Filter: must have trades and non-negative OOS return
       if (profile.walk_forward_metrics.trades <= 0) {
+        continue;
+      }
+      if (profile.walk_forward_metrics.return < 0) {
         continue;
       }
 
