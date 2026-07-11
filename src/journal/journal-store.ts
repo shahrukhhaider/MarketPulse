@@ -31,7 +31,7 @@ interface JournalFileData {
 // Validation
 // ============================================================
 
-const VALID_STATUSES: EntryStatus[] = ['open', 'won', 'lost', 'expired'];
+const VALID_STATUSES: EntryStatus[] = ['open', 'won', 'lost', 'expired', 'breakeven'];
 
 function isValidJournalEntry(obj: unknown): obj is JournalEntry {
   if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return false;
