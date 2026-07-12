@@ -85,7 +85,14 @@ export function handleBacktestDetail(stockTrackerHome: string) {
         sharpe: number;
       };
       last_tuned_at: string;
-      trades: Array<{
+      oos_trades: Array<{
+        entry_date: string;
+        exit_date: string;
+        entry_price: number;
+        exit_price: number;
+        won: boolean;
+      }>;
+      all_trades: Array<{
         entry_date: string;
         exit_date: string;
         entry_price: number;
@@ -125,7 +132,17 @@ export function handleBacktestDetail(stockTrackerHome: string) {
           sharpe: profile.walk_forward_metrics.sharpe,
         },
         last_tuned_at: profile.last_tuned_at,
-        trades: (profile.oos_trades ?? []).map((t) => ({
+        // oos_trades: used for summary metrics (OOS period only)
+        oos_trades: (profile.oos_trades ?? []).map((t) => ({
+          entry_date: t.entry_date,
+          exit_date: t.exit_date,
+          entry_price: t.entry_price,
+          exit_price: t.exit_price,
+          won: t.won,
+        })),
+        // all_trades: full backtest history — used for chart markers
+        // Falls back to oos_trades if all_trades not available (older profiles)
+        all_trades: (profile.all_trades ?? profile.oos_trades ?? []).map((t) => ({
           entry_date: t.entry_date,
           exit_date: t.exit_date,
           entry_price: t.entry_price,

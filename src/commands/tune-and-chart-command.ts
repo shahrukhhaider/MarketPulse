@@ -181,6 +181,7 @@ async function handleV3TuneAndChart(
         ticker, dataDir,
         cbBestParams, tpBestParams, bbBestParams, kmrBestParams, vduBestParams,
         cbTuneResult, tpTuneResult, bbTuneResult, kmrTuneResult, vduTuneResult,
+        v3BacktestResult,
       );
     }
 
@@ -455,6 +456,28 @@ async function handleV1TuneAndChart(
 // Helper: Save all V3 strategy profiles
 // ============================================================
 
+function mapBacktestTrades(trades: import('../types.js').Trade[]): import('../data/profile-store.js').ProfileTrade[] {
+  return trades.map((t) => ({
+    entry_date: t.buySignal.timestamp.split('T')[0],
+    exit_date: t.sellSignal.timestamp.split('T')[0],
+    entry_price: t.buySignal.price,
+    exit_price: t.sellSignal.price,
+    won: t.profitLossPercent > 0,
+  }));
+}
+
+function mapOosTrades(
+  oos: import('../pipeline/tuning-engine.js').TuningPerformanceMetrics | null
+): import('../data/profile-store.js').ProfileTrade[] | undefined {
+  return oos?.trades?.map((t) => ({
+    entry_date: t.entryDate,
+    exit_date: t.exitDate,
+    entry_price: t.entryPrice,
+    exit_price: t.exitPrice,
+    won: t.pnlPct > 0,
+  }));
+}
+
 function saveAllProfiles(
   ticker: string,
   dataDir: string,
@@ -468,6 +491,7 @@ function saveAllProfiles(
   bbTuneResult: V3TuneResult['bear_breakdown'],
   kmrTuneResult: V3TuneResult['keltner_mean_reversion'],
   vduTuneResult: V3TuneResult['volume_dry_up'],
+  v3BacktestResult?: V3BacktestResult,
 ): boolean {
   const lastTunedAt = new Date().toISOString();
   const validUntil = computeExpiry(lastTunedAt);
@@ -488,6 +512,10 @@ function saveAllProfiles(
       },
       last_tuned_at: lastTunedAt,
       valid_until: validUntil,
+      oos_trades: mapOosTrades(cbOos),
+      all_trades: v3BacktestResult
+        ? mapBacktestTrades(v3BacktestResult.consolidation_breakout.performanceSummary.trades)
+        : undefined,
     };
     saveStrategyProfile(cbProfile, dataDir);
   }
@@ -508,6 +536,10 @@ function saveAllProfiles(
       },
       last_tuned_at: lastTunedAt,
       valid_until: validUntil,
+      oos_trades: mapOosTrades(tpOos),
+      all_trades: v3BacktestResult
+        ? mapBacktestTrades(v3BacktestResult.trend_pullback.performanceSummary.trades)
+        : undefined,
     };
     saveStrategyProfile(tpProfile, dataDir);
   }
@@ -528,6 +560,10 @@ function saveAllProfiles(
       },
       last_tuned_at: lastTunedAt,
       valid_until: validUntil,
+      oos_trades: mapOosTrades(bbOos),
+      all_trades: v3BacktestResult?.bear_breakdown
+        ? mapBacktestTrades(v3BacktestResult.bear_breakdown.performanceSummary.trades)
+        : undefined,
     };
     saveStrategyProfile(bbProfile, dataDir);
   }
@@ -548,6 +584,10 @@ function saveAllProfiles(
       },
       last_tuned_at: lastTunedAt,
       valid_until: validUntil,
+      oos_trades: mapOosTrades(kmrOos),
+      all_trades: v3BacktestResult?.keltner_mean_reversion
+        ? mapBacktestTrades(v3BacktestResult.keltner_mean_reversion.performanceSummary.trades)
+        : undefined,
     };
     saveStrategyProfile(kmrProfile, dataDir);
   }
@@ -568,6 +608,10 @@ function saveAllProfiles(
       },
       last_tuned_at: lastTunedAt,
       valid_until: validUntil,
+      oos_trades: mapOosTrades(vduOos),
+      all_trades: v3BacktestResult?.volume_dry_up
+        ? mapBacktestTrades(v3BacktestResult.volume_dry_up.performanceSummary.trades)
+        : undefined,
     };
     saveStrategyProfile(vduProfile, dataDir);
   }

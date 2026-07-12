@@ -44,8 +44,10 @@ export interface StrategyProfile {
   walk_forward_metrics: WalkForwardMetrics;
   last_tuned_at: string;   // ISO 8601
   valid_until: string;      // ISO 8601
-  /** OOS trades from walk-forward validation. Optional for backward compat with existing profiles. */
+  /** OOS trades from walk-forward validation (last ~30% of data). Optional for backward compat. */
   oos_trades?: ProfileTrade[];
+  /** All trades from full-history backtest (5y). Optional — only saved when backtestV3 runs. */
+  all_trades?: ProfileTrade[];
 }
 
 // ============================================================
