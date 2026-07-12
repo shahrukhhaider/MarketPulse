@@ -13,7 +13,9 @@ import { join } from 'node:path';
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import type { TuneSummary, TuneBatchResult } from '../commands/tune-command.js';
 import type { V3TuneResult } from './pipeline-functions.js';
-import { tuneV3 } from './pipeline-functions.js';
+import { tuneV3, backtestV3 } from './pipeline-functions.js';
+import { loadStrategyProfile, saveStrategyProfile } from '../data/profile-store.js';
+import type { Trade } from '../types.js';
 import { WorkerPool } from './worker-pool.js';
 import type { WorkerTask, WorkerResult } from './worker-pool.js';
 import { fetchHistoricalDataStream } from '../data/data-fetcher.js';
@@ -100,6 +102,60 @@ function processTickerResult(
   if (vduSummary.status === 'success') succeeded++;
   else if (vduSummary.status === 'error') failed++;
   else skipped++;
+
+  // Run backtestV3 to extract full trade history and patch saved profiles with all_trades.
+  // Non-fatal: if it fails, profiles still have oos_trades for chart fallback.
+  if (options.shouldSave) {
+    try {
+      const cbResult = v3Result.consolidation_breakout;
+      const tpResult = v3Result.trend_pullback;
+      const hasCb = !('error' in cbResult);
+      const hasTp = !('error' in tpResult);
+      if (hasCb || hasTp) {
+        const kmrResult = v3Result.keltner_mean_reversion;
+        const bbResult = v3Result.bear_breakdown;
+        const vduResult = v3Result.volume_dry_up;
+        const cbParams = hasCb ? cbResult.bestParams : {};
+        const tpParams = hasTp ? tpResult.bestParams : {};
+        const kmrParams = !('error' in kmrResult) ? kmrResult.bestParams : {};
+        const bbParams = !('error' in bbResult) ? bbResult.bestParams : {};
+        const vduParams = !('error' in vduResult) ? vduResult.bestParams : {};
+
+        const btResult = backtestV3(data, cbParams, tpParams, kmrParams, bbParams, vduParams);
+
+        const mapTrades = (trades: Trade[]) => trades.map((t) => ({
+          entry_date: t.buySignal.timestamp.split('T')[0],
+          exit_date: t.sellSignal.timestamp.split('T')[0],
+          entry_price: t.buySignal.price,
+          exit_price: t.sellSignal.price,
+          won: t.profitLossPercent > 0,
+        }));
+
+        const strategyTradeMap: Record<string, ReturnType<typeof mapTrades>> = {
+          consolidation_breakout: mapTrades(btResult.consolidation_breakout.performanceSummary.trades),
+          trend_pullback: mapTrades(btResult.trend_pullback.performanceSummary.trades),
+          keltner_mean_reversion: btResult.keltner_mean_reversion
+            ? mapTrades(btResult.keltner_mean_reversion.performanceSummary.trades) : [],
+          bear_breakdown: btResult.bear_breakdown
+            ? mapTrades(btResult.bear_breakdown.performanceSummary.trades) : [],
+          volume_dry_up: btResult.volume_dry_up
+            ? mapTrades(btResult.volume_dry_up.performanceSummary.trades) : [],
+        };
+
+        for (const [strategyName, allTrades] of Object.entries(strategyTradeMap)) {
+          const profileResult = loadStrategyProfile(ticker, strategyName, {
+            allowStale: true,
+            baseDir: options.dataDir,
+          });
+          if (profileResult.success) {
+            saveStrategyProfile({ ...profileResult.data, all_trades: allTrades }, options.dataDir);
+          }
+        }
+      }
+    } catch {
+      // Non-fatal — oos_trades fallback still works for chart display
+    }
+  }
 
   return { summaries, succeeded, failed, skipped };
 }
