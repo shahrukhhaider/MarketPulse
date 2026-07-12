@@ -51,7 +51,6 @@ export function createTunePipelineHandler(deps: AppDependencies): CommandHandler
         concurrency,
         shouldSave,
         noCache,
-        runBacktest: false,
         cachingProvider,
         dataDir,
       });

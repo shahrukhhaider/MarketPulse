@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import type { TuneSummary, TuneBatchResult } from '../commands/tune-command.js';
 import type { V3TuneResult } from './pipeline-functions.js';
-import { tuneV3, backtestV3, renderChart } from './pipeline-functions.js';
+import { tuneV3 } from './pipeline-functions.js';
 import { WorkerPool } from './worker-pool.js';
 import type { WorkerTask, WorkerResult } from './worker-pool.js';
 import { fetchHistoricalDataStream } from '../data/data-fetcher.js';
@@ -31,8 +31,6 @@ export interface ParallelTuneOptions {
   concurrency: number;
   shouldSave: boolean;
   noCache: boolean;
-  /** Whether to run backtest + chart after tuning (v3 command behavior) */
-  runBacktest: boolean;
   cachingProvider: HistoricalDataCache;
   dataDir: string;
 }
@@ -102,39 +100,6 @@ function processTickerResult(
   if (vduSummary.status === 'success') succeeded++;
   else if (vduSummary.status === 'error') failed++;
   else skipped++;
-
-  // Run backtest + chart on main thread if enabled and at least one strategy succeeded
-  if (options.runBacktest) {
-    const cbResult = v3Result.consolidation_breakout;
-    const tpResult = v3Result.trend_pullback;
-    const kmrResult = v3Result.keltner_mean_reversion;
-    const bbResult = v3Result.bear_breakdown;
-    const vduResult = v3Result.volume_dry_up;
-
-    const hasCbParams = !('error' in cbResult);
-    const hasTpParams = !('error' in tpResult);
-    const hasKmrParams = !('error' in kmrResult);
-    const hasBbParams = !('error' in bbResult);
-    const hasVduParams = !('error' in vduResult);
-
-    if (hasCbParams || hasTpParams) {
-      try {
-        const cbParams = hasCbParams ? cbResult.bestParams : {};
-        const tpParams = hasTpParams ? tpResult.bestParams : {};
-        const kmrParams = hasKmrParams ? kmrResult.bestParams : {};
-        const bbParams = hasBbParams ? bbResult.bestParams : {};
-        const vduParams = hasVduParams ? vduResult.bestParams : {};
-
-        if (hasCbParams && hasTpParams) {
-          const btResult = backtestV3(data, cbParams, tpParams, kmrParams, bbParams, vduParams);
-          // Render chart for the combined backtest (use consolidation_breakout result for chart)
-          renderChart(btResult.consolidation_breakout, data, options.dataDir, ticker);
-        }
-      } catch {
-        // Backtest/chart failures are non-fatal — tuning still succeeded
-      }
-    }
-  }
 
   return { summaries, succeeded, failed, skipped };
 }

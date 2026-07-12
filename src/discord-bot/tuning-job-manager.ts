@@ -145,7 +145,6 @@ export function runTuningJob(
         concurrency: 1,
         shouldSave: true,
         noCache: false,
-        runBacktest: false,
         cachingProvider,
         dataDir,
       });

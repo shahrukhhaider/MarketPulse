@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isValidProfile } from '../data/profile-store.js';
 import type { StrategyProfile } from '../data/profile-store.js';
+import { computeCombinedFromProfiles } from '../backtests/combine-profiles.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,14 +63,13 @@ export function handleBacktestDetail(stockTrackerHome: string) {
     const ticker = rawTicker.toUpperCase();
     const profilesDir = path.join(stockTrackerHome, '.stock-tracker', 'data', 'profiles');
 
-    // Scan all strategy directories for this ticker's profile
+    // Scan all strategy directories for this ticker's profiles
     let strategyDirs: string[] = [];
     try {
       strategyDirs = fs.readdirSync(profilesDir, { withFileTypes: true })
         .filter((d) => d.isDirectory())
         .map((d) => d.name);
     } catch {
-      // profiles directory doesn't exist
       setCommonHeaders(res);
       res.status(404).json({ error: `No backtest data for ${ticker}` });
       return;
@@ -79,7 +79,6 @@ export function handleBacktestDetail(stockTrackerHome: string) {
       strategy: string;
       metrics: {
         return: number;
-        benchmark: number;
         win_rate: number;
         trades: number;
         max_drawdown: number;
@@ -95,6 +94,7 @@ export function handleBacktestDetail(stockTrackerHome: string) {
       }>;
     }
 
+    const allProfiles: StrategyProfile[] = [];
     const strategies: StrategyEntry[] = [];
 
     for (const strategy of strategyDirs) {
@@ -107,19 +107,18 @@ export function handleBacktestDetail(stockTrackerHome: string) {
         const content = fs.readFileSync(profilePath, 'utf-8');
         parsed = JSON.parse(content);
       } catch {
-        // Skip corrupt profiles
         continue;
       }
 
       if (!isValidProfile(parsed)) continue;
 
       const profile = parsed as StrategyProfile;
+      allProfiles.push(profile);
 
       strategies.push({
         strategy: profile.strategy,
         metrics: {
           return: profile.walk_forward_metrics.return,
-          benchmark: profile.walk_forward_metrics.benchmark,
           win_rate: profile.walk_forward_metrics.win_rate,
           trades: profile.walk_forward_metrics.trades,
           max_drawdown: profile.walk_forward_metrics.max_drawdown,
@@ -143,6 +142,20 @@ export function handleBacktestDetail(stockTrackerHome: string) {
       return;
     }
 
+    // Compute combined metrics from passing profiles only
+    const passingProfiles = allProfiles.filter(
+      (p) => p.walk_forward_metrics.trades > 0 && p.walk_forward_metrics.return >= 0
+    );
+    const combined = computeCombinedFromProfiles(passingProfiles);
+
+    // Sort strategies: passing ones first (by trades desc), then non-passing
+    strategies.sort((a, b) => {
+      const aPassing = a.metrics.trades > 0 && a.metrics.return >= 0 ? 1 : 0;
+      const bPassing = b.metrics.trades > 0 && b.metrics.return >= 0 ? 1 : 0;
+      if (aPassing !== bPassing) return bPassing - aPassing;
+      return b.metrics.trades - a.metrics.trades;
+    });
+
     // Load OHLC from history-cache (empty array if missing, not an error)
     let ohlc: Array<{ time: string; open: number; high: number; low: number; close: number }> = [];
     const cachePath = path.join(stockTrackerHome, '.stock-tracker', 'history-cache', `${ticker}.json`);
@@ -161,12 +174,20 @@ export function handleBacktestDetail(stockTrackerHome: string) {
         close: dp.close,
       }));
     } catch {
-      // History cache missing — return empty ohlc array (not an error)
+      // History cache missing — not an error
     }
 
     setCommonHeaders(res);
     res.json({
       ticker,
+      combined: {
+        return: combined.return,
+        win_rate: combined.win_rate,
+        trades: combined.trades,
+        max_drawdown: combined.max_drawdown,
+        sharpe: combined.sharpe,
+        strategy_count: combined.strategy_count,
+      },
       strategies,
       ohlc,
     });

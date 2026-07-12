@@ -53,7 +53,6 @@ export function createV3Handler(deps: V3CommandDeps): CommandHandler {
         concurrency,
         shouldSave: true,
         noCache: opts['no-cache'] !== undefined,
-        runBacktest: true,
         cachingProvider,
         dataDir,
       });

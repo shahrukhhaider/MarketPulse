@@ -2,15 +2,17 @@
 // Backtest Manifest Generator
 // ============================================================
 // Scans all profile directories and produces backtest-summary.json
+// with one combined entry per ticker (all strategies aggregated).
 // Called after weekly tunes complete (Sunday 12 PM PT via worker cron).
 //
 // Usage: cli.js generate-backtest-manifest
 // ============================================================
 
-import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { isValidProfile } from '../data/profile-store.js';
 import type { StrategyProfile } from '../data/profile-store.js';
+import { computeCombinedFromProfiles } from './combine-profiles.js';
 import { successResult, errorResult } from '../command-router.js';
 import type { CommandHandler } from '../command-router.js';
 
@@ -18,20 +20,35 @@ import type { CommandHandler } from '../command-router.js';
 // Interfaces
 // ============================================================
 
+export interface BacktestManifestStrategyEntry {
+  strategy: string;
+  return: number;
+  win_rate: number;
+  trades: number;
+  max_drawdown: number;
+  sharpe: number;
+}
+
 export interface BacktestManifestEntry {
   ticker: string;
-  strategy: string;
-  return: number;          // percentage
-  benchmark: number;       // percentage
-  win_rate: number;        // 0-1
-  trades: number;          // integer
-  max_drawdown: number;    // percentage
-  sharpe: number;          // float
-  last_tuned_at: string;   // ISO 8601
+  /** Always "combined" — all strategies aggregated */
+  strategy: 'combined';
+  /** Combined equal-weight return */
+  return: number;
+  benchmark: number;
+  win_rate: number;
+  trades: number;
+  max_drawdown: number;
+  sharpe: number;
+  last_tuned_at: string;
+  /** Number of strategies included in combined metrics */
+  strategy_count: number;
+  /** Per-strategy breakdown (passing strategies only) */
+  strategies: BacktestManifestStrategyEntry[];
 }
 
 export interface BacktestManifest {
-  generated_at: string;    // ISO 8601
+  generated_at: string; // ISO 8601
   entries: BacktestManifestEntry[];
 }
 
@@ -40,18 +57,19 @@ export interface BacktestManifest {
 // ============================================================
 
 /**
- * Scan all profile directories and produce a backtest manifest.
+ * Scan all profile directories and produce a combined backtest manifest.
  *
  * 1. Glob .stock-tracker/data/profiles/{strategy}/{TICKER}.json
  * 2. Parse each, validate with isValidProfile()
- * 3. Filter: trades > 0
- * 4. Map to BacktestManifestEntry
- * 5. Sort by return descending
- * 6. Write to .stock-tracker/backtest-summary.json
+ * 3. Group profiles by ticker
+ * 4. For each ticker, filter passing profiles: trades > 0 AND return >= 0
+ * 5. Skip ticker if no passing profiles
+ * 6. Compute combined metrics via computeCombinedFromProfiles()
+ * 7. Sort by combined return descending
+ * 8. Write to .stock-tracker/backtest-summary.json
  */
 export function generateBacktestManifest(dataDir: string): BacktestManifest {
   const profilesDir = join(dataDir, 'data', 'profiles');
-  const entries: BacktestManifestEntry[] = [];
 
   // Read strategy directories
   let strategyDirs: string[] = [];
@@ -60,9 +78,11 @@ export function generateBacktestManifest(dataDir: string): BacktestManifest {
       .filter((d) => d.isDirectory())
       .map((d) => d.name);
   } catch {
-    // profiles directory doesn't exist yet — return empty manifest
     process.stderr.write('[generate-backtest-manifest] Warning: profiles directory not found\n');
   }
+
+  // Group all valid profiles by ticker
+  const byTicker = new Map<string, StrategyProfile[]>();
 
   for (const strategy of strategyDirs) {
     const strategyPath = join(profilesDir, strategy);
@@ -78,7 +98,6 @@ export function generateBacktestManifest(dataDir: string): BacktestManifest {
     for (const file of files) {
       const filePath = join(strategyPath, file);
 
-      // Parse profile JSON
       let parsed: unknown;
       try {
         const content = readFileSync(filePath, 'utf-8');
@@ -89,38 +108,60 @@ export function generateBacktestManifest(dataDir: string): BacktestManifest {
         continue;
       }
 
-      // Validate shape
       if (!isValidProfile(parsed)) {
         process.stderr.write(`[generate-backtest-manifest] Warning: invalid profile ${filePath}, skipping\n`);
         continue;
       }
 
       const profile = parsed as StrategyProfile;
-
-      // Filter: must have trades and non-negative OOS return
-      if (profile.walk_forward_metrics.trades <= 0) {
-        continue;
-      }
-      if (profile.walk_forward_metrics.return < 0) {
-        continue;
-      }
-
-      // Map to manifest entry
-      entries.push({
-        ticker: profile.ticker,
-        strategy: profile.strategy,
-        return: profile.walk_forward_metrics.return,
-        benchmark: profile.walk_forward_metrics.benchmark,
-        win_rate: profile.walk_forward_metrics.win_rate,
-        trades: profile.walk_forward_metrics.trades,
-        max_drawdown: profile.walk_forward_metrics.max_drawdown,
-        sharpe: profile.walk_forward_metrics.sharpe,
-        last_tuned_at: profile.last_tuned_at,
-      });
+      const existing = byTicker.get(profile.ticker) ?? [];
+      existing.push(profile);
+      byTicker.set(profile.ticker, existing);
     }
   }
 
-  // Sort by return descending
+  // Build one manifest entry per ticker
+  const entries: BacktestManifestEntry[] = [];
+
+  for (const [ticker, profiles] of byTicker) {
+    // Filter to passing profiles only
+    const passing = profiles.filter(
+      (p) => p.walk_forward_metrics.trades > 0 && p.walk_forward_metrics.return >= 0
+    );
+
+    if (passing.length === 0) continue;
+
+    const combined = computeCombinedFromProfiles(passing);
+
+    // Most recent last_tuned_at across all profiles (not just passing)
+    const lastTunedAt = profiles
+      .map((p) => p.last_tuned_at)
+      .sort()
+      .reverse()[0];
+
+    entries.push({
+      ticker,
+      strategy: 'combined',
+      return: combined.return,
+      benchmark: 0,
+      win_rate: combined.win_rate,
+      trades: combined.trades,
+      max_drawdown: combined.max_drawdown,
+      sharpe: combined.sharpe,
+      last_tuned_at: lastTunedAt,
+      strategy_count: combined.strategy_count,
+      strategies: passing.map((p) => ({
+        strategy: p.strategy,
+        return: p.walk_forward_metrics.return,
+        win_rate: p.walk_forward_metrics.win_rate,
+        trades: p.walk_forward_metrics.trades,
+        max_drawdown: p.walk_forward_metrics.max_drawdown,
+        sharpe: p.walk_forward_metrics.sharpe,
+      })),
+    });
+  }
+
+  // Sort by combined return descending
   entries.sort((a, b) => b.return - a.return);
 
   const manifest: BacktestManifest = {
@@ -146,7 +187,6 @@ export interface GenerateManifestDeps {
 
 /**
  * Factory function for the generate-backtest-manifest CLI command.
- * Returns a command handler compatible with CommandRouter.register().
  */
 export function createGenerateBacktestManifestHandler(deps: GenerateManifestDeps): CommandHandler {
   const { dataDir } = deps;
@@ -156,11 +196,11 @@ export function createGenerateBacktestManifestHandler(deps: GenerateManifestDeps
       const manifest = generateBacktestManifest(dataDir);
 
       process.stdout.write(
-        `[generate-backtest-manifest] Generated manifest with ${manifest.entries.length} entries → ${join(dataDir, 'backtest-summary.json')}\n`
+        `[generate-backtest-manifest] Generated manifest with ${manifest.entries.length} tickers → ${join(dataDir, 'backtest-summary.json')}\n`
       );
 
       return successResult('generate-backtest-manifest', {
-        entriesCount: manifest.entries.length,
+        tickerCount: manifest.entries.length,
         generatedAt: manifest.generated_at,
         outputPath: join(dataDir, 'backtest-summary.json'),
       });
