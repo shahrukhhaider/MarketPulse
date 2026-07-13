@@ -34,7 +34,8 @@ export interface ProfileTrade {
   exit_date: string;    // YYYY-MM-DD
   entry_price: number;
   exit_price: number;
-  won: boolean;         // true if profitable (exit_price > entry_price for bullish)
+  won: boolean;         // true if profitable (direction-adjusted by backtest engine)
+  pnl_pct?: number;     // actual P&L % from backtest engine (direction-adjusted); optional for backward compat
 }
 
 export interface StrategyProfile {

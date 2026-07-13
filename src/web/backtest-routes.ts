@@ -91,6 +91,7 @@ export function handleBacktestDetail(stockTrackerHome: string) {
         entry_price: number;
         exit_price: number;
         won: boolean;
+        pnl_pct?: number;
       }>;
       all_trades: Array<{
         entry_date: string;
@@ -98,6 +99,7 @@ export function handleBacktestDetail(stockTrackerHome: string) {
         entry_price: number;
         exit_price: number;
         won: boolean;
+        pnl_pct?: number;
       }>;
     }
 
@@ -139,15 +141,15 @@ export function handleBacktestDetail(stockTrackerHome: string) {
           entry_price: t.entry_price,
           exit_price: t.exit_price,
           won: t.won,
+          pnl_pct: t.pnl_pct,
         })),
-        // all_trades: full backtest history — used for chart markers
-        // Falls back to oos_trades if all_trades not available (older profiles)
         all_trades: (profile.all_trades ?? profile.oos_trades ?? []).map((t) => ({
           entry_date: t.entry_date,
           exit_date: t.exit_date,
           entry_price: t.entry_price,
           exit_price: t.exit_price,
           won: t.won,
+          pnl_pct: t.pnl_pct,
         })),
       });
     }

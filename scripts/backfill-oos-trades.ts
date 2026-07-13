@@ -51,8 +51,8 @@ async function backfill() {
       const profile = raw as StrategyProfile;
       total++;
 
-      // Skip if already has oos_trades with data
-      if (profile.oos_trades && profile.oos_trades.length > 0) {
+      // Skip if already has oos_trades with pnl_pct populated
+      if (profile.oos_trades && profile.oos_trades.length > 0 && profile.oos_trades[0].pnl_pct !== undefined) {
         skipped++;
         continue;
       }
@@ -111,6 +111,7 @@ async function backfill() {
           entry_price: t.entryPrice,
           exit_price: t.exitPrice,
           won: t.pnlPct > 0,
+          pnl_pct: t.pnlPct,
         }));
 
         saveStrategyProfile({ ...profile, oos_trades: oosTrades }, DATA_DIR);

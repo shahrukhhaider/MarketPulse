@@ -139,6 +139,7 @@ export function buildStrategySummary(
         entry_price: t.entryPrice,
         exit_price: t.exitPrice,
         won: t.pnlPct > 0,
+        pnl_pct: t.pnlPct,
       })),
     };
 

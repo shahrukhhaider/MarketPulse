@@ -129,6 +129,7 @@ function processTickerResult(
           entry_price: t.buySignal.price,
           exit_price: t.sellSignal.price,
           won: t.profitLossPercent > 0,
+          pnl_pct: t.profitLossPercent,
         }));
 
         const strategyTradeMap: Record<string, ReturnType<typeof mapTrades>> = {
