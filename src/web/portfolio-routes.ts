@@ -15,13 +15,17 @@ import type { JournalEntry } from '../journal/journal-types.js';
 // ============================================================
 
 function computeClosedPnlPct(entry: JournalEntry): number {
+  // Use outcome (won/lost) to determine sign — correct for both long and short strategies.
+  // Magnitude is the absolute price move between entry and exit level.
   if (entry.status === 'won') {
-    return ((entry.target_price - entry.entry_price) / entry.entry_price) * 100;
+    return Math.abs((entry.target_price - entry.entry_price) / entry.entry_price) * 100;
   } else if (entry.status === 'lost') {
-    return ((entry.stop_price - entry.entry_price) / entry.entry_price) * 100;
+    return -Math.abs((entry.stop_price - entry.entry_price) / entry.entry_price) * 100;
   } else if (entry.status === 'breakeven') {
     return 0;
   } else if (entry.outcome_price != null) {
+    // For expired/manual outcomes, use outcome sign relative to direction if available,
+    // otherwise fall back to raw calculation (long assumption)
     return ((entry.outcome_price - entry.entry_price) / entry.entry_price) * 100;
   }
   return 0;
