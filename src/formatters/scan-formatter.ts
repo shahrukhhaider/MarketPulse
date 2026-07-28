@@ -699,7 +699,8 @@ export function renderProgressBar(progress: number | null): string {
 
   const width = 10;
   const clamped = Math.max(0, Math.min(100, progress));
-  const filled = Math.round((clamped / 100) * width);
+  // Floor (not round) so a position under its target never shows a full 100% bar.
+  const filled = Math.floor((clamped / 100) * width);
   const empty = width - filled;
 
   const bar = '█'.repeat(filled) + '░'.repeat(empty);

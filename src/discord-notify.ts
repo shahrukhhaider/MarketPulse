@@ -315,7 +315,10 @@ export function buildOpenPositionsPayload(data: ScanData): DiscordPayload | null
     const barWidth = 8;
     const progress = pos.target_progress ?? 0;
     const clamped = Math.max(0, Math.min(100, progress));
-    const filled = Math.round((clamped / 100) * barWidth);
+    // Floor (not round) so a position that hasn't literally reached its target
+    // never displays as a full bar / 100%. A true 100% means close >= target,
+    // which journal-update closes as `won`, so it drops off the open list.
+    const filled = Math.floor((clamped / 100) * barWidth);
     const empty = barWidth - filled;
     const bar = '█'.repeat(filled) + '░'.repeat(empty);
 
@@ -324,7 +327,7 @@ export function buildOpenPositionsPayload(data: ScanData): DiscordPayload | null
     const abbrevPad = abbreviation.padEnd(3);
     const pnlPad = pnlStr.padStart(6);
     const daysPad = `${pos.days_held}d`.padStart(3);
-    const progressPct = `${clamped.toFixed(0)}%`.padStart(4);
+    const progressPct = `${Math.floor(clamped)}%`.padStart(4);
 
     lines.push(`${tickerPad} ${abbrevPad} ${pnlPad} ${daysPad} ${bar} ${progressPct}`);
   }

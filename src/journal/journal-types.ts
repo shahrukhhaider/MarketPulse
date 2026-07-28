@@ -40,4 +40,9 @@ export const JOURNAL_DEFAULTS = {
   MAX_OPEN_ENTRIES: 10,         // max concurrent open positions
   EXPIRY_DAYS: 42,              // ~2 calendar months in trading days
   JOURNAL_PATH: 'journal.json', // filename within .stock-tracker/
+  // Take-profit fill tolerance: a trade is treated as having hit its target
+  // once price reaches this fraction of the entry→target move. Daily-bar
+  // granularity means price can park just below the exact target for weeks;
+  // 0.99 closes it as a win at >=99% of the move (matches the progress bar).
+  TARGET_FILL_THRESHOLD: 0.99,
 } as const;

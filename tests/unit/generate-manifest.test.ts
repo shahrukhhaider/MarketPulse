@@ -162,7 +162,7 @@ describe('generateBacktestManifest', () => {
     expect(manifest.generated_at).toBeDefined();
   });
 
-  it('maps all metrics correctly to manifest entry', () => {
+  it('maps all metrics correctly to combined manifest entry', () => {
     const profile = makeProfile({
       ticker: 'TSLA',
       strategy: 'bear_breakdown',
@@ -179,17 +179,33 @@ describe('generateBacktestManifest', () => {
     writeProfile('bear_breakdown', 'TSLA', profile);
 
     const manifest = generateBacktestManifest(TEST_DATA_DIR);
+    const entry = manifest.entries[0];
 
-    expect(manifest.entries[0]).toEqual({
-      ticker: 'TSLA',
-      strategy: 'bear_breakdown',
-      return: 35.5,
-      benchmark: 12.3,
-      win_rate: 0.72,
-      trades: 25,
-      max_drawdown: -15.0,
-      sharpe: 2.1,
-      last_tuned_at: '2025-06-15T14:00:00.000Z',
-    });
+    // Entries are combined-per-ticker; a single-strategy ticker yields a
+    // "combined" entry whose top-level metrics mirror the one strategy.
+    expect(entry.ticker).toBe('TSLA');
+    expect(entry.strategy).toBe('combined');
+    expect(entry.strategy_count).toBe(1);
+    // Combined return routes through (avg(1 + r/100) - 1) * 100, so allow for
+    // floating-point rounding rather than exact equality.
+    expect(entry.return).toBeCloseTo(35.5, 6);
+    expect(entry.win_rate).toBe(0.72);
+    expect(entry.trades).toBe(25);
+    expect(entry.max_drawdown).toBe(-15.0);
+    expect(entry.sharpe).toBe(2.1);
+    // Combined entries do not carry a per-strategy benchmark.
+    expect(entry.benchmark).toBe(0);
+    expect(entry.last_tuned_at).toBe('2025-06-15T14:00:00.000Z');
+    // Per-strategy breakdown preserves the raw profile metrics.
+    expect(entry.strategies).toEqual([
+      {
+        strategy: 'bear_breakdown',
+        return: 35.5,
+        win_rate: 0.72,
+        trades: 25,
+        max_drawdown: -15.0,
+        sharpe: 2.1,
+      },
+    ]);
   });
 });

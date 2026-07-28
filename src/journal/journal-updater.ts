@@ -1,4 +1,5 @@
 import type { JournalEntry, EntryStatus } from './journal-types.js';
+import { JOURNAL_DEFAULTS } from './journal-types.js';
 import type { HistoricalDataCache } from '../data/historical-data-cache.js';
 import type { HistoricalDataPoint } from '../types.js';
 
@@ -15,6 +16,11 @@ export interface UpdateResult {
 export interface JournalUpdaterDeps {
   cache: HistoricalDataCache;
   expiryDays: number;         // default 42
+  /**
+   * Fraction of the entry→target move that counts as a target hit.
+   * Defaults to JOURNAL_DEFAULTS.TARGET_FILL_THRESHOLD (0.99).
+   */
+  targetFillThreshold?: number;
 }
 
 // ============================================================
@@ -42,7 +48,9 @@ const TRAILING_LEVELS = [
  *
  * Rules (applied to bars in chronological order):
  * 1. Original stop hit: bar low ≤ stop_price → lost (always active, highest priority)
- * 2. Target hit: bar high ≥ target_price → won
+ * 2. Target hit: bar high ≥ targetFillPrice → won
+ *    (targetFillPrice = entry + targetFillThreshold × move, i.e. reaching
+ *    ≥99% of the way to target counts as a fill — see targetFillThreshold)
  * 3. Trailing stop hit: bar low ≤ effectiveStopPrice (if level > 0) →
  *    breakeven (level 1) or won (level 2+)
  * 4. Expiry: trading days > expiryDays and neither hit → expired
@@ -51,12 +59,18 @@ const TRAILING_LEVELS = [
 export function determineOutcome(
   entry: JournalEntry,
   bars: HistoricalDataPoint[],
-  expiryDays: number
+  expiryDays: number,
+  targetFillThreshold: number = JOURNAL_DEFAULTS.TARGET_FILL_THRESHOLD
 ): { status: EntryStatus; outcome_date: string | null; outcome_price: number | null } {
   // Filter bars to only those after the signal date
   const relevantBars = bars.filter((b) => b.date > entry.signal_date);
 
   const totalMove = entry.target_price - entry.entry_price;
+
+  // Take-profit fill price: reaching this counts as hitting the target.
+  // Slightly below the exact target to account for daily-bar granularity where
+  // price can hover just under the target for extended periods without tagging it.
+  const targetFillPrice = entry.entry_price + totalMove * targetFillThreshold;
 
   // Track graduated trailing stop state
   let effectiveStopPrice = entry.stop_price; // starts at original stop
@@ -84,7 +98,7 @@ export function determineOutcome(
     // 3. Trailing stop last → 'breakeven' (level 1) or 'won' (level 2+)
 
     const originalStopHit = bar.low <= entry.stop_price;
-    const targetHit = bar.high >= entry.target_price;
+    const targetHit = bar.high >= targetFillPrice;
     const trailingStopHit = currentLevel > 0 && bar.low <= effectiveStopPrice;
 
     if (originalStopHit) {
@@ -118,7 +132,7 @@ export function determineOutcome(
   if (relevantBars.length > 0) {
     const lastBar = relevantBars[relevantBars.length - 1];
 
-    if (lastBar.close >= entry.target_price) {
+    if (lastBar.close >= targetFillPrice) {
       return {
         status: 'won',
         outcome_date: lastBar.date,
@@ -175,6 +189,15 @@ export function determineOutcome(
 export function createJournalUpdater(deps: JournalUpdaterDeps) {
   const { cache, expiryDays } = deps;
 
+  // Resolve take-profit fill threshold: explicit dep > env override > default.
+  const envThreshold = process.env['JOURNAL_TARGET_FILL_THRESHOLD'];
+  const parsedEnv = envThreshold !== undefined ? Number(envThreshold) : NaN;
+  const targetFillThreshold =
+    deps.targetFillThreshold ??
+    (Number.isFinite(parsedEnv) && parsedEnv > 0 && parsedEnv <= 1
+      ? parsedEnv
+      : JOURNAL_DEFAULTS.TARGET_FILL_THRESHOLD);
+
   async function update(entries: JournalEntry[]): Promise<UpdateResult> {
     const openEntries = entries.filter((e) => e.status === 'open');
     const resolved: JournalEntry[] = [];
@@ -209,7 +232,7 @@ export function createJournalUpdater(deps: JournalUpdaterDeps) {
 
       // Determine outcome for each open entry of this ticker
       for (const entry of tickerEntries) {
-        const outcome = determineOutcome(entry, bars, expiryDays);
+        const outcome = determineOutcome(entry, bars, expiryDays, targetFillThreshold);
 
         if (outcome.status !== 'open') {
           // Entry resolved — update it

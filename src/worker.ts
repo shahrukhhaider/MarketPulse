@@ -138,6 +138,13 @@ async function dailyScanLargeCap(): Promise<void> {
     `scan_${Date.now()}.json`,
   );
 
+  // Journal update FIRST so target/stop hits are resolved before the scan
+  // snapshots open positions. Otherwise a trade that just hit its target still
+  // appears in the Discord "Open Positions" panel at 100% for a day.
+  // journal-update is universe-agnostic (resolves every open entry), so the
+  // subsequent tech scan also reads the already-updated journal.
+  await runCli(`${jobName}:journal-update`, ['journal-update']);
+
   const code = await runCli(jobName, [
     'scan',
     '--tickers', 'watchlist',
@@ -156,9 +163,6 @@ async function dailyScanLargeCap(): Promise<void> {
     '--scan-output', logFile,
     '--universe', 'large_cap',
   ]);
-
-  // Journal update (large_cap only)
-  await runCli(`${jobName}:journal-update`, ['journal-update']);
 }
 
 async function dailyScanTech(): Promise<void> {
